@@ -117,6 +117,9 @@ struct BackendOption: Equatable {
     /// Models available for download and use.
     static let all: [BackendOption] = parakeetFamily + whisperFamily + [.cohereTranscribe] + experimental
 
+    /// Conservative first-run choices. Experimental and very large models stay in Models.
+    static let onboarding: [BackendOption] = [.parakeetMultilingual, .whisperTinyEnglish, .whisperSmall]
+
     /// Models coming soon — shown greyed out in the Models tab.
     static let comingSoon: [BackendOption] = []
 

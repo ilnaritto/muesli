@@ -1069,7 +1069,8 @@ final class MuesliController: NSObject {
     func updateComputerUseHotkey(_ hotkey: HotkeyConfig) -> ShortcutHotkeyUpdateResult {
         let result = ShortcutHotkeyPolicy.validateComputerUseHotkey(
             hotkey,
-            dictationHotkey: config.dictationHotkey
+            dictationHotkey: config.dictationHotkey,
+            isComputerUseEnabled: config.enableComputerUseHotkey
         )
         guard result.didUpdate else {
             fputs("[hotkeys] rejected computer use hotkey because it matches dictation hotkey\n", stderr)
@@ -3476,7 +3477,9 @@ final class MuesliController: NSObject {
                 if !delta.isEmpty {
                     self.previousStreamText = fullText
                     DispatchQueue.main.async {
-                        PasteController.typeText(delta)
+                        if self.currentDictationOutputMode != .voiceNote {
+                            PasteController.typeText(delta)
+                        }
                     }
                 }
             }
@@ -3518,11 +3521,11 @@ final class MuesliController: NSObject {
 
         // Nemotron streaming: live text at cursor in handsfree mode too
         if selectedBackend.backend == "nemotron" {
-            resetDictationOutputMode()
             if #available(macOS 15, *) {
                 isNemotronStreaming = true
                 previousStreamText = ""
                 dictationStartedAt = Date()
+                setState(.recording)
                 indicator.setToggleDictation(true, config: config)
                 fputs("[muesli-native] Nemotron streaming toggle mode active\n", stderr)
                 startNemotronStreamingAsync()
@@ -3605,6 +3608,7 @@ final class MuesliController: NSObject {
             statusBarController?.refresh()
             historyWindowController?.reload()
             syncAppState()
+            resetDictationOutputMode()
             setState(.idle)
             meetingMonitor.resumeAfterCooldown()
             fputs("[muesli-native] Nemotron streaming done (\(String(format: "%.1f", duration))s)\n", stderr)

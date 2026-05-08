@@ -41,9 +41,10 @@ struct ShortcutHotkeyPolicy {
 
     static func validateComputerUseHotkey(
         _ hotkey: HotkeyConfig,
-        dictationHotkey: HotkeyConfig
+        dictationHotkey: HotkeyConfig,
+        isComputerUseEnabled: Bool
     ) -> ShortcutHotkeyUpdateResult {
-        guard hotkey.keyCode != dictationHotkey.keyCode else {
+        guard !isComputerUseEnabled || hotkey.keyCode != dictationHotkey.keyCode else {
             return .conflict(message: conflictMessage)
         }
         return .updated

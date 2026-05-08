@@ -78,6 +78,14 @@ struct BackendOptionTests {
         #expect(!BackendOption.experimental.contains(.cohereTranscribe))
     }
 
+    @Test("onboarding model choices exclude experimental models")
+    func onboardingModelsExcludeExperimentalOptions() {
+        #expect(BackendOption.onboarding == [.parakeetMultilingual, .whisperTinyEnglish, .whisperSmall])
+        for option in BackendOption.experimental {
+            #expect(!BackendOption.onboarding.contains(option))
+        }
+    }
+
     @Test("Whisper models use WhisperKit CoreML identifiers")
     func whisperKitModels() {
         // WhisperKit models use short variant names, not ggml- prefixed binaries
@@ -962,8 +970,15 @@ struct HotkeyConfigTests {
 
         #expect(ShortcutHotkeyPolicy.validateComputerUseHotkey(
             .default,
-            dictationHotkey: .default
+            dictationHotkey: .default,
+            isComputerUseEnabled: true
         ) == .conflict(message: ShortcutHotkeyPolicy.conflictMessage))
+
+        #expect(ShortcutHotkeyPolicy.validateComputerUseHotkey(
+            .default,
+            dictationHotkey: .default,
+            isComputerUseEnabled: false
+        ) == .updated)
     }
 
     @Test("hotkey policy moves computer use key when enabling with a stale conflict")

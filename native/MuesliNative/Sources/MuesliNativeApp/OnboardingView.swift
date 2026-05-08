@@ -73,8 +73,10 @@ struct OnboardingView: View {
     }
 
     private var onboardingAlternativeModels: [BackendOption] {
-        var options: [BackendOption] = [.whisperTinyEnglish, .whisperSmall]
-        if selectedBackend != .parakeetMultilingual, !options.contains(selectedBackend) {
+        var options = BackendOption.onboarding.filter { $0 != .parakeetMultilingual }
+        if BackendOption.onboarding.contains(selectedBackend),
+           selectedBackend != .parakeetMultilingual,
+           !options.contains(selectedBackend) {
             options.insert(selectedBackend, at: 0)
         }
         return options
@@ -122,7 +124,8 @@ struct OnboardingView: View {
         _currentStep = State(initialValue: effectiveInitialStep)
         _userName = State(initialValue: initialUserName)
         _selectedUseCase = State(initialValue: initialUseCase)
-        _selectedBackend = State(initialValue: initialBackend)
+        let sanitizedInitialBackend = BackendOption.onboarding.contains(initialBackend) ? initialBackend : .parakeetMultilingual
+        _selectedBackend = State(initialValue: sanitizedInitialBackend)
         _selectedCohereLanguage = State(initialValue: initialCohereLanguage)
         _selectedHotkey = State(initialValue: initialHotkey)
         _summaryBackend = State(initialValue: initialSummaryBackend)
