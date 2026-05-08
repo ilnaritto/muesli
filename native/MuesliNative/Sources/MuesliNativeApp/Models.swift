@@ -557,6 +557,10 @@ enum OnboardingUseCase: String, Codable, CaseIterable {
         self == .meetings || self == .dictationAndMeetings
     }
 
+    var canSwitchToVoiceNotesOnly: Bool {
+        self == .dictation
+    }
+
     static func resolved(_ rawValue: String?) -> OnboardingUseCase {
         guard let rawValue, let useCase = OnboardingUseCase(rawValue: rawValue) else {
             return .dictation

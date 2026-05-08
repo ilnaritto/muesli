@@ -544,6 +544,14 @@ struct AppConfigTests {
         #expect(!OnboardingUseCase.voiceNotes.includesMeetings)
     }
 
+    @Test("voice notes escape hatch is dictation-only")
+    func voiceNotesEscapeHatchIsDictationOnly() {
+        #expect(OnboardingUseCase.dictation.canSwitchToVoiceNotesOnly)
+        #expect(!OnboardingUseCase.dictationAndMeetings.canSwitchToVoiceNotesOnly)
+        #expect(!OnboardingUseCase.meetings.canSwitchToVoiceNotesOnly)
+        #expect(!OnboardingUseCase.voiceNotes.canSwitchToVoiceNotesOnly)
+    }
+
     @Test("scheduled meeting notifications inherit legacy detection opt-out")
     func scheduledMeetingNotificationsInheritLegacyDetectionOptOut() throws {
         let json = """

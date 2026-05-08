@@ -885,7 +885,7 @@ struct OnboardingView: View {
                     .buttonStyle(.plain)
                 }
 
-                if selectedUseCase.includesDictation && step.name == "Accessibility" {
+                if selectedUseCase.canSwitchToVoiceNotesOnly && step.name == "Accessibility" {
                     Button {
                         switchToVoiceNotesOnly()
                     } label: {
