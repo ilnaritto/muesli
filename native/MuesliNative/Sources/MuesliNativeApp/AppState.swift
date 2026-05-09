@@ -52,13 +52,15 @@ final class AppState {
     // Config-driven state
     var selectedBackend: BackendOption = .whisper
     var selectedMeetingTranscriptionBackend: BackendOption = .whisper
-    var selectedMeetingSummaryBackend: MeetingSummaryBackendOption = .openAI
+    var selectedMeetingSummaryBackend: MeetingSummaryBackendOption = .chatGPT
     var activePostProcessor: PostProcessorOption = PostProcessorOption.defaultOption
     var config: AppConfig = AppConfig()
 
     // Live status
     var isMeetingRecording: Bool = false
     var isMeetingRecordingPaused: Bool = false
+    var dictationState: DictationState = .idle
+    var isVoiceNoteRecording: Bool = false
     var isChatGPTAuthenticated: Bool = false
     var isGoogleCalendarAvailable: Bool = false
     var isGoogleCalendarVerified: Bool = false

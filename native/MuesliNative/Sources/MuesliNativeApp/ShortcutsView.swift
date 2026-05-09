@@ -7,6 +7,8 @@ struct ShortcutsView: View {
     let controller: MuesliController
     @State private var recordingTarget: ShortcutTarget?
     @State private var eventMonitor: Any?
+    @State private var dictationShortcutMessage: String?
+    @State private var computerUseShortcutMessage: String?
 
     var body: some View {
         ScrollView {
@@ -59,6 +61,10 @@ struct ShortcutsView: View {
                 .background(MuesliTheme.surfaceBorder)
 
             changeButton(for: .dictation)
+
+            if let dictationShortcutMessage {
+                shortcutMessage(dictationShortcutMessage)
+            }
         }
         .padding(MuesliTheme.spacing16)
         .background(MuesliTheme.backgroundRaised)
@@ -84,7 +90,11 @@ struct ShortcutsView: View {
                 Toggle("", isOn: Binding(
                     get: { appState.config.enableComputerUseHotkey },
                     set: { newValue in
-                        controller.updateComputerUseHotkeyEnabled(newValue)
+                        let result = controller.updateComputerUseHotkeyEnabled(newValue)
+                        computerUseShortcutMessage = result.message
+                        if result.didUpdate {
+                            dictationShortcutMessage = nil
+                        }
                     }
                 ))
                 .toggleStyle(.switch)
@@ -104,9 +114,9 @@ struct ShortcutsView: View {
 
             if appState.config.enableComputerUseHotkey,
                appState.config.computerUseHotkey.keyCode == appState.config.dictationHotkey.keyCode {
-                Text("Choose a different key than dictation.")
-                    .font(MuesliTheme.caption())
-                    .foregroundStyle(MuesliTheme.transcribing)
+                shortcutMessage(ShortcutHotkeyPolicy.conflictMessage)
+            } else if let computerUseShortcutMessage {
+                shortcutMessage(computerUseShortcutMessage)
             }
         }
         .padding(MuesliTheme.spacing16)
@@ -130,6 +140,12 @@ struct ShortcutsView: View {
                 RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
                     .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
             )
+    }
+
+    private func shortcutMessage(_ message: String) -> some View {
+        Text(message)
+            .font(MuesliTheme.caption())
+            .foregroundStyle(MuesliTheme.transcribing)
     }
 
     private func changeButton(for target: ShortcutTarget) -> some View {
@@ -189,9 +205,9 @@ struct ShortcutsView: View {
 
     private var resetButton: some View {
         Button {
-            controller.updateDictationHotkey(.default)
-            controller.updateComputerUseHotkey(.computerUseDefault)
-            controller.updateComputerUseHotkeyEnabled(true)
+            controller.resetShortcutDefaults()
+            dictationShortcutMessage = nil
+            computerUseShortcutMessage = nil
         } label: {
             Text("Reset to Defaults")
                 .font(MuesliTheme.body())
@@ -201,26 +217,48 @@ struct ShortcutsView: View {
         .disabled(
             appState.config.dictationHotkey == .default
                 && appState.config.computerUseHotkey == .computerUseDefault
-                && appState.config.enableComputerUseHotkey
+                && !appState.config.enableComputerUseHotkey
         )
     }
 
     private func startRecording(_ target: ShortcutTarget) {
         stopRecording()
+        clearShortcutMessage(for: target)
         recordingTarget = target
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [self] event in
             let keyCode = event.keyCode
             if let label = HotkeyConfig.label(for: keyCode) {
                 let newConfig = HotkeyConfig(keyCode: keyCode, label: label)
+                let result: ShortcutHotkeyUpdateResult
                 switch target {
                 case .dictation:
-                    controller.updateDictationHotkey(newConfig)
+                    result = controller.updateDictationHotkey(newConfig)
                 case .computerUse:
-                    controller.updateComputerUseHotkey(newConfig)
+                    result = controller.updateComputerUseHotkey(newConfig)
                 }
+                setShortcutMessage(result.message, for: target)
                 stopRecording()
             }
             return event
+        }
+    }
+
+    private func clearShortcutMessage(for target: ShortcutTarget) {
+        setShortcutMessage(nil, for: target)
+    }
+
+    private func setShortcutMessage(_ message: String?, for target: ShortcutTarget) {
+        switch target {
+        case .dictation:
+            dictationShortcutMessage = message
+            if message == nil {
+                computerUseShortcutMessage = nil
+            }
+        case .computerUse:
+            computerUseShortcutMessage = message
+            if message == nil {
+                dictationShortcutMessage = nil
+            }
         }
     }
 
