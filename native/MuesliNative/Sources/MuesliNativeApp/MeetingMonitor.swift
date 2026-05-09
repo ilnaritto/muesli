@@ -395,15 +395,16 @@ private actor MeetingSignalCollector {
     private let browserCollector = BrowserMeetingActivityCollector()
     private let audioProcessCollector = AudioProcessAttributionCollector()
 
-    func collect(micDeviceID: AudioDeviceID) -> MeetingCollectedSignals {
+    func collect(micDeviceID: AudioDeviceID) async -> MeetingCollectedSignals {
         let runningAppSnapshots = currentRunningApps()
+        let browserMeetings = await browserCollector.collect(runningApps: runningAppSnapshots)
 
         return MeetingCollectedSignals(
             micActive: isMicActive(deviceID: micDeviceID),
             runningApps: runningAppSnapshots.map {
                 RunningAppInfo(bundleID: $0.bundleID, isActive: $0.isActive)
             },
-            browserMeetings: browserCollector.collect(runningApps: runningAppSnapshots),
+            browserMeetings: browserMeetings,
             audioInputProcesses: audioProcessCollector.activeInputProcesses(),
             foregroundBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
             runningProcessIDsByBundleID: runningProcessIDsByBundleID(from: runningAppSnapshots)

@@ -14,17 +14,18 @@ final class BrowserMeetingActivityCollector {
     private let cachedMeetingTTL: TimeInterval = 8
     private var cachedMeetings: [String: CachedBrowserMeeting] = [:]
 
-    func collect(runningApps: [RunningAppSnapshot]) -> [BrowserMeetingContext] {
+    func collect(runningApps: [RunningAppSnapshot]) async -> [BrowserMeetingContext] {
         let now = Date()
         let browserApps = runningApps.filter { browserBundleIDs.contains($0.bundleID) }
         let runningBrowserIDs = Set(browserApps.map(\.bundleID))
 
-        let liveMeetings: [BrowserMeetingContext] = browserApps.compactMap { app in
-            guard let normalized = normalizedFocusedURL(for: app) else {
+        var liveMeetings: [BrowserMeetingContext] = []
+        for app in browserApps {
+            guard let normalized = await normalizedFocusedURL(for: app) else {
                 if app.isActive {
                     cachedMeetings.removeValue(forKey: app.bundleID)
                 }
-                return nil
+                continue
             }
 
             let context = BrowserMeetingContext(
@@ -37,7 +38,7 @@ final class BrowserMeetingActivityCollector {
                 isFocused: app.isActive
             )
             cachedMeetings[app.bundleID] = CachedBrowserMeeting(context: context, observedAt: now)
-            return context
+            liveMeetings.append(context)
         }
 
         let liveBundleIDs = Set(liveMeetings.map(\.bundleID))
@@ -62,7 +63,7 @@ final class BrowserMeetingActivityCollector {
         return liveMeetings + cachedOnlyMeetings
     }
 
-    private func normalizedFocusedURL(for app: RunningAppSnapshot) -> NormalizedMeetingURL? {
+    private func normalizedFocusedURL(for app: RunningAppSnapshot) async -> NormalizedMeetingURL? {
         if let normalized = normalizedAXDocumentURL(for: app) {
             return normalized
         }
@@ -70,7 +71,7 @@ final class BrowserMeetingActivityCollector {
         // Query the browser's active tab even after another app/overlay becomes
         // frontmost. Strict URL normalization plus resolver media checks keep
         // background meeting tabs from prompting by themselves.
-        guard let url = activeBrowserURLViaAppleScript(bundleID: app.bundleID) else {
+        guard let url = await activeBrowserURLViaAppleScript(bundleID: app.bundleID) else {
             return nil
         }
         return MeetingURLNormalizer.normalize(url)
@@ -95,6 +96,7 @@ final class BrowserMeetingActivityCollector {
         return MeetingURLNormalizer.normalize(rawURL)
     }
 
+    @MainActor
     private func activeBrowserURLViaAppleScript(bundleID: String) -> String? {
         let source: String
         switch bundleID {

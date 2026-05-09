@@ -938,20 +938,7 @@ final class MuesliController: NSObject {
     }
 
     private func currentOrNearbyCachedCalendarEvent() -> CalendarEventContext? {
-        let now = Date()
-        let searchStart = now.addingTimeInterval(-15 * 60)
-        let searchEnd = now.addingTimeInterval(5 * 60)
-        let candidates = appState.upcomingCalendarEvents
-            .filter { event in
-                !event.isAllDay && event.endDate > searchStart && event.startDate < searchEnd
-            }
-            .sorted { $0.startDate < $1.startDate }
-
-        if let active = candidates.first(where: { $0.startDate <= now && $0.endDate > now }) {
-            return CalendarEventContext(id: active.id, title: active.title)
-        }
-
-        return candidates.first.map { CalendarEventContext(id: $0.id, title: $0.title) }
+        selectCurrentOrNearbyCachedCalendarEvent(from: appState.upcomingCalendarEvents)
     }
 
     private func startMeetingFeatureMonitors(includeMaraudersMap: Bool) {
@@ -4016,4 +4003,23 @@ final class MuesliController: NSObject {
             return dict
         }
     }
+}
+
+func selectCurrentOrNearbyCachedCalendarEvent(
+    from events: [UnifiedCalendarEvent],
+    now: Date = Date()
+) -> CalendarEventContext? {
+    let searchEnd = now.addingTimeInterval(5 * 60)
+    let candidates = events
+        .filter { event in
+            !event.isAllDay && event.endDate > now && event.startDate < searchEnd
+        }
+        .sorted { $0.startDate < $1.startDate }
+
+    if let active = candidates.first(where: { $0.startDate <= now && $0.endDate > now }) {
+        return CalendarEventContext(id: active.id, title: active.title)
+    }
+
+    return candidates.first(where: { $0.startDate > now })
+        .map { CalendarEventContext(id: $0.id, title: $0.title) }
 }
