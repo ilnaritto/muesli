@@ -3,6 +3,11 @@ import Testing
 
 @Suite("OnboardingFlow")
 struct OnboardingFlowTests {
+    @Test("voice notes orders push-to-talk steps without paste permission")
+    func voiceNotesOrderedSteps() {
+        #expect(OnboardingFlow.orderedSteps(for: .voiceNotes) == [0, 1, 2, 3, 4])
+    }
+
     @Test("dictation orders dictation-only steps")
     func dictationOrderedSteps() {
         #expect(OnboardingFlow.orderedSteps(for: .dictation) == [0, 1, 2, 3, 4])
@@ -28,6 +33,7 @@ struct OnboardingFlowTests {
     func normalizedStepKeepsValidAndClampsAfterFinalStep() {
         #expect(OnboardingFlow.normalizedStep(3, for: .meetings) == 3)
         #expect(OnboardingFlow.normalizedStep(99, for: .dictation) == 4)
+        #expect(OnboardingFlow.normalizedStep(4, for: .voiceNotes) == 4)
     }
 
     @Test("can go back is disabled after successful dictation test")
@@ -56,6 +62,7 @@ struct OnboardingFlowTests {
     @Test("completion tab routes meetings-only to meetings and others to dictations")
     func completionTab() {
         #expect(OnboardingFlow.completionTab(for: .meetings) == .meetings)
+        #expect(OnboardingFlow.completionTab(for: .voiceNotes) == .dictations)
         #expect(OnboardingFlow.completionTab(for: .dictation) == .dictations)
         #expect(OnboardingFlow.completionTab(for: .dictationAndMeetings) == .dictations)
     }

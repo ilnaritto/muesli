@@ -149,4 +149,71 @@ struct OnboardingProgressTests {
         #expect(!OnboardingPermissionGate.hasRequiredPermissions(permissions, for: .meetings))
         #expect(step == 3)
     }
+
+    @Test("meetings-only does not require input monitoring")
+    func meetingsOnlyDoesNotRequireInputMonitoring() {
+        let permissions = OnboardingPermissionSnapshot(
+            microphone: true,
+            accessibility: false,
+            inputMonitoring: false,
+            systemAudio: false,
+            screenRecording: false
+        )
+
+        let step = OnboardingPermissionGate.resumeStep(
+            requestedStep: 5,
+            permissions: permissions,
+            useCase: .meetings,
+            permissionsStep: 3,
+            dictationTestStep: 4
+        )
+
+        #expect(OnboardingPermissionGate.hasRequiredPermissions(permissions, for: .meetings))
+        #expect(step == 5)
+    }
+
+    @Test("voice notes require microphone and input monitoring")
+    func voiceNotesRequireMicrophoneAndInputMonitoring() {
+        let permissions = OnboardingPermissionSnapshot(
+            microphone: true,
+            accessibility: false,
+            inputMonitoring: true,
+            systemAudio: false,
+            screenRecording: false
+        )
+
+        let step = OnboardingPermissionGate.resumeStep(
+            requestedStep: 5,
+            permissions: permissions,
+            useCase: .voiceNotes,
+            permissionsStep: 3,
+            dictationTestStep: 4
+        )
+
+        #expect(OnboardingPermissionGate.hasRequiredVoiceNotesPermissions(permissions))
+        #expect(OnboardingPermissionGate.hasRequiredPermissions(permissions, for: .voiceNotes))
+        #expect(step == 5)
+    }
+
+    @Test("voice notes cannot leave permissions without input monitoring")
+    func voiceNotesMissingInputMonitoringResumesAtPermissionsStep() {
+        let permissions = OnboardingPermissionSnapshot(
+            microphone: true,
+            accessibility: false,
+            inputMonitoring: false,
+            systemAudio: false,
+            screenRecording: false
+        )
+
+        let step = OnboardingPermissionGate.resumeStep(
+            requestedStep: 4,
+            permissions: permissions,
+            useCase: .voiceNotes,
+            permissionsStep: 3,
+            dictationTestStep: 4
+        )
+
+        #expect(!OnboardingPermissionGate.hasRequiredVoiceNotesPermissions(permissions))
+        #expect(step == 3)
+    }
 }
