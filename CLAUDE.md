@@ -37,6 +37,16 @@ Local-first macOS app for **dictation** and **meeting transcription** on Apple S
 
 MuesliDev uses bundle ID `com.muesli.dev` and stores data at `~/Library/Application Support/MuesliDev/`. Production data is never touched.
 
+### SwiftPM build artifacts in worktrees
+SwiftPM writes build artifacts to `native/MuesliNative/.build` inside the active worktree by default. That can consume several GB per worktree. For worktree-heavy local testing, set `MUESLI_SWIFTPM_SCRATCH_PATH` when invoking `scripts/build_native_app.sh` directly or through helper scripts such as `scripts/dev-test.sh`:
+
+```bash
+MUESLI_SWIFTPM_SCRATCH_PATH="$HOME/Library/Caches/muesli-spm/dev" ./scripts/dev-test.sh
+MUESLI_SWIFTPM_SCRATCH_PATH="$HOME/Library/Caches/muesli-spm/preprod" ./scripts/build_native_app.sh release
+```
+
+The build script passes that value to SwiftPM as `--scratch-path`, so multiple worktrees can reuse one scratch directory instead of each growing its own `.build`. Caveat: do not run concurrent builds from different worktrees into the same scratch path; use separate paths per channel, agent, or simultaneous build. Deleting a scratch path only removes rebuildable SwiftPM artifacts, not installed apps or app data.
+
 ### Tests
 ```bash
 swift test --package-path native/MuesliNative    # 396 tests across 65 suites

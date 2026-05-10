@@ -26,10 +26,17 @@ DEFAULT_SIGN_IDENTITY="Developer ID Application: Pranav Hari Guruvayurappan (58W
 SIGN_IDENTITY="${MUESLI_SIGN_IDENTITY:-$DEFAULT_SIGN_IDENTITY}"
 SKIP_SIGN="${MUESLI_SKIP_SIGN:-0}"
 
+SWIFT_BUILD_ARGS=(--package-path "$PACKAGE_DIR" -c "$BUILD_CONFIG")
+if [[ -n "${MUESLI_SWIFTPM_SCRATCH_PATH:-}" ]]; then
+  mkdir -p "$MUESLI_SWIFTPM_SCRATCH_PATH"
+  SWIFT_BUILD_ARGS+=(--scratch-path "$MUESLI_SWIFTPM_SCRATCH_PATH")
+  echo "Using SwiftPM scratch path: $MUESLI_SWIFTPM_SCRATCH_PATH"
+fi
+
 mkdir -p "$DIST_DIR"
 
 set +e
-swift build --package-path "$PACKAGE_DIR" -c "$BUILD_CONFIG" --product "$APP_BINARY"
+swift build "${SWIFT_BUILD_ARGS[@]}" --product "$APP_BINARY"
 status=$?
 set -e
 
@@ -39,7 +46,7 @@ if [[ $status -ne 0 ]]; then
 fi
 
 set +e
-swift build --package-path "$PACKAGE_DIR" -c "$BUILD_CONFIG" --product "$CLI_BINARY"
+swift build "${SWIFT_BUILD_ARGS[@]}" --product "$CLI_BINARY"
 status=$?
 set -e
 
@@ -48,7 +55,7 @@ if [[ $status -ne 0 ]]; then
   exit $status
 fi
 
-BIN_DIR="$(swift build --package-path "$PACKAGE_DIR" -c "$BUILD_CONFIG" --show-bin-path)"
+BIN_DIR="$(swift build "${SWIFT_BUILD_ARGS[@]}" --show-bin-path)"
 APP_BIN="$BIN_DIR/$APP_BINARY"
 CLI_BIN="$BIN_DIR/$CLI_BINARY"
 
