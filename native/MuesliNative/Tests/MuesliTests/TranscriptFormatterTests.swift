@@ -444,7 +444,7 @@ struct TranscriptFormatterTests {
         #expect(lines[2].contains("You: Goodbye"))
         // No system segment should be labelled as "You"
         for line in lines where line.contains("Hi there") {
-            #expect(!line.hasPrefix("[") || line.contains("Others:"))
+            #expect(line.contains("Others:"), "System audio segment mislabeled: \(line)")
         }
     }
 
