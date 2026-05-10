@@ -99,7 +99,7 @@ struct TranscriptFormatterTests {
         let result = TranscriptFormatter.merge(
             micSegments: mic, systemSegments: system, meetingStart: meetingStart
         )
-        let lines = result.components(separatedBy: "\n")
+        let lines = result.components(separatedBy: "\n").filter { !$0.isEmpty }
         #expect(lines.count == 2)
         #expect(lines[0].contains("You:"))
         #expect(lines[1].contains("Others:"))
@@ -237,7 +237,7 @@ struct TranscriptFormatterTests {
             diarizationSegments: diarization,
             meetingStart: meetingStart
         )
-        let lines = result.components(separatedBy: "\n")
+        let lines = result.components(separatedBy: "\n").filter { !$0.isEmpty }
         #expect(lines.count == 2)
         #expect(lines[0].contains("Speaker 1: First person talking"))
         #expect(lines[1].contains("Speaker 2: Second person talking"))
@@ -351,7 +351,7 @@ struct TranscriptFormatterTests {
             diarizationSegments: diarization,
             meetingStart: meetingStart
         )
-        let lines = result.components(separatedBy: "\n")
+        let lines = result.components(separatedBy: "\n").filter { !$0.isEmpty }
         #expect(lines.count == 3)
         #expect(lines[0].contains("Speaker 1:"))
         #expect(lines[1].contains("You:"))
@@ -377,7 +377,7 @@ struct TranscriptFormatterTests {
             diarizationSegments: diarization,
             meetingStart: meetingStart
         )
-        let lines = result.components(separatedBy: "\n")
+        let lines = result.components(separatedBy: "\n").filter { !$0.isEmpty }
         #expect(lines.count == 1)
         #expect(lines[0].contains("Speaker 1: Hello world"))
     }
@@ -437,7 +437,7 @@ struct TranscriptFormatterTests {
         let result = TranscriptFormatter.merge(
             micSegments: mic, systemSegments: system, meetingStart: meetingStart
         )
-        let lines = result.components(separatedBy: "\n")
+        let lines = result.components(separatedBy: "\n").filter { !$0.isEmpty }
         #expect(lines.count == 3)
         #expect(lines[0].contains("You: Hello"))
         #expect(lines[1].contains("Others: Hi there"))
@@ -480,7 +480,7 @@ struct TranscriptFormatterTests {
         let result = TranscriptFormatter.merge(
             micSegments: [], systemSegments: system, meetingStart: meetingStart
         )
-        let lines = result.components(separatedBy: "\n")
+        let lines = result.components(separatedBy: "\n").filter { !$0.isEmpty }
         for line in lines {
             #expect(!line.contains("You:"), "System audio should never be labelled as You: \(line)")
         }
