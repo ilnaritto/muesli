@@ -2013,9 +2013,9 @@ final class MuesliController: NSObject {
         guard didSetProcessing else { return nil }
         if let retranscriptionError = error as? MeetingRetranscriptionError {
             switch retranscriptionError {
-            case .emptyTranscript:
+            case .emptyTranscript, .failedToSave:
                 return originalStatus
-            case .controllerUnavailable, .recordingUnavailable, .noDownloadedTranscriptionModel, .failedToSave:
+            case .controllerUnavailable, .recordingUnavailable, .noDownloadedTranscriptionModel:
                 break
             }
         }

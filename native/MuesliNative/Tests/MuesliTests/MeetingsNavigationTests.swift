@@ -243,12 +243,21 @@ struct MeetingsNavigationTests {
         ) == nil)
     }
 
+    @Test("retranscribe save failures restore original meeting status")
+    func retranscribeSaveFailuresRestoreOriginalMeetingStatus() {
+        #expect(MuesliController.retranscriptionFailureStatus(
+            originalStatus: .completed,
+            didSetProcessing: true,
+            error: MeetingRetranscriptionError.failedToSave(underlying: CocoaError(.fileWriteUnknown))
+        ) == .completed)
+    }
+
     @Test("retranscribe processing failures mark meeting failed")
     func retranscribeProcessingFailuresMarkMeetingFailed() {
         #expect(MuesliController.retranscriptionFailureStatus(
             originalStatus: .completed,
             didSetProcessing: true,
-            error: MeetingRetranscriptionError.failedToSave(underlying: CocoaError(.fileWriteUnknown))
+            error: CocoaError(.fileReadUnknown)
         ) == .failed)
     }
 
