@@ -62,6 +62,7 @@ enum MeetingTemplateSelectionError: Error, LocalizedError {
 }
 
 enum MeetingRetranscriptionError: Error, LocalizedError {
+    case controllerUnavailable
     case recordingUnavailable
     case noDownloadedTranscriptionModel
     case emptyTranscript
@@ -69,6 +70,8 @@ enum MeetingRetranscriptionError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .controllerUnavailable:
+            return "Meeting re-transcription could not continue because Muesli is no longer available."
         case .recordingUnavailable:
             return "The saved meeting recording is no longer available on disk."
         case .noDownloadedTranscriptionModel:
@@ -1906,8 +1909,12 @@ final class MuesliController: NSObject {
     }
 
     func retranscribe(meeting: MeetingRecord, completion: @escaping (Result<Void, Error>) -> Void) {
-        Task { [weak self] in
-            guard let self else { return }
+        Task { @MainActor [weak self] in
+            guard let self else {
+                completion(.failure(MeetingRetranscriptionError.controllerUnavailable))
+                return
+            }
+            var didSetProcessing = false
             do {
                 guard let savedRecordingPath = meeting.savedRecordingPath,
                       !savedRecordingPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -1922,10 +1929,9 @@ final class MuesliController: NSObject {
                 }
 
                 try self.dictationStore.updateMeetingStatus(id: meeting.id, status: .processing)
-                await MainActor.run {
-                    self.syncAppState()
-                    self.historyWindowController?.reload()
-                }
+                didSetProcessing = true
+                self.syncAppState()
+                self.historyWindowController?.reload()
 
                 try await self.transcriptionCoordinator.preloadRequired(
                     backend: backend,
@@ -1980,19 +1986,17 @@ final class MuesliController: NSObject {
                     throw MeetingRetranscriptionError.failedToSave(underlying: error)
                 }
 
-                await MainActor.run {
-                    self.syncAppState()
-                    self.historyWindowController?.reload()
-                    completion(.success(()))
-                }
+                self.syncAppState()
+                self.historyWindowController?.reload()
+                completion(.success(()))
             } catch {
                 fputs("[muesli-native] failed to re-transcribe meeting \(meeting.id): \(error)\n", stderr)
-                try? self.dictationStore.updateMeetingStatus(id: meeting.id, status: .failed)
-                await MainActor.run {
-                    self.syncAppState()
-                    self.historyWindowController?.reload()
-                    completion(.failure(error))
+                if didSetProcessing {
+                    try? self.dictationStore.updateMeetingStatus(id: meeting.id, status: .failed)
                 }
+                self.syncAppState()
+                self.historyWindowController?.reload()
+                completion(.failure(error))
             }
         }
     }

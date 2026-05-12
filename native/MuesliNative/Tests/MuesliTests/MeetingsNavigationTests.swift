@@ -173,6 +173,53 @@ struct MeetingsNavigationTests {
         #expect(try store.meeting(id: meetingID) != nil)
     }
 
+    @Test("retranscribe missing recording preserves completed meeting status")
+    func retranscribeMissingRecordingPreservesCompletedStatus() async throws {
+        let store = try makeStore()
+        let missingRecordingURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-meeting-recording-\(UUID().uuidString).wav")
+        let now = Date()
+        let meetingID = try store.insertMeeting(
+            title: "Recovered Meeting",
+            calendarEventID: nil,
+            startTime: now,
+            endTime: now.addingTimeInterval(60),
+            rawTranscript: "Existing transcript",
+            formattedNotes: "## Existing notes",
+            micAudioPath: nil,
+            systemAudioPath: nil,
+            savedRecordingPath: missingRecordingURL.path
+        )
+        let controller = MuesliController(
+            runtime: RuntimePaths(
+                repoRoot: FileManager.default.temporaryDirectory,
+                menuIcon: nil,
+                appIcon: nil,
+                bundlePath: nil
+            ),
+            dictationStore: store
+        )
+        let meeting = try #require(try store.meeting(id: meetingID))
+
+        let result = await withCheckedContinuation { continuation in
+            controller.retranscribe(meeting: meeting) { result in
+                continuation.resume(returning: result)
+            }
+        }
+
+        switch result {
+        case .success:
+            Issue.record("Expected re-transcription to fail when the retained recording is missing")
+        case .failure(let error):
+            #expect(error is MeetingRetranscriptionError)
+        }
+
+        let updated = try #require(try store.meeting(id: meetingID))
+        #expect(updated.status == .completed)
+        #expect(updated.rawTranscript == "Existing transcript")
+        #expect(updated.formattedNotes == "## Existing notes")
+    }
+
     @Test("cached manual notes are persisted before debounce")
     func cachedManualNotesPersistImmediately() throws {
         let store = try makeStore()
