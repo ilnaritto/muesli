@@ -195,6 +195,7 @@ final class HotkeyMonitor {
         return true
     }
 
+
     private func shouldHandleLocalEvent(_ event: NSEvent) -> Bool {
         shouldHandleLocalEvent(
             type: event.type,
