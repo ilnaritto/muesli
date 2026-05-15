@@ -51,6 +51,48 @@ struct MeetingAutoStopSource: Equatable {
     }
 }
 
+struct MeetingAutoStopTracker: Equatable {
+    private(set) var source: MeetingAutoStopSource?
+    private(set) var lastSeenAt: Date?
+
+    var isArmed: Bool {
+        source != nil
+    }
+
+    mutating func arm(source: MeetingAutoStopSource?) {
+        self.source = source
+        lastSeenAt = nil
+    }
+
+    mutating func disarm() {
+        source = nil
+        lastSeenAt = nil
+    }
+
+    mutating func observe(
+        candidate: MeetingCandidate?,
+        now: Date,
+        gracePeriod: TimeInterval
+    ) -> Bool {
+        guard let currentSource = source else {
+            return false
+        }
+
+        if let candidate,
+           MeetingAutoStopPolicy.matches(candidate: candidate, source: currentSource) {
+            source = currentSource.refined(with: candidate)
+            lastSeenAt = now
+            return false
+        }
+
+        guard let lastSeenAt else {
+            return false
+        }
+
+        return now.timeIntervalSince(lastSeenAt) >= gracePeriod
+    }
+}
+
 enum MeetingAutoStopPolicy {
     static func matches(candidate: MeetingCandidate, source: MeetingAutoStopSource) -> Bool {
         if let candidateID = source.candidateID, candidate.id == candidateID {

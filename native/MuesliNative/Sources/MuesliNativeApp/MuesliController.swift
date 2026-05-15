@@ -184,8 +184,7 @@ final class MuesliController: NSObject {
     private var activeMeetingCalendarEndDate: Date?
     private var latestMeetingActivityCandidate: MeetingCandidate?
     private var latestMeetingActivityCandidateObservedAt: Date?
-    private var activeMeetingAutoStopSource: MeetingAutoStopSource?
-    private var activeMeetingAutoStopLastSeenAt: Date?
+    private var activeMeetingAutoStop = MeetingAutoStopTracker()
     private let meetingAutoStopGracePeriod: TimeInterval = 20
     private var meetingActivity: NSObjectProtocol?
     private var isStoppingMeetingRecording = false
@@ -347,7 +346,7 @@ final class MuesliController: NSObject {
         meetingMonitor.detectionEnabledProvider = { [weak self] in
             guard let self else { return false }
             return self.config.showMeetingDetectionNotification
-                || self.activeMeetingAutoStopSource != nil
+                || self.activeMeetingAutoStop.isArmed
         }
         meetingMonitor.mutedDetectionBundleIDsProvider = { [weak self] in
             Set(self?.config.mutedMeetingDetectionAppBundleIDs ?? [])
@@ -1158,7 +1157,7 @@ final class MuesliController: NSObject {
 
     private func syncMeetingDetectionMonitor() {
         let shouldRun = meetingFeatureMonitorsAllowed
-            && (config.showMeetingDetectionNotification || activeMeetingAutoStopSource != nil)
+            && (config.showMeetingDetectionNotification || activeMeetingAutoStop.isArmed)
         if shouldRun && !meetingDetectionMonitorStarted {
             meetingMonitor.start()
             meetingDetectionMonitorStarted = true
@@ -3446,8 +3445,7 @@ final class MuesliController: NSObject {
     }
 
     private func armMeetingAutoStop(source: MeetingAutoStopSource?) {
-        activeMeetingAutoStopSource = source
-        activeMeetingAutoStopLastSeenAt = source?.hasObservedCandidate == true ? Date() : nil
+        activeMeetingAutoStop.arm(source: source)
         syncMeetingDetectionMonitor()
     }
 
@@ -3461,15 +3459,14 @@ final class MuesliController: NSObject {
     }
 
     private func disarmMeetingAutoStop() {
-        activeMeetingAutoStopSource = nil
-        activeMeetingAutoStopLastSeenAt = nil
+        activeMeetingAutoStop.disarm()
         latestMeetingActivityCandidate = nil
         latestMeetingActivityCandidateObservedAt = nil
         syncMeetingDetectionMonitor()
     }
 
     private func handleMeetingActivityCandidate(_ candidate: MeetingCandidate?) {
-        if activeMeetingAutoStopSource == nil,
+        if !activeMeetingAutoStop.isArmed,
            !isMeetingRecording(),
            !isStartingMeetingRecording {
             if let candidate {
@@ -3481,27 +3478,21 @@ final class MuesliController: NSObject {
             }
         }
 
-        guard let source = activeMeetingAutoStopSource,
+        guard activeMeetingAutoStop.isArmed,
               activeMeetingSession?.isRecording == true,
               !isStoppingMeetingRecording else {
             return
         }
 
         let now = Date()
-        if let candidate,
-           MeetingAutoStopPolicy.matches(candidate: candidate, source: source) {
-            activeMeetingAutoStopSource = source.refined(with: candidate)
-            activeMeetingAutoStopLastSeenAt = now
-            return
+        if activeMeetingAutoStop.observe(
+            candidate: candidate,
+            now: now,
+            gracePeriod: meetingAutoStopGracePeriod
+        ) {
+            fputs("[meeting] auto-stopping recording after meeting source disappeared\n", stderr)
+            stopMeetingRecording()
         }
-
-        guard let lastSeenAt = activeMeetingAutoStopLastSeenAt,
-              now.timeIntervalSince(lastSeenAt) >= meetingAutoStopGracePeriod else {
-            return
-        }
-
-        fputs("[meeting] auto-stopping recording after meeting source disappeared\n", stderr)
-        stopMeetingRecording()
     }
 
     private func presentMeetingDetection(_ candidate: MeetingCandidate) {

@@ -96,6 +96,76 @@ struct MeetingAutoStopPolicyTests {
         #expect(source.hasObservedCandidate)
     }
 
+    @Test("tracker waits for a recording-time observation before auto-stopping")
+    func trackerWaitsForRecordingTimeObservationBeforeAutoStopping() {
+        var tracker = MeetingAutoStopTracker()
+        tracker.arm(source: MeetingAutoStopSource(candidate: googleMeetCandidate()))
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let shouldStop = tracker.observe(
+            candidate: nil,
+            now: now.addingTimeInterval(25),
+            gracePeriod: 20
+        )
+
+        #expect(!shouldStop)
+        #expect(tracker.lastSeenAt == nil)
+    }
+
+    @Test("tracker stops after a confirmed recording-time source disappears")
+    func trackerStopsAfterConfirmedRecordingTimeSourceDisappears() {
+        var tracker = MeetingAutoStopTracker()
+        tracker.arm(source: MeetingAutoStopSource(candidate: googleMeetCandidate()))
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let shouldStopWhileVisible = tracker.observe(
+            candidate: googleMeetCandidate(),
+            now: now,
+            gracePeriod: 20
+        )
+        let shouldStopBeforeGrace = tracker.observe(
+            candidate: nil,
+            now: now.addingTimeInterval(19),
+            gracePeriod: 20
+        )
+        let shouldStopAfterGrace = tracker.observe(
+            candidate: nil,
+            now: now.addingTimeInterval(21),
+            gracePeriod: 20
+        )
+
+        #expect(!shouldStopWhileVisible)
+        #expect(!shouldStopBeforeGrace)
+        #expect(shouldStopAfterGrace)
+    }
+
+    @Test("tracker refines URL source before disappearing")
+    func trackerRefinesURLSourceBeforeDisappearing() throws {
+        let url = try #require(URL(string: "https://meet.google.com/aaa-bbbb-ccc"))
+        var tracker = MeetingAutoStopTracker()
+        tracker.arm(source: MeetingAutoStopSource(meetingURL: url))
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let shouldStopBeforeObservation = tracker.observe(
+            candidate: nil,
+            now: now.addingTimeInterval(25),
+            gracePeriod: 20
+        )
+        let shouldStopWhileVisible = tracker.observe(
+            candidate: googleMeetCandidate(),
+            now: now.addingTimeInterval(30),
+            gracePeriod: 20
+        )
+        let shouldStopAfterGrace = tracker.observe(
+            candidate: nil,
+            now: now.addingTimeInterval(51),
+            gracePeriod: 20
+        )
+
+        #expect(!shouldStopBeforeObservation)
+        #expect(!shouldStopWhileVisible)
+        #expect(tracker.source?.sourceBundleID == "com.google.Chrome")
+        #expect(tracker.source?.hasObservedCandidate == true)
+        #expect(shouldStopAfterGrace)
+    }
+
     private func googleMeetCandidate() -> MeetingCandidate {
         MeetingCandidate(
             id: "googleMeet:meet.google.com/aaa-bbbb-ccc",
