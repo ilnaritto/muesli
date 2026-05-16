@@ -3,7 +3,28 @@ import ApplicationServices
 import Foundation
 import MuesliCore
 
+enum HotkeyTriggerTiming {
+    static let defaultThresholdMilliseconds = 250
+    static let minThresholdMilliseconds = 50
+    static let maxThresholdMilliseconds = 600
+    static let doubleTapTapGuardDelay: TimeInterval = 0.18
+
+    static func clampedMilliseconds(_ value: Int) -> Int {
+        min(max(value, minThresholdMilliseconds), maxThresholdMilliseconds)
+    }
+
+    static func startDelay(forThresholdMilliseconds value: Int) -> TimeInterval {
+        TimeInterval(clampedMilliseconds(value)) / 1000
+    }
+
+    static func prepareDelay(forThresholdMilliseconds value: Int) -> TimeInterval {
+        let startDelay = startDelay(forThresholdMilliseconds: value)
+        return min(0.15, max(0, startDelay - 0.10))
+    }
+}
+
 final class HotkeyMonitor {
+    var onArm: (() -> Void)?
     var onPrepare: (() -> Void)?
     var onStart: (() -> Void)?
     var onStop: (() -> Void)?
@@ -17,8 +38,10 @@ final class HotkeyMonitor {
     private var localMonitor: Any?
     private var prepareWorkItem: DispatchWorkItem?
     private var startWorkItem: DispatchWorkItem?
+    private var armCancelWorkItem: DispatchWorkItem?
     private var targetKeyDown = false
     private var otherKeyPressed = false
+    private var armed = false
     private var prepared = false
     private var active = false
 
@@ -27,9 +50,9 @@ final class HotkeyMonitor {
     private var lastTapWasShort = false
     private var toggleActive = false
 
-    private let prepareDelay: TimeInterval
-    private let startDelay: TimeInterval
-    private let doubleTapWindow: TimeInterval
+    private var prepareDelay: TimeInterval
+    private var startDelay: TimeInterval
+    private var doubleTapWindow: TimeInterval
 
     init(
         prepareDelay: TimeInterval = 0.15,
@@ -39,6 +62,12 @@ final class HotkeyMonitor {
         self.prepareDelay = prepareDelay
         self.startDelay = startDelay
         self.doubleTapWindow = doubleTapWindow
+    }
+
+    func configureTriggerThreshold(milliseconds: Int) {
+        prepareDelay = HotkeyTriggerTiming.prepareDelay(forThresholdMilliseconds: milliseconds)
+        startDelay = HotkeyTriggerTiming.startDelay(forThresholdMilliseconds: milliseconds)
+        restartIfRunning()
     }
 
     func start() {
@@ -81,6 +110,7 @@ final class HotkeyMonitor {
         localMonitor = nil
         targetKeyDown = false
         otherKeyPressed = false
+        armed = false
         prepared = false
         active = false
         toggleActive = false
@@ -96,6 +126,12 @@ final class HotkeyMonitor {
     func restart() {
         stop()
         start()
+    }
+
+    private func restartIfRunning() {
+        if isRunning {
+            restart()
+        }
     }
 
     /// Call externally to stop toggle mode (e.g., from floating indicator click)
@@ -152,7 +188,7 @@ final class HotkeyMonitor {
 
         // Text editing owns fresh hotkey starts, but an already-armed hotkey
         // session must still receive key-up/Escape cleanup events.
-        if targetKeyDown || prepared || active || toggleActive {
+        if targetKeyDown || armed || prepared || active || toggleActive {
             return true
         }
 
@@ -164,6 +200,8 @@ final class HotkeyMonitor {
             let isDown = isModifierDown(keyCode: targetKeyCode, flags: flags)
             if isDown {
                 if !targetKeyDown {
+                    armCancelWorkItem?.cancel()
+                    armCancelWorkItem = nil
                     targetKeyDown = true
                     otherKeyPressed = false
                     prepared = false
@@ -192,13 +230,19 @@ final class HotkeyMonitor {
                         return
                     }
 
+                    if let onArm {
+                        armed = true
+                        onArm()
+                    }
                     fputs("[hotkey] target key \(targetKeyCode) down\n", stderr)
                     scheduleTimers()
                 }
             } else {
                 fputs("[hotkey] target key \(targetKeyCode) up\n", stderr)
                 let wasDown = targetKeyDown
+                let wasArmed = armed
                 targetKeyDown = false
+                armed = false
                 cancelTimers()
 
                 if toggleActive {
@@ -206,9 +250,10 @@ final class HotkeyMonitor {
                     return
                 }
 
-                // Track tap timing for double-tap detection
-                if wasDown && !active && !prepared && !otherKeyPressed {
-                    // This was a short tap (released before prepareDelay)
+                // Track tap timing for double-tap detection. Low trigger thresholds can
+                // enter the prepared state quickly, but a release before recording starts
+                // should still count as a tap.
+                if wasDown && !active && !otherKeyPressed {
                     lastTapWasShort = true
                     lastTapUpTime = Date()
                 } else {
@@ -221,18 +266,28 @@ final class HotkeyMonitor {
                 } else if prepared {
                     prepared = false
                     onCancel?()
+                } else if wasArmed {
+                    if doubleTapEnabled, lastTapWasShort {
+                        scheduleArmCancel()
+                    } else {
+                        onCancel?()
+                    }
                 }
             }
         } else if targetKeyDown && !toggleActive {
             fputs("[hotkey] canceled by other modifier key \(keyCode)\n", stderr)
             otherKeyPressed = true
             lastTapWasShort = false
+            let wasArmed = armed
+            armed = false
             cancelTimers()
             if active {
                 active = false
                 onStop?()
             } else if prepared {
                 prepared = false
+                onCancel?()
+            } else if wasArmed {
                 onCancel?()
             }
         }
@@ -263,6 +318,16 @@ final class HotkeyMonitor {
                 fputs("[hotkey] escape → cancel hold\n", stderr)
                 active = false
                 targetKeyDown = false
+                armed = false
+                cancelTimers()
+                onCancel?()
+                return
+            }
+            if armed || prepared {
+                fputs("[hotkey] escape → cancel armed hold\n", stderr)
+                targetKeyDown = false
+                armed = false
+                prepared = false
                 cancelTimers()
                 onCancel?()
             }
@@ -274,6 +339,8 @@ final class HotkeyMonitor {
                 fputs("[hotkey] canceled by other key\n", stderr)
                 otherKeyPressed = true
                 lastTapWasShort = false
+                let wasArmed = armed
+                armed = false
                 cancelTimers()
                 if active {
                     active = false
@@ -281,36 +348,81 @@ final class HotkeyMonitor {
                 } else if prepared {
                     prepared = false
                     onCancel?()
+                } else if wasArmed {
+                    onCancel?()
                 }
             }
         }
     }
 
     private func scheduleTimers() {
+        let delays = timerDelays()
         let prepare = DispatchWorkItem { [weak self] in
-            guard let self, self.targetKeyDown, !self.otherKeyPressed, !self.prepared else { return }
+            guard let self, self.targetKeyDown, !self.otherKeyPressed, !self.prepared, !self.active else { return }
+            self.armCancelWorkItem?.cancel()
+            self.armCancelWorkItem = nil
             self.prepared = true
+            self.armed = false
             self.lastTapWasShort = false // Held long enough — not a tap
             fputs("[hotkey] prepared\n", stderr)
             self.onPrepare?()
         }
         let start = DispatchWorkItem { [weak self] in
             guard let self, self.targetKeyDown, !self.otherKeyPressed, !self.active else { return }
+            self.armCancelWorkItem?.cancel()
+            self.armCancelWorkItem = nil
+            if !self.prepared {
+                self.prepared = true
+                self.armed = false
+                self.lastTapWasShort = false
+                fputs("[hotkey] prepared\n", stderr)
+                self.onPrepare?()
+            }
             self.active = true
             fputs("[hotkey] start\n", stderr)
             self.onStart?()
         }
         prepareWorkItem = prepare
         startWorkItem = start
-        DispatchQueue.main.asyncAfter(deadline: .now() + prepareDelay, execute: prepare)
-        DispatchQueue.main.asyncAfter(deadline: .now() + startDelay, execute: start)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delays.prepare, execute: prepare)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delays.start, execute: start)
+    }
+
+    private func scheduleArmCancel() {
+        armCancelWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self,
+                  !self.targetKeyDown,
+                  !self.toggleActive,
+                  !self.prepared,
+                  !self.active
+            else { return }
+            self.armCancelWorkItem = nil
+            self.onCancel?()
+        }
+        armCancelWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + doubleTapWindow, execute: item)
+    }
+
+    private func timerDelays() -> (prepare: TimeInterval, start: TimeInterval) {
+        guard doubleTapEnabled else {
+            return (prepareDelay, startDelay)
+        }
+        let guardedStartDelay = max(startDelay, HotkeyTriggerTiming.doubleTapTapGuardDelay)
+        let guardedPrepareDelay = max(
+            HotkeyTriggerTiming.doubleTapTapGuardDelay,
+            min(0.15, max(0, guardedStartDelay - 0.10))
+        )
+        return (min(guardedPrepareDelay, guardedStartDelay), guardedStartDelay)
     }
 
     private func cancelTimers() {
         prepareWorkItem?.cancel()
         startWorkItem?.cancel()
+        armCancelWorkItem?.cancel()
         prepareWorkItem = nil
         startWorkItem = nil
+        armCancelWorkItem = nil
     }
 
     func setHoldRecordingActiveForTests() {

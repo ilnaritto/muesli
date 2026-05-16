@@ -8,7 +8,7 @@ import os
 /// may be processed against the mutable stream state at a time. Chunks can
 /// arrive faster than VAD inference finishes, so we queue them and drain
 /// serially rather than spawning overlapping Tasks that race the same state.
-final class StreamingVadController {
+final class StreamingVadController: @unchecked Sendable {
     /// Called when VAD detects a natural chunk boundary.
     var onChunkBoundary: (() -> Void)?
 
@@ -205,10 +205,10 @@ final class StreamingVadController {
 
                 if shouldRotate {
                     fputs("[vad] speech end detected, rotating chunk\n", stderr)
+                    onChunkBoundary?()
                     DispatchQueue.main.async { [weak self] in
                         guard let self else { return }
                         self.maxDurationTimer?.fireDate = Date().addingTimeInterval(self.maxChunkDuration)
-                        self.onChunkBoundary?()
                     }
                 }
             } catch {

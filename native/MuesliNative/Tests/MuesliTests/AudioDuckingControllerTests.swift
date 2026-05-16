@@ -42,6 +42,26 @@ struct AudioDuckingControllerTests {
         #expect(client.muteSetCalls.isEmpty)
     }
 
+    @Test("headphone output is skipped")
+    func headphoneOutputIsSkipped() {
+        let client = FakeAudioDuckingDeviceClient()
+        client.activityStatus = .active
+        client.outputRouteKind = .headphoneLike
+        client.defaultDeviceID = 1
+        client.availableDevices = [1]
+        client.muteElementsByDevice[1] = [kAudioObjectPropertyElementMain]
+        client.muteValues[.init(1, kAudioObjectPropertyElementMain)] = false
+
+        let controller = makeController(client: client)
+        controller.beginDictationDucking(enabled: true)
+        controller.ensureCurrentDefaultDucked()
+        controller.restoreDictationDucking()
+        controller.waitForIdle()
+
+        #expect(client.muteValues[.init(1, kAudioObjectPropertyElementMain)] == false)
+        #expect(client.muteSetCalls.isEmpty)
+    }
+
     @Test("active output mutes and restores")
     func activeOutputMutesAndRestores() {
         let client = FakeAudioDuckingDeviceClient()
@@ -53,6 +73,7 @@ struct AudioDuckingControllerTests {
 
         let controller = makeController(client: client)
         controller.beginDictationDucking(enabled: true)
+        controller.waitForIdle()
         #expect(client.muteValues[.init(1, kAudioObjectPropertyElementMain)] == true)
 
         controller.restoreDictationDucking()
@@ -76,6 +97,7 @@ struct AudioDuckingControllerTests {
 
         let controller = makeController(client: client)
         controller.beginDictationDucking(enabled: true)
+        controller.waitForIdle()
 
         #expect(client.muteValues[.init(1, kAudioObjectPropertyElementMain)] == true)
     }
@@ -91,6 +113,7 @@ struct AudioDuckingControllerTests {
 
         let controller = makeController(client: client)
         controller.beginDictationDucking(enabled: true)
+        controller.waitForIdle()
         controller.restoreDictationDucking()
         controller.waitForIdle()
 
@@ -109,6 +132,7 @@ struct AudioDuckingControllerTests {
 
         let controller = makeController(client: client)
         controller.beginDictationDucking(enabled: true)
+        controller.waitForIdle()
         #expect(client.volumeValues[.init(1, kAudioObjectPropertyElementMain)] == 0)
 
         controller.restoreDictationDucking()
@@ -128,6 +152,7 @@ struct AudioDuckingControllerTests {
 
         let controller = makeController(client: client)
         controller.beginDictationDucking(enabled: true)
+        controller.waitForIdle()
         client.volumeValues[.init(1, kAudioObjectPropertyElementMain)] = 0.3
 
         controller.restoreDictationDucking()
@@ -151,8 +176,10 @@ struct AudioDuckingControllerTests {
 
         let controller = makeController(client: client)
         controller.beginDictationDucking(enabled: true)
+        controller.waitForIdle()
         client.defaultDeviceID = 2
         controller.ensureCurrentDefaultDucked()
+        controller.waitForIdle()
         client.defaultDeviceID = 3
 
         controller.restoreDictationDucking()
@@ -175,6 +202,7 @@ struct AudioDuckingControllerTests {
 
         let controller = makeController(client: client)
         controller.beginDictationDucking(enabled: true)
+        controller.waitForIdle()
         client.availableDevices = []
 
         controller.restoreDictationDucking()
@@ -203,6 +231,7 @@ struct AudioDuckingControllerTests {
             stabilizationPollInterval: 0.001
         )
         controller.beginDictationDucking(enabled: true)
+        controller.waitForIdle()
         controller.restoreDictationDucking()
         controller.waitForIdle()
 
@@ -238,6 +267,7 @@ private struct MuteSetCall: Equatable {
 
 private final class FakeAudioDuckingDeviceClient: AudioDuckingDeviceClient {
     var activityStatus: AudioOutputActivityStatus = .inactive
+    var outputRouteKind: AudioOutputRouteKind = .speakerLike
     var defaultDeviceID: AudioObjectID?
     var availableDevices = Set<AudioObjectID>()
     var muteElementsByDevice: [AudioObjectID: [AudioObjectPropertyElement]] = [:]
@@ -250,6 +280,10 @@ private final class FakeAudioDuckingDeviceClient: AudioDuckingDeviceClient {
 
     func outputActivityStatus() -> AudioOutputActivityStatus {
         activityStatus
+    }
+
+    func defaultOutputRouteKind() -> AudioOutputRouteKind {
+        outputRouteKind
     }
 
     func defaultOutputDeviceID() -> AudioObjectID? {

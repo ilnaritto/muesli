@@ -347,6 +347,10 @@ final class FloatingIndicatorController: NSObject {
         }
 
         panel.orderFrontRegardless()
+        if state == .preparing {
+            contentView.displayIfNeeded()
+            panel.displayIfNeeded()
+        }
     }
 
     func showComputerUseCursor(at quartzPoint: CGPoint, label rawLabel: String?) {
@@ -770,6 +774,7 @@ final class FloatingIndicatorController: NSObject {
             iconLabel?.isHidden = true
             micIconView?.isHidden = false
             if let mic = micIconView {
+                mic.alphaValue = 1
                 if isHovered {
                     mic.frame = NSRect(x: 12, y: (frameSize.height - iconSize.height) / 2,
                                       width: iconSize.width, height: iconSize.height)
@@ -819,8 +824,17 @@ final class FloatingIndicatorController: NSObject {
 
         case .preparing:
             wandIconView?.isHidden = true
-            micIconView?.isHidden = true
-            iconLabel?.isHidden = false
+            iconLabel?.isHidden = true
+            micIconView?.isHidden = false
+            if let mic = micIconView {
+                mic.alphaValue = 0.86
+                mic.frame = NSRect(
+                    x: (frameSize.width - iconSize.width) / 2,
+                    y: (frameSize.height - iconSize.height) / 2,
+                    width: iconSize.width,
+                    height: iconSize.height
+                )
+            }
         }
     }
 
@@ -1113,7 +1127,7 @@ final class FloatingIndicatorController: NSObject {
         switch state {
         case .idle:
             size = isHovered ? NSSize(width: 220, height: 36) : NSSize(width: 44, height: 28)
-        case .preparing: size = NSSize(width: 44, height: 28)
+        case .preparing: size = NSSize(width: 76, height: 22)
         case .recording: size = NSSize(width: 76, height: 22)
         case .transcribing:
             if let transcript = computerUseTranscriptText {
@@ -1182,6 +1196,12 @@ final class FloatingIndicatorController: NSObject {
     }
 
     private func transitionDuration(from oldState: DictationState, to newState: DictationState, wasHovered: Bool, isHovered: Bool) -> TimeInterval {
+        if newState == .preparing {
+            return 0
+        }
+        if oldState == .preparing, newState == .recording {
+            return 0
+        }
         if oldState == .idle, newState == .idle, wasHovered != isHovered {
             return isHovered ? 0.24 : 0.2
         }

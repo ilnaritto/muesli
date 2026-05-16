@@ -1,4 +1,5 @@
 import Foundation
+import CoreAudio
 import os
 
 /// Merges real-time mic recording with Nemotron chunk-by-chunk transcription.
@@ -28,8 +29,9 @@ final class StreamingDictationController {
     private var isActive = false
     private let chunkSamples = 8960  // 560ms at 16kHz
 
-    init(transcriber: NemotronStreamingTranscriber) {
+    init(transcriber: NemotronStreamingTranscriber, preferredInputDeviceID: AudioObjectID? = nil) {
         self.transcriber = transcriber
+        recorder.preferredInputDeviceID = preferredInputDeviceID
     }
 
     /// Pre-warm the ANE so first real chunk is fast. Call this early (e.g., on backend select).

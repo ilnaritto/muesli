@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import CoreAudio
 import Foundation
 import Sparkle
 import TelemetryDeck
@@ -106,6 +107,45 @@ struct CompletedMeetingPersistenceResult {
     let recordingSaveError: MeetingLifecycleError?
 }
 
+private final class DictationAudioSessionTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var currentSessionID: UUID?
+
+    func begin() -> UUID {
+        let sessionID = UUID()
+        lock.lock()
+        currentSessionID = sessionID
+        lock.unlock()
+        return sessionID
+    }
+
+    func current() -> UUID? {
+        lock.lock()
+        defer { lock.unlock() }
+        return currentSessionID
+    }
+
+    func isCurrent(_ sessionID: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return currentSessionID == sessionID
+    }
+
+    func finish(_ sessionID: UUID) {
+        lock.lock()
+        if currentSessionID == sessionID {
+            currentSessionID = nil
+        }
+        lock.unlock()
+    }
+
+    func finishAll() {
+        lock.lock()
+        currentSessionID = nil
+        lock.unlock()
+    }
+}
+
 @MainActor
 final class MuesliController: NSObject {
     private let runtime: RuntimePaths
@@ -117,7 +157,13 @@ final class MuesliController: NSObject {
     private let hotkeyMonitor = HotkeyMonitor()
     private let computerUseHotkeyMonitor = HotkeyMonitor()
     private let recorder = MicrophoneRecorder()
+    private let dictationAudioQueue = DispatchQueue(label: "com.muesli.dictation-audio-session")
+    private let dictationAudioSessionTracker = DictationAudioSessionTracker()
     private let audioDuckingController: AudioDuckingManaging
+    private let dictationAudioRoutingController: DictationAudioRouting
+    private let dictationLatencyLogQueue = DispatchQueue(label: "com.muesli.dictation-latency-log")
+    private let dictationLatencyLogURL = AppIdentity.supportDirectoryURL.appendingPathComponent("dictation-latency.log")
+    private let dictationLatencyTimestampFormatter = ISO8601DateFormatter()
     private let indicator: FloatingIndicatorController
     private let calendarMonitor = CalendarMonitor()
     private let meetingMonitor = MeetingMonitor()
@@ -161,6 +207,8 @@ final class MuesliController: NSObject {
     private var staleLiveMeetingRecoveryFailures = Set<Int64>()
     private var dictationState: DictationState = .idle
     private var dictationStartedAt: Date?
+    private var dictationLatencyTraceID: UUID?
+    private var dictationLatencyTraceStartedAt: Date?
     private var currentDictationOutputMode: DictationOutputMode = .paste
     private var computerUseCommandStartedAt: Date?
     private var computerUseCommandTask: Task<Void, Never>?
@@ -188,13 +236,15 @@ final class MuesliController: NSObject {
     private var meetingStartTask: Task<Void, Never>?
     private var meetingStartMeetingID: Int64?
     private var canceledMeetingStartIDs = Set<Int64>()
+    private var hasStarted = false
 
     init(
         runtime: RuntimePaths,
         dictationStore: DictationStore? = nil,
         meetingHookDispatcher: MeetingHookDispatching = MeetingHookRunner(),
         launchAtLoginManager: LaunchAtLoginManaging = SystemLaunchAtLoginManager(),
-        audioDuckingController: AudioDuckingManaging = AudioDuckingController()
+        audioDuckingController: AudioDuckingManaging = AudioDuckingController(),
+        dictationAudioRoutingController: DictationAudioRouting = DictationAudioRouteController()
     ) {
         let loadedConfig = configStore.load()
         self.runtime = runtime
@@ -204,6 +254,7 @@ final class MuesliController: NSObject {
         self.meetingHookDispatcher = meetingHookDispatcher
         self.launchAtLoginCoordinator = LaunchAtLoginCoordinator(manager: launchAtLoginManager)
         self.audioDuckingController = audioDuckingController
+        self.dictationAudioRoutingController = dictationAudioRoutingController
         self.config = loadedConfig
         if loadedConfig.recordingColorHex != "1e1e2e" {
             MuesliTheme.accentOverrideHex = loadedConfig.recordingColorHex
@@ -226,9 +277,28 @@ final class MuesliController: NSObject {
         self.indicator = FloatingIndicatorController(configStore: configStore)
         ComputerUseCursorOverlay.shared.attachIndicator(self.indicator)
         super.init()
+        recorder.onFirstCapturedAudioBuffer = { [weak self] capturedAt in
+            Task { @MainActor [weak self] in
+                self?.markDictationLatency("first_audio_buffer", at: capturedAt)
+            }
+        }
+        dictationAudioRoutingController.onPreferredInputDeviceChanged = { [weak self] preferredInputDeviceID in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if self.dictationState == .preparing {
+                    self.primeDictationRecorderForHotkey(
+                        reason: "route-change",
+                        preferredInputDeviceID: preferredInputDeviceID
+                    )
+                } else {
+                    self.syncDictationRecorderWarmup(reason: "route-change")
+                }
+            }
+        }
     }
 
     func start() {
+        hasStarted = true
         do {
             try dictationStore.migrateIfNeeded()
         } catch {
@@ -252,6 +322,7 @@ final class MuesliController: NSObject {
             logDescription: "leftover temp meeting recording files"
         )
 
+        hotkeyMonitor.onArm = { [weak self] in self?.handleArm() }
         hotkeyMonitor.onPrepare = { [weak self] in self?.handlePrepare() }
         hotkeyMonitor.onStart = { [weak self] in self?.handleStart() }
         hotkeyMonitor.onStop = { [weak self] in self?.handleStop() }
@@ -259,6 +330,7 @@ final class MuesliController: NSObject {
         hotkeyMonitor.onToggleStart = { [weak self] in self?.handleToggleStart() }
         hotkeyMonitor.onToggleStop = { [weak self] in self?.handleToggleStop() }
         hotkeyMonitor.doubleTapEnabled = config.enableDoubleTapDictation
+        configureHotkeyMonitorTiming()
         computerUseHotkeyMonitor.onPrepare = { [weak self] in self?.handleComputerUsePrepare() }
         computerUseHotkeyMonitor.onStart = { [weak self] in self?.handleComputerUseStart() }
         computerUseHotkeyMonitor.onStop = { [weak self] in self?.handleComputerUseStop() }
@@ -276,6 +348,7 @@ final class MuesliController: NSObject {
             hotkeyMonitor.start()
             startComputerUseHotkeyMonitorIfNeeded()
         }
+        syncDictationRecorderWarmup(reason: "startup")
         indicator.onStopMeeting = { [weak self] in self?.stopMeetingRecording() }
         indicator.onDiscardMeeting = { [weak self] in self?.discardMeetingWithConfirmation() }
         indicator.onToggleMeetingPause = { [weak self] in self?.toggleMeetingRecordingPause() }
@@ -684,7 +757,10 @@ final class MuesliController: NSObject {
     }
 
     func updateConfig(_ mutate: (inout AppConfig) -> Void) {
+        let previousHotkeyTriggerThresholdMS = config.hotkeyTriggerThresholdMS
         mutate(&config)
+        config.hotkeyTriggerThresholdMS = HotkeyTriggerTiming.clampedMilliseconds(config.hotkeyTriggerThresholdMS)
+        let hotkeyTriggerThresholdChanged = config.hotkeyTriggerThresholdMS != previousHotkeyTriggerThresholdMS
         configStore.save(config)
         MuesliTheme.accentOverrideHex = config.recordingColorHex == "1e1e2e" ? nil : config.recordingColorHex
         selectedBackend = BackendOption.all.first(where: {
@@ -701,6 +777,9 @@ final class MuesliController: NSObject {
         indicator.refreshIcon()
         hotkeyMonitor.doubleTapEnabled = config.enableDoubleTapDictation
         computerUseHotkeyMonitor.doubleTapEnabled = config.enableDoubleTapDictation
+        if hotkeyTriggerThresholdChanged {
+            configureHotkeyMonitorTiming()
+        }
         historyWindowController?.updateBackendLabel()
         if config.showFloatingIndicator {
             indicator.ensureVisible(config: config)
@@ -714,6 +793,7 @@ final class MuesliController: NSObject {
         appState.isChatGPTAuthenticated = chatGPTAuth.isAuthenticated
         syncMeetingDetectionMonitor()
         updateMeetingNotificationVisibility()
+        syncDictationRecorderWarmup(reason: "config")
     }
 
     func setLaunchAtLogin(_ enabled: Bool) {
@@ -1728,6 +1808,7 @@ final class MuesliController: NSObject {
         hotkeyMonitor.configure(keyCode: config.dictationHotkey.keyCode)
         hotkeyMonitor.start()
         startComputerUseHotkeyMonitorIfNeeded()
+        syncDictationRecorderWarmup(reason: "permissions-ready")
         TelemetryDeck.signal("onboarding.use_case_reclassified", parameters: [
             "from_use_case": OnboardingUseCase.voiceNotes.rawValue,
             "to_use_case": OnboardingUseCase.dictation.rawValue,
@@ -2594,6 +2675,7 @@ final class MuesliController: NSObject {
             return false
         }
         isStartingMeetingRecording = true
+        syncDictationRecorderWarmup(reason: "meeting-start")
         meetingStartMeetingID = meetingID
         updateMeetingStartStatus("Preparing meeting transcription...")
         beginMeetingActivity(reason: "Recording and transcribing a meeting")
@@ -2621,6 +2703,7 @@ final class MuesliController: NSObject {
                     self.statusBarController?.refresh()
                     self.setState(.idle)
                     self.endMeetingActivity()
+                    self.syncDictationRecorderWarmup(reason: "meeting-start-cancelled")
                 }
             } catch {
                 if self.meetingStartMeetingID == meetingID {
@@ -2632,6 +2715,7 @@ final class MuesliController: NSObject {
                     self.statusBarController?.refresh()
                     self.setState(.idle)
                     self.endMeetingActivity()
+                    self.syncDictationRecorderWarmup(reason: "meeting-start-failed")
 
                     let isSystemAudioError = error is CoreAudioSystemRecorder.RecorderError
                     let alert = NSAlert()
@@ -2681,6 +2765,7 @@ final class MuesliController: NSObject {
         updateMeetingStartStatus(nil)
         updateMeetingNotificationVisibility()
         syncAppState()
+        syncDictationRecorderWarmup(reason: "meeting-start-cancelled")
     }
 
     private func finishMeetingStartAttempt(meetingID: Int64) {
@@ -2692,6 +2777,7 @@ final class MuesliController: NSObject {
         updateMeetingStartStatus(nil)
         updateMeetingNotificationVisibility()
         syncAppState()
+        syncDictationRecorderWarmup(reason: "meeting-start-finished")
     }
 
     private func startMeetingRecordingWithSystemAudioRecovery(
@@ -2976,6 +3062,7 @@ final class MuesliController: NSObject {
         statusBarController?.refresh()
         syncAppState()
         updateMeetingNotificationVisibility()
+        syncDictationRecorderWarmup(reason: "meeting-discard")
     }
 
     private func resolveLiveMeetingAfterDiscard(id: Int64, resolution: MeetingDiscardResolution) {
@@ -3144,6 +3231,7 @@ final class MuesliController: NSObject {
                 self.statusBarController?.refresh()
                 self.historyWindowController?.reload()
                 self.syncAppState()
+                self.syncDictationRecorderWarmup(reason: "meeting-stop")
                 if let meetingResult {
                     self.cleanupTemporaryMeetingAudioFiles(for: meetingResult)
                 }
@@ -3424,6 +3512,12 @@ final class MuesliController: NSObject {
         startComputerUseHotkeyMonitorIfNeeded()
     }
 
+    private func configureHotkeyMonitorTiming() {
+        let threshold = config.hotkeyTriggerThresholdMS
+        hotkeyMonitor.configureTriggerThreshold(milliseconds: threshold)
+        computerUseHotkeyMonitor.configureTriggerThreshold(milliseconds: threshold)
+    }
+
     private func startComputerUseHotkeyMonitorIfNeeded() {
         guard config.enableComputerUseHotkey else {
             computerUseHotkeyMonitor.stop()
@@ -3563,11 +3657,13 @@ final class MuesliController: NSObject {
         fputs("[cua] prepare\n", stderr)
         meetingMonitor.suppressWhileActive()
         meetingMonitor.refreshState()
+        recorder.preferredInputDeviceID = nil
+        setState(.preparing)
         do {
             try recorder.prepare()
-            setState(.preparing)
         } catch {
             fputs("[cua] recorder prepare failed: \(error)\n", stderr)
+            recorder.cancel()
             setState(.idle)
             meetingMonitor.resumeAfterCooldown()
             meetingMonitor.refreshState()
@@ -3578,6 +3674,7 @@ final class MuesliController: NSObject {
         guard canStartComputerUseCommand else { return }
         fputs("[cua] recording start\n", stderr)
         meetingMonitor.suppressWhileActive()
+        recorder.preferredInputDeviceID = nil
         do {
             try recorder.start()
             computerUseCommandStartedAt = Date()
@@ -3585,9 +3682,10 @@ final class MuesliController: NSObject {
                 self?.recorder.currentPower() ?? -160
             }
             setState(.recording)
-            SoundController.playDictationStart(enabled: config.soundEnabled && !isDictationTestMode)
+            SoundController.playDictationStart(enabled: shouldPlayDictationLifecycleSounds && !isDictationTestMode)
         } catch {
             fputs("[cua] recorder start failed: \(error)\n", stderr)
+            recorder.cancel()
             computerUseCommandStartedAt = nil
             setState(.idle)
             meetingMonitor.resumeAfterCooldown()
@@ -3947,21 +4045,34 @@ final class MuesliController: NSObject {
     private func handlePrepare() {
         if isMeetingRecording() { return }
         fputs("[muesli-native] prepare\n", stderr)
+        if dictationLatencyTraceID == nil {
+            beginDictationLatencyTrace(reason: "prepare")
+        }
+        markDictationLatency("prepare_requested")
         meetingMonitor.suppressWhileActive()
         meetingMonitor.refreshState()
-        if selectedBackend.backend != "nemotron" {
-            beginDictationAudioDucking()
+        setState(.preparing)
+        guard selectedBackend.backend != "nemotron" else {
+            return
         }
-        do {
-            try recorder.prepare()
-            setState(.preparing)
-        } catch {
-            fputs("[muesli-native] recorder prepare failed: \(error)\n", stderr)
-            restoreDictationAudioDucking()
-            setState(.idle)
-            meetingMonitor.resumeAfterCooldown()
-            meetingMonitor.refreshState()
+        let sessionID = dictationAudioSessionTracker.begin()
+        let preferredInputDeviceID = cachedPreferredDictationInputDeviceID()
+        beginDictationAudioDucking()
+        prepareDictationRecorderAsync(
+            sessionID: sessionID,
+            preferredInputDeviceID: preferredInputDeviceID
+        )
+    }
+
+    private func handleArm() {
+        if isMeetingRecording() { return }
+        if dictationLatencyTraceID == nil {
+            beginDictationLatencyTrace(reason: "hotkey")
         }
+        markDictationLatency("ui_armed")
+        setState(.preparing)
+        beginDictationAudioDucking()
+        primeDictationRecorderForHotkey(reason: "hotkey-arm")
     }
 
     private var defaultDictationOutputMode: DictationOutputMode {
@@ -3978,6 +4089,159 @@ final class MuesliController: NSObject {
         appState.isVoiceNoteRecording = false
     }
 
+    private var canPrimeDictationRecorder: Bool {
+        config.hasCompletedOnboarding
+            && hasStarted
+            && config.resolvedOnboardingUseCase.includesPushToTalk
+            && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+            && !isMeetingRecording()
+            && !isStartingMeetingRecording
+            && !isStoppingMeetingRecording
+    }
+
+    private func syncDictationRecorderWarmup(reason: String) {
+        guard canPrimeDictationRecorder, selectedBackend.backend != "nemotron" else {
+            recorder.keepsAudioGraphWarm = false
+            let recorder = self.recorder
+            dictationAudioQueue.async {
+                recorder.coolDown()
+                fputs("[dictation-prime] cooled reason=\(reason)\n", stderr)
+            }
+            return
+        }
+
+        recorder.keepsAudioGraphWarm = true
+        let recorder = self.recorder
+        let preferredInputDeviceID = cachedPreferredDictationInputDeviceID()
+        dictationAudioQueue.async { [route = dictationAudioRoutingController.currentRouteDebugDescription()] in
+            do {
+                try recorder.warmUp(preferredInputDeviceID: preferredInputDeviceID)
+                fputs("[dictation-prime] warmed-idle reason=\(reason) \(route)\n", stderr)
+            } catch {
+                fputs("[dictation-prime] idle-warmup failed reason=\(reason) \(route) error=\(error)\n", stderr)
+            }
+        }
+    }
+
+    private func primeDictationRecorderForHotkey(reason: String) {
+        let preferredInputDeviceID = cachedPreferredDictationInputDeviceID()
+        primeDictationRecorderForHotkey(reason: reason, preferredInputDeviceID: preferredInputDeviceID)
+    }
+
+    private func primeDictationRecorderForHotkey(reason: String, preferredInputDeviceID: AudioObjectID?) {
+        guard canPrimeDictationRecorder, selectedBackend.backend != "nemotron" else { return }
+        recorder.keepsAudioGraphWarm = true
+        let recorder = self.recorder
+        markDictationLatency("prime_enqueue:\(reason)")
+        let markLatency: @Sendable (String) -> Void = { [weak self] event in
+            DispatchQueue.main.async { [weak self] in
+                self?.markDictationLatency(event)
+            }
+        }
+        dictationAudioQueue.async { [route = dictationAudioRoutingController.currentRouteDebugDescription(), markLatency] in
+            do {
+                markLatency("activation_begin:\(reason)")
+                try recorder.activateWarmEngine(preferredInputDeviceID: preferredInputDeviceID)
+                markLatency("activation_end:\(reason)")
+                fputs("[dictation-prime] activated reason=\(reason) \(route)\n", stderr)
+            } catch {
+                markLatency("activation_failed:\(reason)")
+                fputs("[dictation-prime] activation failed reason=\(reason) \(route) error=\(error)\n", stderr)
+            }
+        }
+    }
+
+    private func beginDictationLatencyTrace(reason: String) {
+        dictationLatencyTraceID = UUID()
+        dictationLatencyTraceStartedAt = Date()
+        markDictationLatency("trace_begin:\(reason)")
+    }
+
+    private func markDictationLatency(_ event: String) {
+        markDictationLatency(event, at: Date())
+    }
+
+    private func markDictationLatency(_ event: String, at date: Date) {
+        guard let traceID = dictationLatencyTraceID,
+              let startedAt = dictationLatencyTraceStartedAt else { return }
+        let elapsedMS = Int(date.timeIntervalSince(startedAt) * 1000)
+        let timestamp = dictationLatencyTimestampFormatter.string(from: date)
+        let routeKind = dictationAudioRoutingController.currentOutputRouteKindForDebug()
+        let routeDescription = dictationAudioRoutingController.currentRouteDebugDescription()
+        let line = "[dictation-latency] ts=\(timestamp) id=\(traceID.uuidString) event=\(event) elapsed_ms=\(elapsedMS) profile=\(dictationLatencyProfile(routeKind: routeKind)) \(routeDescription)"
+        fputs("\(line)\n", stderr)
+        appendDictationLatencyLog(line)
+    }
+
+    private func dictationLatencyProfile(routeKind: AudioOutputRouteKind) -> String {
+        switch routeKind {
+        case .speakerLike:
+            return "speaker"
+        case .headphoneLike:
+            return "headphone"
+        case .unknown:
+            return "unknown"
+        }
+    }
+
+    private func appendDictationLatencyLog(_ line: String) {
+        let url = dictationLatencyLogURL
+        dictationLatencyLogQueue.async {
+            do {
+                try FileManager.default.createDirectory(
+                    at: url.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                let data = Data((line + "\n").utf8)
+                if FileManager.default.fileExists(atPath: url.path) {
+                    let handle = try FileHandle(forWritingTo: url)
+                    try handle.seekToEnd()
+                    try handle.write(contentsOf: data)
+                    try handle.close()
+                } else {
+                    try data.write(to: url, options: .atomic)
+                }
+            } catch {
+                fputs("[dictation-latency] failed to append log: \(error)\n", stderr)
+            }
+        }
+    }
+
+    private func finishDictationLatencyTrace(_ event: String) {
+        markDictationLatency(event)
+        dictationLatencyTraceID = nil
+        dictationLatencyTraceStartedAt = nil
+    }
+
+    private func configureDictationInputRoute() {
+        recorder.preferredInputDeviceID = dictationAudioRoutingController.preferredInputDeviceIDForDictation()
+        dictationAudioRoutingController.refreshRouteCache()
+    }
+
+    private func preferredDictationInputDeviceID() -> AudioObjectID? {
+        dictationAudioRoutingController.preferredInputDeviceIDForDictation()
+    }
+
+    private func cachedPreferredDictationInputDeviceID() -> AudioObjectID? {
+        dictationAudioRoutingController.cachedPreferredInputDeviceIDForDictation()
+    }
+
+    private func resetDictationInputRoute() {
+        recorder.preferredInputDeviceID = nil
+    }
+
+    private func beginDictationInputOverride() {
+        dictationAudioRoutingController.beginDictationInputOverride()
+    }
+
+    private func restoreDictationInputOverride() {
+        dictationAudioRoutingController.restoreDictationInputOverride()
+    }
+
+    private var shouldPlayDictationLifecycleSounds: Bool {
+        config.soundEnabled && !dictationAudioRoutingController.isDefaultOutputHeadphoneLike()
+    }
+
     private func beginDictationAudioDucking() {
         audioDuckingController.beginDictationDucking(enabled: config.muteSystemAudioDuringDictation)
     }
@@ -3990,6 +4254,161 @@ final class MuesliController: NSObject {
         audioDuckingController.restoreDictationDucking()
     }
 
+    private func prepareDictationRecorderAsync(
+        sessionID: UUID,
+        preferredInputDeviceID: AudioObjectID?
+    ) {
+        let recorder = self.recorder
+        let tracker = dictationAudioSessionTracker
+        let markLatency: @Sendable (String) -> Void = { [weak self] event in
+            DispatchQueue.main.async { [weak self] in
+                self?.markDictationLatency(event)
+            }
+        }
+        dictationAudioQueue.async { [recorder, tracker, markLatency] in
+            guard tracker.isCurrent(sessionID) else { return }
+            recorder.preferredInputDeviceID = preferredInputDeviceID
+            do {
+                markLatency("prepare_begin")
+                try recorder.prepare()
+                markLatency("prepare_end")
+                DispatchQueue.main.async { [weak self] in
+                    self?.handleDictationPrepareFinished(sessionID: sessionID, error: nil)
+                }
+            } catch {
+                recorder.cancel()
+                let shouldReportFailure = tracker.isCurrent(sessionID)
+                if shouldReportFailure {
+                    tracker.finish(sessionID)
+                }
+                DispatchQueue.main.async { [weak self] in
+                    self?.handleDictationPrepareFinished(
+                        sessionID: sessionID,
+                        error: error,
+                        shouldReportFailure: shouldReportFailure
+                    )
+                }
+            }
+        }
+    }
+
+    private func handleDictationPrepareFinished(
+        sessionID: UUID,
+        error: Error?,
+        shouldReportFailure: Bool = false
+    ) {
+        guard let error else { return }
+        guard shouldReportFailure else { return }
+        fputs("[muesli-native] recorder prepare failed: \(error)\n", stderr)
+        restoreDictationAudioDucking()
+        restoreDictationInputOverride()
+        resetDictationInputRoute()
+        setState(.idle)
+        meetingMonitor.resumeAfterCooldown()
+        meetingMonitor.refreshState()
+        finishDictationLatencyTrace("prepare_failed")
+        syncDictationRecorderWarmup(reason: "prepare-failed")
+    }
+
+    private func startDictationRecorderAsync(sessionID: UUID) {
+        let recorder = self.recorder
+        let tracker = dictationAudioSessionTracker
+        let markLatency: @Sendable (String) -> Void = { [weak self] event in
+            DispatchQueue.main.async { [weak self] in
+                self?.markDictationLatency(event)
+            }
+        }
+        dictationAudioQueue.async { [recorder, tracker, markLatency] in
+            guard tracker.isCurrent(sessionID) else { return }
+            do {
+                markLatency("start_begin")
+                try recorder.start()
+                markLatency("start_end")
+                DispatchQueue.main.async { [weak self] in
+                    self?.handleDictationStartFinished(sessionID: sessionID, error: nil)
+                }
+            } catch {
+                recorder.cancel()
+                tracker.finish(sessionID)
+                DispatchQueue.main.async { [weak self] in
+                    self?.handleDictationStartFinished(sessionID: sessionID, error: error)
+                }
+            }
+        }
+    }
+
+    private func handleDictationStartFinished(sessionID: UUID, error: Error?) {
+        if let error {
+            fputs("[muesli-native] recorder start failed: \(error)\n", stderr)
+            restoreDictationAudioDucking()
+            restoreDictationInputOverride()
+            resetDictationInputRoute()
+            resetDictationOutputMode()
+            dictationStartedAt = nil
+            setState(.idle)
+            meetingMonitor.resumeAfterCooldown()
+            meetingMonitor.refreshState()
+            finishDictationLatencyTrace("start_failed")
+            syncDictationRecorderWarmup(reason: "start-failed")
+            return
+        }
+
+        guard dictationAudioSessionTracker.isCurrent(sessionID) else { return }
+        markDictationLatency("start_success")
+        if dictationStartedAt == nil {
+            dictationStartedAt = Date()
+        }
+        capturedDictationContext = nil
+        if !isDictationTestMode {
+            indicator.powerProvider = { [weak self] in
+                self?.recorder.currentPower() ?? -160
+            }
+        }
+        if hotkeyMonitor.isToggleRecording {
+            indicator.setToggleDictation(true, config: config)
+        } else {
+            setState(.recording)
+        }
+        if isDictationTestMode {
+            dictationTestRecordingStarted?()
+        }
+        SoundController.playDictationStart(enabled: shouldPlayDictationLifecycleSounds && !isDictationTestMode)
+
+        if config.enableScreenContext
+            && CGPreflightScreenCaptureAccess()
+            && config.enablePostProcessor
+            && !isDictationTestMode {
+            capturedDictationContext = DictationContextCapture.capture()
+        }
+    }
+
+    private func stopDictationRecorderAsync(sessionID: UUID, startedAt: Date) {
+        let recorder = self.recorder
+        let tracker = dictationAudioSessionTracker
+        dictationAudioQueue.async { [recorder, tracker] in
+            let wavURL: URL?
+            if tracker.isCurrent(sessionID) {
+                wavURL = recorder.stop()
+                recorder.preferredInputDeviceID = nil
+                tracker.finish(sessionID)
+            } else {
+                wavURL = nil
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.finishStandardDictationStop(wavURL: wavURL, startedAt: startedAt)
+            }
+        }
+    }
+
+    private func cancelDictationRecorderAsync() {
+        let recorder = self.recorder
+        dictationAudioSessionTracker.finishAll()
+        dictationAudioQueue.async { [recorder] in
+            recorder.cancel()
+            recorder.preferredInputDeviceID = nil
+        }
+    }
+
     private func handleStart() {
         if isMeetingRecording() { return }
 
@@ -3997,53 +4416,44 @@ final class MuesliController: NSObject {
         if selectedBackend.backend == "nemotron" {
             recorder.cancel()
             restoreDictationAudioDucking()
+            restoreDictationInputOverride()
+            resetDictationInputRoute()
             fputs("[muesli-native] hold-to-talk blocked for Nemotron, showing warning\n", stderr)
             indicator.showWarning("Double-tap for Nemotron handsfree mode", icon: "⚡")
+            finishDictationLatencyTrace("nemotron_hold_blocked")
             return
         }
 
         fputs("[muesli-native] recording start\n", stderr)
         meetingMonitor.suppressWhileActive()
-        beginDictationOutput()
-
-        do {
-            ensureDictationAudioDucked()
-            try recorder.start()
-            dictationStartedAt = Date()
-            capturedDictationContext = nil
-            if config.enableScreenContext
-                && CGPreflightScreenCaptureAccess()
-                && config.enablePostProcessor
-                && !isDictationTestMode {
-                capturedDictationContext = DictationContextCapture.capture()
-            }
-            if !isDictationTestMode {
-                indicator.powerProvider = { [weak self] in
-                    self?.recorder.currentPower() ?? -160
-                }
-            }
-            setState(.recording)
-            if isDictationTestMode {
-                dictationTestRecordingStarted?()
-            }
-            SoundController.playDictationStart(enabled: config.soundEnabled && !isDictationTestMode)
-        } catch {
-            fputs("[muesli-native] recorder start failed: \(error)\n", stderr)
-            restoreDictationAudioDucking()
-            resetDictationOutputMode()
-            setState(.idle)
-            meetingMonitor.resumeAfterCooldown()
-            meetingMonitor.refreshState()
+        guard let sessionID = dictationAudioSessionTracker.current() else {
+            finishDictationLatencyTrace("start_without_session")
+            return
         }
+        beginDictationOutput()
+        dictationStartedAt = Date()
+        capturedDictationContext = nil
+        if !isDictationTestMode {
+            indicator.powerProvider = { [weak self] in
+                self?.recorder.currentPower() ?? -160
+            }
+        }
+        setState(.recording)
+        markDictationLatency("ui_recording")
+        ensureDictationAudioDucked()
+        startDictationRecorderAsync(sessionID: sessionID)
     }
 
     @available(macOS 15, *)
-    private func startNemotronStreamingAsync() {
+    private func startNemotronStreamingAsync(preferredInputDeviceID: AudioObjectID?) {
         Task {
             let transcriber = await transcriptionCoordinator.getNemotronTranscriber()
             fputs("[muesli-native] got Nemotron transcriber\n", stderr)
 
-            let controller = StreamingDictationController(transcriber: transcriber)
+            let controller = StreamingDictationController(
+                transcriber: transcriber,
+                preferredInputDeviceID: preferredInputDeviceID
+            )
             controller.onPartialText = { [weak self] fullText in
                 guard let self else { return }
                 let delta = String(fullText.dropFirst(self.previousStreamText.count))
@@ -4080,20 +4490,37 @@ final class MuesliController: NSObject {
             previousStreamText = ""
         }
 
-        recorder.cancel()
+        cancelDictationRecorderAsync()
         restoreDictationAudioDucking()
+        restoreDictationInputOverride()
+        resetDictationInputRoute()
         capturedDictationContext = nil
         dictationStartedAt = nil
         setState(.idle)
         meetingMonitor.resumeAfterCooldown()
+        finishDictationLatencyTrace("cancelled")
+        syncDictationRecorderWarmup(reason: "cancel")
     }
 
     private func handleToggleStart(outputMode: DictationOutputMode? = nil) {
         if isMeetingRecording() { return }
         fputs("[muesli-native] toggle dictation start\n", stderr)
+        if dictationLatencyTraceID == nil {
+            beginDictationLatencyTrace(reason: "toggle")
+        }
+        markDictationLatency("toggle_start")
         meetingMonitor.suppressWhileActive()
+        let preferredInputDeviceID = cachedPreferredDictationInputDeviceID()
         beginDictationAudioDucking()
         beginDictationOutput(mode: outputMode)
+        dictationStartedAt = Date()
+        if !isDictationTestMode {
+            indicator.powerProvider = { [weak self] in
+                self?.recorder.currentPower() ?? -160
+            }
+        }
+        indicator.setToggleDictation(true, config: config)
+        markDictationLatency("ui_recording")
 
         // Nemotron streaming: live text at cursor in handsfree mode too
         if selectedBackend.backend == "nemotron" {
@@ -4105,35 +4532,18 @@ final class MuesliController: NSObject {
                 indicator.setToggleDictation(true, config: config)
                 ensureDictationAudioDucked()
                 fputs("[muesli-native] Nemotron streaming toggle mode active\n", stderr)
-                startNemotronStreamingAsync()
+                startNemotronStreamingAsync(preferredInputDeviceID: preferredInputDeviceID)
                 return
             }
         }
 
-        do {
-            try recorder.prepare()
-            ensureDictationAudioDucked()
-            try recorder.start()
-            dictationStartedAt = Date()
-            capturedDictationContext = nil
-            if config.enableScreenContext
-                && CGPreflightScreenCaptureAccess()
-                && config.enablePostProcessor
-                && !isDictationTestMode {
-                capturedDictationContext = DictationContextCapture.capture()
-            }
-            indicator.powerProvider = { [weak self] in
-                self?.recorder.currentPower() ?? -160
-            }
-            indicator.setToggleDictation(true, config: config)
-        } catch {
-            fputs("[muesli-native] toggle start failed: \(error)\n", stderr)
-            restoreDictationAudioDucking()
-            resetDictationOutputMode()
-            setState(.idle)
-            meetingMonitor.resumeAfterCooldown()
-            meetingMonitor.refreshState()
-        }
+        let sessionID = dictationAudioSessionTracker.begin()
+        prepareDictationRecorderAsync(
+            sessionID: sessionID,
+            preferredInputDeviceID: preferredInputDeviceID
+        )
+        ensureDictationAudioDucked()
+        startDictationRecorderAsync(sessionID: sessionID)
     }
 
     private func handleToggleStop() {
@@ -4167,6 +4577,8 @@ final class MuesliController: NSObject {
                 fputs("[muesli-native] Nemotron streaming stop, controller not ready (short press)\n", stderr)
             }
             restoreDictationAudioDucking()
+            restoreDictationInputOverride()
+            resetDictationInputRoute()
             _streamingDictationController = nil
             previousStreamText = ""
 
@@ -4192,17 +4604,36 @@ final class MuesliController: NSObject {
             setState(.idle)
             meetingMonitor.resumeAfterCooldown()
             fputs("[muesli-native] Nemotron streaming done (\(String(format: "%.1f", duration))s)\n", stderr)
+            finishDictationLatencyTrace("nemotron_stop")
             return
         }
 
-        // Standard path: stop recording → transcribe → paste
-        let stoppedWavURL = recorder.stop()
+        guard let sessionID = dictationAudioSessionTracker.current() else {
+            restoreDictationAudioDucking()
+            restoreDictationInputOverride()
+            resetDictationInputRoute()
+            resetDictationOutputMode()
+            setState(.idle)
+            meetingMonitor.resumeAfterCooldown()
+            finishDictationLatencyTrace("stop_without_session")
+            syncDictationRecorderWarmup(reason: "stop-without-session")
+            return
+        }
         restoreDictationAudioDucking()
+        stopDictationRecorderAsync(sessionID: sessionID, startedAt: startedAt)
+    }
+
+    private func finishStandardDictationStop(wavURL stoppedWavURL: URL?, startedAt: Date) {
+        restoreDictationInputOverride()
+        resetDictationInputRoute()
+        markDictationLatency("stop_finished")
         guard let wavURL = stoppedWavURL else {
             fputs("[muesli-native] stop without wav\n", stderr)
             resetDictationOutputMode()
             setState(.idle)
             meetingMonitor.resumeAfterCooldown()
+            finishDictationLatencyTrace("stop_without_wav")
+            syncDictationRecorderWarmup(reason: "stop-without-wav")
             return
         }
         let duration = max(Date().timeIntervalSince(startedAt), 0)
@@ -4215,10 +4646,14 @@ final class MuesliController: NSObject {
             resetDictationOutputMode()
             setState(.idle)
             meetingMonitor.resumeAfterCooldown()
+            finishDictationLatencyTrace("short_recording")
+            syncDictationRecorderWarmup(reason: "short-recording")
             return
         }
 
         setState(.transcribing)
+        finishDictationLatencyTrace("ready_for_transcription")
+        syncDictationRecorderWarmup(reason: "dictation-stop")
         let isTestMode = isDictationTestMode
         let outputMode = currentDictationOutputMode
         let transcriptionBackend = isTestMode ? (dictationTestBackend ?? selectedBackend) : selectedBackend
@@ -4278,10 +4713,10 @@ final class MuesliController: NSObject {
                     self.historyWindowController?.reload()
                     self.syncAppState()
                     if outputMode == .voiceNote {
-                        SoundController.playDictationInsert(enabled: self.config.soundEnabled)
+                        SoundController.playDictationInsert(enabled: self.shouldPlayDictationLifecycleSounds)
                     } else {
                         PasteController.paste(text: text)
-                        SoundController.playDictationInsert(enabled: self.config.soundEnabled)
+                        SoundController.playDictationInsert(enabled: self.shouldPlayDictationLifecycleSounds)
                     }
                     self.resetDictationOutputMode()
                     self.setState(.idle)

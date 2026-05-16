@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreAudio
 import Foundation
 import os
 
@@ -9,6 +10,7 @@ final class StreamingMicRecorder {
     var onAudioBuffer: (([Float]) -> Void)?
     /// Called with 16-bit PCM mono samples for retained meeting recording.
     var onPCMSamples: (([Int16]) -> Void)?
+    var preferredInputDeviceID: AudioObjectID?
 
     private let engine = AVAudioEngine()
     private let lock = OSAllocatedUnfairLock(initialState: FileState())
@@ -26,6 +28,12 @@ final class StreamingMicRecorder {
     private static let bufferSize: AVAudioFrameCount = 4096 // 256ms at 16kHz
 
     func prepare() throws {
+        AudioInputDeviceSelection.applyPreferredInputDeviceID(
+            preferredInputDeviceID,
+            to: engine,
+            logPrefix: "streaming-mic"
+        )
+
         let inputNode = engine.inputNode
         let hwFormat = inputNode.outputFormat(forBus: 0)
         guard hwFormat.sampleRate > 0 else {

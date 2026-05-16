@@ -420,6 +420,7 @@ struct AppConfigTests {
         #expect(config.enableComputerUsePlanner == true)
         #expect(config.computerUsePlannerModel.isEmpty)
         #expect(config.computerUseTimeoutSeconds == 120)
+        #expect(config.hotkeyTriggerThresholdMS == HotkeyTriggerTiming.defaultThresholdMilliseconds)
         #expect(config.showFloatingIndicator == true)
         #expect(config.indicatorAnchor == .midTrailing)
         #expect(config.hasCompletedOnboarding == false)
@@ -460,6 +461,7 @@ struct AppConfigTests {
         config.enableComputerUsePlanner = false
         config.computerUsePlannerModel = "gpt-5.4"
         config.computerUseTimeoutSeconds = 180
+        config.hotkeyTriggerThresholdMS = 125
 
         let data = try JSONEncoder().encode(config)
         let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
@@ -487,6 +489,7 @@ struct AppConfigTests {
         #expect(decoded.enableComputerUsePlanner == false)
         #expect(decoded.computerUsePlannerModel == "gpt-5.4")
         #expect(decoded.computerUseTimeoutSeconds == 180)
+        #expect(decoded.hotkeyTriggerThresholdMS == 125)
     }
 
     @Test("JSON coding keys use snake_case")
@@ -503,6 +506,7 @@ struct AppConfigTests {
         #expect(json["enable_computer_use_planner"] != nil)
         #expect(json["computer_use_planner_model"] != nil)
         #expect(json["computer_use_timeout_seconds"] != nil)
+        #expect(json["hotkey_trigger_threshold_ms"] != nil)
         #expect(json["cohere_language"] != nil)
         #expect(json["meeting_transcription_backend"] != nil)
         #expect(json["meeting_transcription_model"] != nil)
@@ -544,6 +548,7 @@ struct AppConfigTests {
         #expect(config.enableComputerUsePlanner == true)
         #expect(config.computerUsePlannerModel.isEmpty)
         #expect(config.computerUseTimeoutSeconds == 120)
+        #expect(config.hotkeyTriggerThresholdMS == HotkeyTriggerTiming.defaultThresholdMilliseconds)
         #expect(config.meetingHookEnabled == false)
         #expect(config.meetingHookPath.isEmpty)
         #expect(config.meetingHookTimeoutSeconds == 30)
@@ -954,6 +959,101 @@ struct HotkeyMonitorTests {
                 firstResponder: textView
             ) == true
         )
+    }
+
+    @Test("trigger threshold derives prepare and start delays")
+    func triggerThresholdTiming() {
+        #expect(HotkeyTriggerTiming.clampedMilliseconds(10) == HotkeyTriggerTiming.minThresholdMilliseconds)
+        #expect(HotkeyTriggerTiming.clampedMilliseconds(2_000) == HotkeyTriggerTiming.maxThresholdMilliseconds)
+        #expect(HotkeyTriggerTiming.startDelay(forThresholdMilliseconds: 250) == 0.25)
+        #expect(HotkeyTriggerTiming.prepareDelay(forThresholdMilliseconds: 250) == 0.15)
+        #expect(HotkeyTriggerTiming.prepareDelay(forThresholdMilliseconds: 100) == 0)
+    }
+
+    @Test("low trigger threshold still allows double-tap toggle")
+    @MainActor
+    func lowTriggerThresholdStillAllowsDoubleTapToggle() async throws {
+        let monitor = HotkeyMonitor(doubleTapWindow: 0.35)
+        monitor.configureTriggerThreshold(milliseconds: 75)
+        var prepareCount = 0
+        var toggleStartCount = 0
+        monitor.onPrepare = {
+            prepareCount += 1
+        }
+        monitor.onToggleStart = {
+            toggleStartCount += 1
+        }
+
+        monitor.handleFlagsChanged(keyCode: 55, flags: .command)
+        try await Task.sleep(for: .milliseconds(100))
+        monitor.handleFlagsChanged(keyCode: 55, flags: [])
+        monitor.handleFlagsChanged(keyCode: 55, flags: .command)
+
+        #expect(prepareCount == 0)
+        #expect(toggleStartCount == 1)
+    }
+
+    @Test("low trigger threshold arms immediately but defers audio while double-tap is possible")
+    @MainActor
+    func lowTriggerThresholdArmsImmediatelyButDefersAudio() async throws {
+        let monitor = HotkeyMonitor(doubleTapWindow: 0.35)
+        monitor.configureTriggerThreshold(milliseconds: 75)
+        var armCount = 0
+        var prepareCount = 0
+        var startCount = 0
+        monitor.onArm = {
+            armCount += 1
+        }
+        monitor.onPrepare = {
+            prepareCount += 1
+        }
+        monitor.onStart = {
+            startCount += 1
+        }
+
+        monitor.handleFlagsChanged(keyCode: 55, flags: .command)
+        #expect(armCount == 1)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(prepareCount == 0)
+        #expect(startCount == 0)
+        monitor.handleFlagsChanged(keyCode: 55, flags: [])
+    }
+
+    @Test("quick armed tap cancels after double-tap window")
+    @MainActor
+    func quickArmedTapCancelsAfterDoubleTapWindow() async throws {
+        let monitor = HotkeyMonitor(doubleTapWindow: 0.05)
+        monitor.configureTriggerThreshold(milliseconds: 75)
+        var cancelCount = 0
+        monitor.onArm = {}
+        monitor.onCancel = {
+            cancelCount += 1
+        }
+
+        monitor.handleFlagsChanged(keyCode: 55, flags: .command)
+        monitor.handleFlagsChanged(keyCode: 55, flags: [])
+        #expect(cancelCount == 0)
+
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(cancelCount == 1)
+    }
+
+    @Test("low trigger threshold starts quickly when double-tap is disabled")
+    @MainActor
+    func lowTriggerThresholdStartsQuicklyWhenDoubleTapDisabled() async throws {
+        let monitor = HotkeyMonitor(doubleTapWindow: 0.35)
+        monitor.configureTriggerThreshold(milliseconds: 75)
+        monitor.doubleTapEnabled = false
+        var startCount = 0
+        monitor.onStart = {
+            startCount += 1
+        }
+
+        monitor.handleFlagsChanged(keyCode: 55, flags: .command)
+        try await Task.sleep(for: .milliseconds(100))
+        monitor.handleFlagsChanged(keyCode: 55, flags: [])
+
+        #expect(startCount == 1)
     }
 }
 

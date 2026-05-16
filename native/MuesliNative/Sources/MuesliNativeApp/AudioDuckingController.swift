@@ -7,14 +7,23 @@ protocol AudioDuckingManaging: AnyObject {
     func restoreDictationDucking()
 }
 
-enum AudioOutputActivityStatus: Equatable {
+enum AudioOutputActivityStatus: Equatable, CustomStringConvertible {
     case active
     case inactive
     case unknown
+
+    var description: String {
+        switch self {
+        case .active: return "active"
+        case .inactive: return "inactive"
+        case .unknown: return "unknown"
+        }
+    }
 }
 
 protocol AudioDuckingDeviceClient {
     func outputActivityStatus() -> AudioOutputActivityStatus
+    func defaultOutputRouteKind() -> AudioOutputRouteKind
     func defaultOutputDeviceID() -> AudioObjectID?
     func isDeviceAvailable(_ deviceID: AudioObjectID) -> Bool
     func nominalSampleRate(for deviceID: AudioObjectID) -> Double?
@@ -69,19 +78,19 @@ final class AudioDuckingController: AudioDuckingManaging {
     }
 
     func beginDictationDucking(enabled: Bool) {
-        queue.sync {
-            restoreWorkItem?.cancel()
-            restoreWorkItem = nil
-            duckingEnabledForSession = enabled
-            guard enabled, shouldDuckCurrentOutput() else { return }
-            duckCurrentDefaultDevice()
+        queue.async { [self] in
+            self.restoreWorkItem?.cancel()
+            self.restoreWorkItem = nil
+            self.duckingEnabledForSession = enabled
+            guard enabled, self.shouldDuckCurrentOutput() else { return }
+            self.duckCurrentDefaultDevice()
         }
     }
 
     func ensureCurrentDefaultDucked() {
-        queue.sync {
-            guard duckingEnabledForSession, shouldDuckCurrentOutput() else { return }
-            duckCurrentDefaultDevice()
+        queue.async { [self] in
+            guard self.duckingEnabledForSession, self.shouldDuckCurrentOutput() else { return }
+            self.duckCurrentDefaultDevice()
         }
     }
 
@@ -101,6 +110,9 @@ final class AudioDuckingController: AudioDuckingManaging {
     }
 
     private func shouldDuckCurrentOutput() -> Bool {
+        guard client.defaultOutputRouteKind() != .headphoneLike else {
+            return false
+        }
         switch client.outputActivityStatus() {
         case .active, .unknown:
             return true
@@ -183,6 +195,11 @@ final class AudioDuckingController: AudioDuckingManaging {
 
 final class CoreAudioDuckingDeviceClient: AudioDuckingDeviceClient {
     private let currentProcessID = ProcessInfo.processInfo.processIdentifier
+    private let inspector: CoreAudioDeviceInspector
+
+    init(inspector: CoreAudioDeviceInspector = CoreAudioDeviceInspector()) {
+        self.inspector = inspector
+    }
 
     func outputActivityStatus() -> AudioOutputActivityStatus {
         guard let processIDs = processObjectIDs() else { return .unknown }
@@ -196,48 +213,21 @@ final class CoreAudioDuckingDeviceClient: AudioDuckingDeviceClient {
         return .inactive
     }
 
+    func defaultOutputRouteKind() -> AudioOutputRouteKind {
+        guard let deviceID = defaultOutputDeviceID() else { return .unknown }
+        return inspector.outputRouteKind(for: deviceID)
+    }
+
     func defaultOutputDeviceID() -> AudioObjectID? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var deviceID = AudioObjectID(kAudioObjectUnknown)
-        var dataSize = UInt32(MemoryLayout<AudioObjectID>.size)
-        guard AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &address,
-            0,
-            nil,
-            &dataSize,
-            &deviceID
-        ) == noErr, deviceID != AudioObjectID(kAudioObjectUnknown) else {
-            return nil
-        }
-        return deviceID
+        inspector.defaultOutputDeviceID()
     }
 
     func isDeviceAvailable(_ deviceID: AudioObjectID) -> Bool {
-        deviceID != AudioObjectID(kAudioObjectUnknown) && hasProperty(
-            kAudioObjectPropertyName,
-            objectID: deviceID,
-            scope: kAudioObjectPropertyScopeGlobal,
-            element: kAudioObjectPropertyElementMain
-        )
+        inspector.isDeviceAvailable(deviceID)
     }
 
     func nominalSampleRate(for deviceID: AudioObjectID) -> Double? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyNominalSampleRate,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var sampleRate = Float64(0)
-        var dataSize = UInt32(MemoryLayout<Float64>.size)
-        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, &sampleRate) == noErr else {
-            return nil
-        }
-        return sampleRate
+        inspector.nominalSampleRate(for: deviceID)
     }
 
     func muteElements(for deviceID: AudioObjectID) -> [AudioObjectPropertyElement] {
