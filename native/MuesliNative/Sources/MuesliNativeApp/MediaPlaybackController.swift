@@ -42,8 +42,10 @@ final class MediaPlaybackController: MediaPlaybackManaging {
             pausedForSession = false
             // macOS exposes a reliable public media key toggle, not a global
             // "resume only what I paused" API. Resume only when output still
-            // looks inactive so we do not pause user-started playback.
-            guard client.outputActivityStatus() == .inactive else { return }
+            // does not look active so we do not pause user-started playback.
+            // If activity is unknown, prefer restoring media we know Muesli
+            // paused over leaving playback stranded.
+            guard client.outputActivityStatus() != .active else { return }
             client.sendMediaPlayPauseToggle()
         }
     }

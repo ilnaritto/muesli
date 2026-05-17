@@ -67,6 +67,20 @@ struct MediaPlaybackControllerTests {
         #expect(client.toggleCalls == 1)
     }
 
+    @Test("restore resumes when output activity is unknown")
+    func restoreResumesWhenActivityIsUnknown() {
+        let client = FakeMediaPlaybackClient(activityStatus: .active)
+        let controller = makeController(client: client)
+
+        controller.beginDictationMediaPause(enabled: true, routeKind: .speakerLike)
+        controller.waitForIdle()
+        client.activityStatus = .unknown
+        controller.restoreDictationMediaPause()
+        controller.waitForIdle()
+
+        #expect(client.toggleCalls == 2)
+    }
+
     @Test("duplicate begin only pauses once")
     func duplicateBeginOnlyPausesOnce() {
         let client = FakeMediaPlaybackClient(activityStatus: .active)
