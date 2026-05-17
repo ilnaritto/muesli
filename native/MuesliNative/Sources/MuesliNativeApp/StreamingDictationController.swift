@@ -60,6 +60,9 @@ final class StreamingDictationController {
     private let queueLock = OSAllocatedUnfairLock()
     private var isDraining = false
     private let drainLock = OSAllocatedUnfairLock()
+    private var isStopping = false
+    private var stopCompletions: [(String) -> Void] = []
+    private let stopLock = OSAllocatedUnfairLock()
     private var fullTranscript = ""
     private var isActive = false
     private var activeSessionID: UUID?
@@ -112,6 +115,10 @@ final class StreamingDictationController {
         fullTranscript = ""
         sampleBuffer.removeAll()
         chunkQueue.removeAll()
+        stopLock.withLock {
+            isStopping = false
+            stopCompletions.removeAll()
+        }
         streamState = nil
         drainLock.withLock {
             isDraining = false
@@ -155,6 +162,13 @@ final class StreamingDictationController {
             completion(fullTranscript)
             return
         }
+        let shouldStartStop = stopLock.withLock {
+            stopCompletions.append(completion)
+            guard !isStopping else { return false }
+            isStopping = true
+            return true
+        }
+        guard shouldStartStop else { return }
         isActive = false
 
         let _ = recorder.stop()
@@ -186,13 +200,13 @@ final class StreamingDictationController {
                 timeout: Self.stopStreamStateTimeout
             )
             guard self.isCurrentSession(sessionID) else {
-                completion(self.fullTranscript)
+                self.completeStop(with: self.fullTranscript)
                 return
             }
             self.startDrainIfNeeded(sessionID: sessionID)
             await self.waitForDrain(sessionID: sessionID, timeout: Self.stopDrainTimeout)
             let transcript = self.finishStoppedSession(sessionID: sessionID)
-            completion(transcript)
+            self.completeStop(with: transcript)
         }
     }
 
@@ -211,6 +225,7 @@ final class StreamingDictationController {
         activeSessionID = nil
         streamStateTask?.cancel()
         streamStateTask = nil
+        completeStop(with: fullTranscript)
         if cancelRecorder {
             recorder.cancel()
         }
@@ -224,6 +239,18 @@ final class StreamingDictationController {
             isDraining = false
         }
         streamState = nil
+    }
+
+    private func completeStop(with transcript: String) {
+        let completions = stopLock.withLock {
+            let completions = stopCompletions
+            stopCompletions.removeAll()
+            isStopping = false
+            return completions
+        }
+        for completion in completions {
+            completion(transcript)
+        }
     }
 
     // MARK: - Audio Buffer Handling

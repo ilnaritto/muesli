@@ -165,6 +165,31 @@ struct StreamingDictationControllerTests {
     }
 
     @available(macOS 15, *)
+    @Test("concurrent stops share one drain and transcript")
+    func concurrentStopsShareOneDrainAndTranscript() async {
+        let transcriber = DelayedNemotronStreamingTranscriber()
+        let recorder = InspectableStreamingDictationRecorder()
+        let controller = StreamingDictationController(
+            transcriber: transcriber,
+            recorder: recorder
+        )
+
+        #expect(controller.start() == true)
+        recorder.emit(samples: [Float](repeating: 0.2, count: 8960))
+
+        async let firstStop = stop(controller)
+        async let secondStop = stop(controller)
+        try? await Task.sleep(for: .milliseconds(25))
+        #expect(recorder.stopCalls == 1)
+        #expect(await transcriber.transcribeCalls == 0)
+
+        await transcriber.releaseState()
+        let results = await [firstStop, secondStop]
+        #expect(results == [" hello", " hello"])
+        #expect(await transcriber.transcribeCalls == 1)
+    }
+
+    @available(macOS 15, *)
     @Test("stop completes when stream state initialization stalls")
     func stopCompletesWhenStreamStateInitializationStalls() async {
         let transcriber = HangingNemotronStreamingTranscriber()
