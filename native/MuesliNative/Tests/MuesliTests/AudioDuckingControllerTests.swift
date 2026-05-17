@@ -239,6 +239,37 @@ struct AudioDuckingControllerTests {
         #expect(client.muteValues[.init(1, kAudioObjectPropertyElementMain)] == false)
     }
 
+    @Test("rapid second dictation re-ducks after restore stabilization")
+    func rapidSecondDictationReducksAfterRestoreStabilization() {
+        let client = FakeAudioDuckingDeviceClient()
+        client.activityStatus = .active
+        client.defaultDeviceID = 1
+        client.availableDevices = [1]
+        client.muteElementsByDevice[1] = [kAudioObjectPropertyElementMain]
+        client.muteValues[.init(1, kAudioObjectPropertyElementMain)] = false
+        client.sampleRateValues[1] = [48_000, 24_000, 24_000, 24_000]
+
+        let controller = AudioDuckingController(
+            client: client,
+            queue: DispatchQueue(label: "test.audio-ducking.rapid-turnover"),
+            stabilizationTimeout: 0.05,
+            stabilizationPollInterval: 0.001
+        )
+
+        controller.beginDictationDucking(enabled: true)
+        controller.waitForIdle()
+        controller.restoreDictationDucking()
+        controller.beginDictationDucking(enabled: true)
+        controller.waitForIdle()
+
+        #expect(client.muteValues[.init(1, kAudioObjectPropertyElementMain)] == true)
+        #expect(client.muteSetCalls == [
+            .init(deviceID: 1, element: kAudioObjectPropertyElementMain, value: true),
+            .init(deviceID: 1, element: kAudioObjectPropertyElementMain, value: false),
+            .init(deviceID: 1, element: kAudioObjectPropertyElementMain, value: true),
+        ])
+    }
+
     private func makeController(client: FakeAudioDuckingDeviceClient) -> AudioDuckingController {
         AudioDuckingController(
             client: client,

@@ -146,26 +146,21 @@ final class DictationAudioSessionManager: @unchecked Sendable {
     }
 
     func beginRecording(mode: String, duckingEnabled: Bool) {
-        let hadExistingSession = currentSessionID != nil
         let sessionID = ensureSession()
         queue.async { [self] in
             self.cancelPendingRouteRefreshLocked()
             guard self.isCurrent(sessionID) else { return }
-            let canUseArmedRouteSnapshot: Bool
             switch self.stateStorage {
             case .acquiringAudio, .streamActive, .speechDetected:
                 self.emitLatency("activation_reused:\(mode)")
                 return
-            case .armed(let id) where id == sessionID && hadExistingSession:
-                canUseArmedRouteSnapshot = true
             default:
-                canUseArmedRouteSnapshot = false
                 break
             }
             self.stateStorage = .acquiringAudio(sessionID)
             self.emit(.acquiringAudio(sessionID))
             self.emitLatency("threshold_met:\(mode)")
-            self.routeSnapshot = self.makeRouteSnapshot(refreshInput: !canUseArmedRouteSnapshot)
+            self.routeSnapshot = self.makeRouteSnapshot(refreshInput: true)
             self.beginDuckingIfNeeded(duckingEnabled: duckingEnabled)
             self.duckingController.ensureCurrentDefaultDucked()
             self.recorder.preferredInputDeviceID = self.routeSnapshot.preferredInputDeviceID

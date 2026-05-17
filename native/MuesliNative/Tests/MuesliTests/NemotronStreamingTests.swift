@@ -90,6 +90,37 @@ struct StreamingDictationControllerTests {
         #expect(recorder.prepareCalls == 2)
         #expect(recorder.cancelCalls == 2)
     }
+
+    @available(macOS 15, *)
+    @Test("stream state failure cancels mic session and permits retry")
+    func streamStateFailureCancelsMicSessionAndPermitsRetry() async {
+        let transcriber = FailingNemotronStreamingTranscriber()
+        let recorder = InspectableStreamingDictationRecorder()
+        let failures = FailureCounter()
+        let controller = StreamingDictationController(
+            transcriber: transcriber,
+            recorder: recorder
+        )
+        controller.onFailure = { _ in
+            failures.increment()
+        }
+
+        #expect(controller.start() == true)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        #expect(transcriber.makeStateCalls == 1)
+        #expect(recorder.prepareCalls == 1)
+        #expect(recorder.startCalls == 1)
+        #expect(recorder.cancelCalls == 1)
+        #expect(failures.value == 1)
+
+        #expect(controller.start() == true)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        #expect(transcriber.makeStateCalls == 2)
+        #expect(recorder.prepareCalls == 2)
+        #expect(recorder.startCalls == 2)
+        #expect(recorder.cancelCalls == 2)
+        #expect(failures.value == 2)
+    }
 }
 
 private final class FailingStreamingDictationRecorder: StreamingDictationRecording {
@@ -114,6 +145,64 @@ private final class FailingStreamingDictationRecorder: StreamingDictationRecordi
 
     func cancel() {
         cancelCalls += 1
+    }
+}
+
+@available(macOS 15, *)
+private final class FailingNemotronStreamingTranscriber: NemotronStreamingTranscribing {
+    var makeStateCalls = 0
+
+    func makeStreamState() async throws -> NemotronStreamingTranscriber.StreamState {
+        makeStateCalls += 1
+        throw NSError(domain: "FailingNemotronStreamingTranscriber", code: 1)
+    }
+
+    func transcribeChunk(
+        samples: [Float],
+        state: inout NemotronStreamingTranscriber.StreamState
+    ) async throws -> String {
+        ""
+    }
+}
+
+private final class InspectableStreamingDictationRecorder: StreamingDictationRecording {
+    var onAudioBuffer: (([Float]) -> Void)?
+    var preferredInputDeviceID: AudioObjectID?
+    var prepareCalls = 0
+    var startCalls = 0
+    var stopCalls = 0
+    var cancelCalls = 0
+
+    func prepare() throws {
+        prepareCalls += 1
+    }
+
+    func start() throws {
+        startCalls += 1
+    }
+
+    func stop() -> URL? {
+        stopCalls += 1
+        return nil
+    }
+
+    func cancel() {
+        cancelCalls += 1
+    }
+}
+
+private final class FailureCounter {
+    private let lock = NSLock()
+    private var storage = 0
+
+    var value: Int {
+        lock.withLock { storage }
+    }
+
+    func increment() {
+        lock.withLock {
+            storage += 1
+        }
     }
 }
 

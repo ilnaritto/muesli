@@ -75,6 +75,24 @@ struct DictationAudioSessionManagerTests {
         #expect(harness.recorder.startCalls == 1)
     }
 
+    @Test("begin recording refreshes route changed after arm")
+    func beginRecordingRefreshesRouteChangedAfterArm() {
+        let harness = Harness(routeKind: .headphoneLike, preferredInputDeviceID: 82)
+
+        harness.manager.arm(source: "hotkey", duckingEnabled: true)
+        harness.wait()
+        harness.route.routeKind = .speakerLike
+        harness.route.preferredInputDeviceID = nil
+
+        harness.manager.beginRecording(mode: "prepare", duckingEnabled: true)
+        harness.wait()
+
+        #expect(harness.route.preferredInputCalls == 2)
+        #expect(harness.recorder.lastWarmInputDeviceID == 82)
+        #expect(harness.recorder.preferredInputDeviceID == nil)
+        #expect(harness.ducking.beginCalls == [false, true])
+    }
+
     @Test("stop restores ducking and emits wav URL")
     func stopRestoresDuckingAndEmitsWavURL() {
         let harness = Harness(routeKind: .speakerLike)

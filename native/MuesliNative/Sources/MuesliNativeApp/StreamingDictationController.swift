@@ -12,11 +12,41 @@ import os
 ///   // ... user speaks ...
 ///   controller.stop { finalText in /* persist final text */ }
 @available(macOS 15, *)
+protocol NemotronStreamingTranscribing: AnyObject {
+    func makeStreamState() async throws -> NemotronStreamingTranscriber.StreamState
+    func transcribeChunk(
+        samples: [Float],
+        state: inout NemotronStreamingTranscriber.StreamState
+    ) async throws -> String
+}
+
+@available(macOS 15, *)
+private final class NemotronStreamingTranscriberAdapter: NemotronStreamingTranscribing {
+    private let transcriber: NemotronStreamingTranscriber
+
+    init(_ transcriber: NemotronStreamingTranscriber) {
+        self.transcriber = transcriber
+    }
+
+    func makeStreamState() async throws -> NemotronStreamingTranscriber.StreamState {
+        try await transcriber.makeStreamState()
+    }
+
+    func transcribeChunk(
+        samples: [Float],
+        state: inout NemotronStreamingTranscriber.StreamState
+    ) async throws -> String {
+        try await transcriber.transcribeChunk(samples: samples, state: &state)
+    }
+}
+
+@available(macOS 15, *)
 final class StreamingDictationController {
     /// Called with the full accumulated transcript so far (on a background thread).
     var onPartialText: ((String) -> Void)?
+    var onFailure: ((Error) -> Void)?
 
-    private let transcriber: NemotronStreamingTranscriber
+    private let transcriber: NemotronStreamingTranscribing
     private let recorder: StreamingDictationRecording
     private var streamState: NemotronStreamingTranscriber.StreamState?
     private var sampleBuffer: [Float] = []
@@ -33,6 +63,16 @@ final class StreamingDictationController {
 
     init(
         transcriber: NemotronStreamingTranscriber,
+        preferredInputDeviceID: AudioObjectID? = nil,
+        recorder: StreamingDictationRecording = StreamingMicRecorder()
+    ) {
+        self.transcriber = NemotronStreamingTranscriberAdapter(transcriber)
+        self.recorder = recorder
+        recorder.preferredInputDeviceID = preferredInputDeviceID
+    }
+
+    init(
+        transcriber: NemotronStreamingTranscribing,
         preferredInputDeviceID: AudioObjectID? = nil,
         recorder: StreamingDictationRecording = StreamingMicRecorder()
     ) {
@@ -80,19 +120,7 @@ final class StreamingDictationController {
             fputs("[streaming-dictation] mic started\n", stderr)
         } catch {
             fputs("[streaming-dictation] mic start failed: \(error)\n", stderr)
-            isActive = false
-            activeSessionID = nil
-            recorder.cancel()
-            bufferLock.withLock {
-                sampleBuffer.removeAll()
-            }
-            queueLock.withLock {
-                chunkQueue.removeAll()
-            }
-            drainLock.withLock {
-                isDraining = false
-            }
-            streamState = nil
+            resetActiveSession(cancelRecorder: true)
             return false
         }
 
@@ -107,6 +135,7 @@ final class StreamingDictationController {
             } catch {
                 guard self.isCurrentSession(sessionID) else { return }
                 fputs("[streaming-dictation] failed to create stream state: \(error)\n", stderr)
+                self.failActiveSession(sessionID: sessionID, error: error)
             }
         }
         return true
@@ -149,9 +178,21 @@ final class StreamingDictationController {
     }
 
     func cancel() {
+        resetActiveSession(cancelRecorder: true)
+    }
+
+    private func failActiveSession(sessionID: UUID, error: Error) {
+        guard isCurrentSession(sessionID) else { return }
+        resetActiveSession(cancelRecorder: true)
+        onFailure?(error)
+    }
+
+    private func resetActiveSession(cancelRecorder: Bool) {
         isActive = false
         activeSessionID = nil
-        recorder.cancel()
+        if cancelRecorder {
+            recorder.cancel()
+        }
         bufferLock.withLock {
             sampleBuffer.removeAll()
         }

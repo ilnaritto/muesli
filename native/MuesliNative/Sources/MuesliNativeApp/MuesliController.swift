@@ -132,12 +132,12 @@ private final class DictationLatencyLogWriter: @unchecked Sendable {
                 }
                 try Self.trimIfNeeded(at: url)
                 let data = Data((line + "\n").utf8)
-                if FileManager.default.fileExists(atPath: url.path) {
+                do {
                     let handle = try FileHandle(forWritingTo: url)
                     defer { try? handle.close() }
                     try handle.seekToEnd()
                     try handle.write(contentsOf: data)
-                } else {
+                } catch {
                     try data.write(to: url, options: .atomic)
                 }
             } catch {
@@ -4080,9 +4080,11 @@ final class MuesliController: NSObject {
         guard selectedBackend.backend != "nemotron" else {
             return
         }
-        meetingMonitor.suppressWhileActive()
-        meetingMonitor.refreshState()
-        setState(.preparing)
+        if !dictationAudioSessionManager.hasActiveSession {
+            meetingMonitor.suppressWhileActive()
+            meetingMonitor.refreshState()
+            setState(.preparing)
+        }
     }
 
     private func handleArm() {
@@ -4364,6 +4366,11 @@ final class MuesliController: NSObject {
                     }
                 }
             }
+            controller.onFailure = { [weak self] error in
+                DispatchQueue.main.async {
+                    self?.handleNemotronStreamingRuntimeFailure(error: error, sessionID: sessionID)
+                }
+            }
 
             await MainActor.run {
                 guard self.isNemotronStreaming, self.nemotronStreamingSessionID == sessionID else {
@@ -4395,6 +4402,25 @@ final class MuesliController: NSObject {
         meetingMonitor.resumeAfterCooldown()
         finishDictationLatencyTrace("nemotron_start_failed")
         syncDictationRecorderWarmup(reason: "nemotron-start-failed")
+    }
+
+    @MainActor
+    private func handleNemotronStreamingRuntimeFailure(error: Error, sessionID: UUID) {
+        guard isNemotronStreaming, nemotronStreamingSessionID == sessionID else { return }
+        fputs("[muesli-native] Nemotron streaming failed after mic start: \(error)\n", stderr)
+        isNemotronStreaming = false
+        _streamingDictationController = nil
+        nemotronStreamingSessionID = nil
+        previousStreamText = ""
+        dictationStartedAt = nil
+        dictationAudioSessionManager.endExternalSession(reason: "nemotron-runtime-failed")
+        indicator.setToggleDictation(false, config: config)
+        resetDictationOutputMode()
+        setState(.idle)
+        meetingMonitor.resumeAfterCooldown()
+        meetingMonitor.refreshState()
+        finishDictationLatencyTrace("nemotron_runtime_failed")
+        syncDictationRecorderWarmup(reason: "nemotron-runtime-failed")
     }
 
     private func handleCancel() {
