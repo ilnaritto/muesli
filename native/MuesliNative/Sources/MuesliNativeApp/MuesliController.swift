@@ -2703,8 +2703,8 @@ final class MuesliController: NSObject {
             presentErrorAlert(title: "Meeting failed to start", message: error.localizedDescription)
             return false
         }
-        cancelDictationAudioSessionForMeetingRecordingIfNeeded()
         isStartingMeetingRecording = true
+        cancelDictationAudioSessionForMeetingRecordingIfNeeded()
         syncDictationRecorderWarmup(reason: "meeting-start")
         meetingStartMeetingID = meetingID
         updateMeetingStartStatus("Preparing meeting transcription...")

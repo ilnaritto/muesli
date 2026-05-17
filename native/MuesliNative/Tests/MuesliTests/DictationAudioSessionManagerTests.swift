@@ -210,6 +210,39 @@ struct DictationAudioSessionManagerTests {
         })
     }
 
+    @Test("media resume waits until ducking restore completes")
+    func mediaResumeWaitsUntilDuckingRestoreCompletes() {
+        let harness = Harness(routeKind: .speakerLike)
+        harness.ducking.completeRestoreImmediately = false
+
+        harness.manager.beginRecording(mode: "toggle", duckingEnabled: true, mediaPauseEnabled: true)
+        harness.wait()
+        harness.manager.stop()
+        harness.wait()
+
+        #expect(harness.ducking.restoreCalls == 1)
+        #expect(harness.media.restoreCalls == 0)
+        #expect(harness.route.restoreCalls == 0)
+        #expect(!harness.events.contains { event in
+            if case .audioRestored = event {
+                return true
+            }
+            return false
+        })
+
+        harness.ducking.finishPendingRestore()
+        harness.wait()
+
+        #expect(harness.media.restoreCalls == 1)
+        #expect(harness.route.restoreCalls == 1)
+        #expect(harness.events.contains { event in
+            if case .audioRestored = event {
+                return true
+            }
+            return false
+        })
+    }
+
     @Test("stop without active session does not emit stale stopped event")
     func stopWithoutActiveSessionDoesNotEmitStoppedEvent() {
         let harness = Harness(routeKind: .speakerLike)
@@ -406,6 +439,8 @@ private final class FakeDuckingManager: AudioDuckingManaging {
     var beginCalls: [Bool] = []
     var ensureCalls = 0
     var restoreCalls = 0
+    var completeRestoreImmediately = true
+    private var pendingRestoreCompletion: (() -> Void)?
 
     func beginDictationDucking(enabled: Bool) {
         beginCalls.append(enabled)
@@ -417,6 +452,16 @@ private final class FakeDuckingManager: AudioDuckingManaging {
 
     func restoreDictationDucking(completion: (() -> Void)?) {
         restoreCalls += 1
+        guard completeRestoreImmediately else {
+            pendingRestoreCompletion = completion
+            return
+        }
+        completion?()
+    }
+
+    func finishPendingRestore() {
+        let completion = pendingRestoreCompletion
+        pendingRestoreCompletion = nil
         completion?()
     }
 }
