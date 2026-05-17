@@ -167,6 +167,8 @@ final class MicrophoneRecorder: @unchecked Sendable {
         try prepare()
 
         do {
+            // The preferred input can refresh between prepare/warmup and start
+            // after a route change, so keep this re-check on the start path.
             try ensurePreparedGraphLocked(preferredInputDeviceID: preferredInputDeviceID)
             if !engine.isRunning {
                 lock.withLock { state in

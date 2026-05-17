@@ -91,8 +91,7 @@ protocol DictationAudioRouting: AnyObject {
     func isDefaultOutputHeadphoneLike() -> Bool
     func currentOutputRouteKindForDebug() -> AudioOutputRouteKind
     func currentRouteDebugDescription() -> String
-    func beginDictationInputOverride()
-    func restoreDictationInputOverride()
+    func refreshRouteAfterDictationSession()
 }
 
 final class DictationAudioRouteController: DictationAudioRouting {
@@ -171,6 +170,9 @@ final class DictationAudioRouteController: DictationAudioRouting {
     }
 
     func isDefaultOutputHeadphoneLike() -> Bool {
+        // Unknown outputs are treated as non-speaker for lifecycle sounds so we
+        // avoid playing cues into headphones during CoreAudio route transitions.
+        // Ducking uses RouteSnapshot.shouldDuck and still fails open for unknown.
         lock.withLock { snapshot.outputRouteKind != .speakerLike }
     }
 
@@ -185,16 +187,7 @@ final class DictationAudioRouteController: DictationAudioRouting {
         return "output=\(current.outputRouteKind.description) preferredInput=\(preferredInput)"
     }
 
-    func beginDictationInputOverride() {
-        syncOnRouteQueue {
-            let current = makeRouteSnapshot()
-            lock.withLock {
-                snapshot = current
-            }
-        }
-    }
-
-    func restoreDictationInputOverride() {
+    func refreshRouteAfterDictationSession() {
         syncOnRouteQueue {
             let current = makeRouteSnapshot()
             lock.withLock {

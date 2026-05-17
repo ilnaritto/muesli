@@ -63,7 +63,6 @@ final class AudioDuckingController: AudioDuckingManaging {
     private let stabilizationPollInterval: TimeInterval
     private var duckingEnabledForSession = false
     private var snapshots: [AudioObjectID: DeviceSnapshot] = [:]
-    private var restoreWorkItem: DispatchWorkItem?
 
     init(
         client: AudioDuckingDeviceClient = CoreAudioDuckingDeviceClient(),
@@ -79,8 +78,6 @@ final class AudioDuckingController: AudioDuckingManaging {
 
     func beginDictationDucking(enabled: Bool) {
         queue.async { [self] in
-            self.restoreWorkItem?.cancel()
-            self.restoreWorkItem = nil
             guard enabled else {
                 self.duckingEnabledForSession = false
                 self.restoreLocked()
@@ -100,14 +97,9 @@ final class AudioDuckingController: AudioDuckingManaging {
     }
 
     func restoreDictationDucking() {
-        let workItem = DispatchWorkItem { [weak self] in
-            self?.restoreLocked()
+        queue.async { [self] in
+            restoreLocked()
         }
-        queue.sync {
-            restoreWorkItem?.cancel()
-            restoreWorkItem = workItem
-        }
-        queue.async(execute: workItem)
     }
 
     func waitForIdle() {

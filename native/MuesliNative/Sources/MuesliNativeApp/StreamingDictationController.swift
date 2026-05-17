@@ -27,6 +27,7 @@ final class StreamingDictationController {
     private let drainLock = OSAllocatedUnfairLock()
     private var fullTranscript = ""
     private var isActive = false
+    private var activeSessionID: UUID?
     private let chunkSamples = 8960  // 560ms at 16kHz
 
     init(
@@ -57,7 +58,9 @@ final class StreamingDictationController {
     @discardableResult
     func start() -> Bool {
         guard !isActive else { return true }
+        let sessionID = UUID()
         isActive = true
+        activeSessionID = sessionID
         fullTranscript = ""
         sampleBuffer.removeAll()
         chunkQueue.removeAll()
@@ -77,6 +80,7 @@ final class StreamingDictationController {
         } catch {
             fputs("[streaming-dictation] mic start failed: \(error)\n", stderr)
             isActive = false
+            activeSessionID = nil
             recorder.cancel()
             bufferLock.withLock {
                 sampleBuffer.removeAll()
@@ -94,21 +98,25 @@ final class StreamingDictationController {
         // Init stream state in background — audio buffers queue while this runs
         Task {
             do {
-                streamState = try await transcriber.makeStreamState()
+                let state = try await transcriber.makeStreamState()
+                guard self.isCurrentSession(sessionID) else { return }
+                streamState = state
                 fputs("[streaming-dictation] stream state ready, draining queued chunks\n", stderr)
-                // Process any chunks that accumulated during init
-                await drainQueue()
+                startDrainIfNeeded(sessionID: sessionID)
             } catch {
+                guard self.isCurrentSession(sessionID) else { return }
                 fputs("[streaming-dictation] failed to create stream state: \(error)\n", stderr)
             }
         }
         return true
     }
 
-    /// Stop recording, process any remaining audio, return final transcript.
+    /// Stop recording and return text already emitted by real-time chunk drains.
+    /// This intentionally avoids blocking the main thread on trailing chunks.
     func stop() -> String {
         guard isActive else { return fullTranscript }
         isActive = false
+        activeSessionID = nil
 
         let _ = recorder.stop()
 
@@ -119,25 +127,15 @@ final class StreamingDictationController {
             return samples
         }
 
-        // Queue final padded chunk if any samples remain
+        queueLock.withLock {
+            chunkQueue.removeAll()
+        }
+        drainLock.withLock {
+            isDraining = false
+        }
         if !remaining.isEmpty {
-            var padded = remaining
-            if padded.count < chunkSamples {
-                padded.append(contentsOf: [Float](repeating: 0, count: chunkSamples - padded.count))
-            }
-            let finalChunk = padded
-            queueLock.withLock {
-                chunkQueue.append(finalChunk)
-            }
+            fputs("[streaming-dictation] discarded trailing samples on stop: \(remaining.count)\n", stderr)
         }
-
-        // Drain all remaining chunks synchronously
-        let sem = DispatchSemaphore(value: 0)
-        Task {
-            await self.drainQueue()
-            sem.signal()
-        }
-        sem.wait()
 
         fputs("[streaming-dictation] stopped, transcript (\(fullTranscript.count) chars): \(fullTranscript.prefix(100))...\n", stderr)
         return fullTranscript
@@ -164,29 +162,43 @@ final class StreamingDictationController {
                 chunkQueue.append(contentsOf: newChunks)
             }
             // Kick off serial processing if not already running
-            let shouldStart = drainLock.withLock {
-                if isDraining { return false }
-                isDraining = true
-                return true
-            }
-            if shouldStart {
-                Task { [weak self] in
-                    await self?.drainQueue()
-                    self?.markDrainFinished()
-                }
-            }
+            guard let sessionID = activeSessionID else { return }
+            startDrainIfNeeded(sessionID: sessionID)
         }
     }
 
-    private func markDrainFinished() {
+    private func startDrainIfNeeded(sessionID: UUID) {
+        guard isCurrentSession(sessionID) else { return }
+        let shouldStart = drainLock.withLock {
+            if isDraining { return false }
+            isDraining = true
+            return true
+        }
+        guard shouldStart else { return }
+        Task { [weak self] in
+            await self?.drainQueue(sessionID: sessionID)
+            self?.markDrainFinished(sessionID: sessionID)
+        }
+    }
+
+    private func markDrainFinished(sessionID: UUID) {
+        let hasQueuedChunks = queueLock.withLock { !chunkQueue.isEmpty }
         drainLock.withLock {
             isDraining = false
         }
+        if hasQueuedChunks {
+            startDrainIfNeeded(sessionID: sessionID)
+        }
+    }
+
+    private func isCurrentSession(_ sessionID: UUID) -> Bool {
+        isActive && activeSessionID == sessionID
     }
 
     /// Process all queued chunks serially, one at a time.
-    private func drainQueue() async {
+    private func drainQueue(sessionID: UUID) async {
         while true {
+            guard isCurrentSession(sessionID) else { return }
             let chunk: [Float]? = queueLock.withLock {
                 chunkQueue.isEmpty ? nil : chunkQueue.removeFirst()
             }
@@ -194,12 +206,16 @@ final class StreamingDictationController {
 
             guard var state = streamState else {
                 fputs("[streaming-dictation] no stream state, skipping chunk\n", stderr)
+                queueLock.withLock {
+                    chunkQueue.insert(chunk, at: 0)
+                }
                 return
             }
 
             let start = CFAbsoluteTimeGetCurrent()
             do {
                 let newText = try await transcriber.transcribeChunk(samples: chunk, state: &state)
+                guard isCurrentSession(sessionID) else { return }
                 streamState = state
                 let elapsed = CFAbsoluteTimeGetCurrent() - start
 

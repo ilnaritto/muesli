@@ -268,9 +268,7 @@ private final class FakeDictationRoute: DictationAudioRouting {
         "output=\(routeKind.description) preferredInput=\(preferredInputDeviceID.map(String.init) ?? "default")"
     }
 
-    func beginDictationInputOverride() {}
-
-    func restoreDictationInputOverride() {
+    func refreshRouteAfterDictationSession() {
         restoreCalls += 1
     }
 }
