@@ -129,18 +129,6 @@ enum MeetingAutoStopPolicy {
             return true
         }
 
-        guard source.candidateID == nil,
-              source.suppressionID == nil,
-              source.normalizedURL == nil else {
-            return false
-        }
-
-        if let sourceBundleID = source.sourceBundleID,
-           candidate.sourceBundleID == sourceBundleID,
-           candidate.evidence.contains(.audioInputProcess) {
-            return true
-        }
-
         return false
     }
 }
