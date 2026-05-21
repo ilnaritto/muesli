@@ -251,8 +251,7 @@ struct MeetingsView: View {
                 guard let data = item as? Data,
                       let urlString = String(data: data, encoding: .utf8),
                       let url = URL(string: urlString) else { return }
-                let supportedExtensions = ["m4a", "mp4", "wav", "mp3"]
-                guard supportedExtensions.contains(url.pathExtension.lowercased()) else { return }
+                guard AudioFileImportController.isSupportedFileURL(url) else { return }
                 DispatchQueue.main.async {
                     controller.importAudioFileFromURL(url)
                 }

@@ -9,6 +9,8 @@ import UniformTypeIdentifiers
 /// Converts the source file to 16kHz mono WAV, transcribes it, optionally runs
 /// speaker diarization, and creates a meeting record with the result.
 enum AudioFileImportController {
+    static let supportedExtensions: Set<String> = ["m4a", "mp4", "wav", "mp3"]
+
     private static let allowedTypes: [UTType] = {
         var types: [UTType] = [
             .wav,
@@ -20,6 +22,10 @@ enum AudioFileImportController {
         if let mp4 = UTType(filenameExtension: "mp4") { types.append(mp4) }
         return types
     }()
+
+    static func isSupportedFileURL(_ url: URL) -> Bool {
+        supportedExtensions.contains(url.pathExtension.lowercased())
+    }
 
     // MARK: - File Selection
 
@@ -55,7 +61,7 @@ enum AudioFileImportController {
 
     // MARK: - Audio Conversion
 
-    enum ImportError: Error, LocalizedError {
+    enum ImportError: Error, Equatable, LocalizedError {
         case unsupportedFormat
         case conversionFailed(String)
         case noAudioTracks
@@ -78,71 +84,39 @@ enum AudioFileImportController {
     /// Converts the source audio file to 16kHz mono WAV for transcription.
     /// Returns the temporary WAV URL and the audio duration in seconds.
     static func convertToWAV(sourceURL: URL) async throws -> (wavURL: URL, duration: TimeInterval) {
-        let asset = AVAsset(url: sourceURL)
-        guard let audioTrack = asset.tracks(withMediaType: .audio).first else {
+        guard isSupportedFileURL(sourceURL) else {
+            throw ImportError.unsupportedFormat
+        }
+        try Task.checkCancellation()
+
+        if let compatibleWAV = try compatibleWAVInfo(sourceURL: sourceURL) {
+            let outputURL = try temporaryWAVURL()
+            try FileManager.default.copyItem(at: sourceURL, to: outputURL)
+            return (outputURL, compatibleWAV.duration)
+        }
+
+        let duration = try await audioDuration(sourceURL: sourceURL)
+        try Task.checkCancellation()
+
+        let samples: [Float]
+        do {
+            samples = try AudioConverter().resampleAudioFile(sourceURL)
+        } catch {
+            samples = try await decodeSamplesWithAssetReader(sourceURL: sourceURL)
+        }
+        try Task.checkCancellation()
+
+        guard !samples.isEmpty else {
             throw ImportError.noAudioTracks
         }
 
-        let duration = CMTimeGetSeconds(asset.duration)
-        guard duration > 0, duration.isFinite else {
+        let wavURL = try WavWriter.writeTemporaryWAV(samples: samples, directoryName: "muesli-import")
+        let resolvedDuration = duration ?? Double(samples.count) / Double(WavWriter.sampleRate)
+        guard resolvedDuration > 0, resolvedDuration.isFinite else {
+            try? FileManager.default.removeItem(at: wavURL)
             throw ImportError.readError("Invalid audio duration.")
         }
-
-        let outputURL = try temporaryWAVURL()
-        let reader = try AVAssetReader(asset: asset)
-        let outputSettings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: 16000,
-            AVNumberOfChannelsKey: 1,
-            AVLinearPCMBitDepthKey: 16,
-            AVLinearPCMIsFloatKey: false,
-            AVLinearPCMIsBigEndianKey: false,
-        ]
-        let readerOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: outputSettings)
-        readerOutput.alwaysCopiesSampleData = false
-        reader.add(readerOutput)
-
-        let writer = try AVAssetWriter(url: outputURL, fileType: .wav)
-        let writerInput = AVAssetWriterInput(mediaType: .audio, outputSettings: outputSettings)
-        writerInput.expectsMediaDataInRealTime = false
-        writer.add(writerInput)
-
-        guard reader.startReading() else {
-            throw ImportError.readError(reader.error?.localizedDescription ?? "Unknown read error")
-        }
-        guard writer.startWriting() else {
-            throw ImportError.conversionFailed(writer.error?.localizedDescription ?? "Unknown write error")
-        }
-        writer.startSession(atSourceTime: .zero)
-
-        // Use async dispatch group to avoid blocking cooperative thread pool
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let queue = DispatchQueue(label: "com.muesli.import.convert")
-            writerInput.requestMediaDataWhenReady(on: queue) {
-                while writerInput.isReadyForMoreMediaData {
-                    if let sampleBuffer = readerOutput.copyNextSampleBuffer() {
-                        writerInput.append(sampleBuffer)
-                    } else {
-                        writerInput.markAsFinished()
-                        writer.finishWriting {
-                            continuation.resume()
-                        }
-                        return
-                    }
-                }
-            }
-        }
-
-        if let error = writer.error {
-            try? FileManager.default.removeItem(at: outputURL)
-            throw ImportError.conversionFailed(error.localizedDescription)
-        }
-        guard reader.status == .completed else {
-            try? FileManager.default.removeItem(at: outputURL)
-            throw ImportError.readError(reader.error?.localizedDescription ?? "Read did not complete")
-        }
-
-        return (outputURL, duration)
+        return (wavURL, resolvedDuration)
     }
 
     // MARK: - Import Pipeline
@@ -154,6 +128,13 @@ enum AudioFileImportController {
         let formattedNotes: String
         let durationSeconds: Double
         let wordCount: Int
+    }
+
+    struct ImportContext {
+        let config: AppConfig
+        let backend: BackendOption
+        let transcriptionCoordinator: TranscriptionCoordinator
+        let templateSnapshot: MeetingTemplateSnapshot
     }
 
     /// Runs the full import pipeline: convert, transcribe, diarize, format, persist, summarize.
@@ -169,9 +150,10 @@ enum AudioFileImportController {
 
         try Task.checkCancellation()
 
-        let config = controller.config
-        let backend = controller.selectedMeetingTranscriptionBackend
-        let transcriptionCoordinator = controller.transcriptionCoordinator
+        let context = await controller.audioFileImportContext()
+        let config = context.config
+        let backend = context.backend
+        let transcriptionCoordinator = context.transcriptionCoordinator
 
         progress("Loading transcription model...")
         try await transcriptionCoordinator.preloadRequired(
@@ -183,7 +165,7 @@ enum AudioFileImportController {
         try Task.checkCancellation()
 
         // Run VAD to skip silent files (prevents Cohere hallucinations on silence)
-        if let vadManager = transcriptionCoordinator.vadManager {
+        if let vadManager = await transcriptionCoordinator.getVadManager() {
             do {
                 let vadResults = try await vadManager.process(wavURL)
                 let hasSpeech = vadResults.contains { $0.probability > 0.5 }
@@ -214,7 +196,7 @@ enum AudioFileImportController {
 
         // Run speaker diarization if available
         var diarizedTranscript = rawTranscript
-        if let diarizerManager = transcriptionCoordinator.getDiarizerManager(),
+        if let diarizerManager = await transcriptionCoordinator.getDiarizerManager(),
            diarizerManager.isAvailable {
             progress("Identifying speakers...")
             do {
@@ -227,13 +209,13 @@ enum AudioFileImportController {
                 )
                 if !diarizationResult.segments.isEmpty {
                     diarizedTranscript = formatTranscriptWithSpeakers(
-                        rawText: rawTranscript,
+                        transcription: transcription,
                         diarizationSegments: diarizationResult.segments,
-                        duration: duration
+                        meetingStart: importedTranscriptTimelineStart()
                     )
                 }
             } catch is CancellationError {
-                throw ImportError.readError("Import was cancelled.")
+                throw CancellationError()
             } catch {
                 fputs("[import] diarization failed, using raw transcript: \(error)\n", stderr)
             }
@@ -242,14 +224,24 @@ enum AudioFileImportController {
         try Task.checkCancellation()
 
         let wordCount = DictationStore.countWords(in: diarizedTranscript)
+        let generatedTitle: String
+        progress("Generating title...")
+        if let autoTitle = await MeetingSummaryClient.generateTitle(transcript: diarizedTranscript, config: config),
+           !autoTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            generatedTitle = autoTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            generatedTitle = title
+        }
+
+        try Task.checkCancellation()
 
         progress("Generating summary...")
-        let templateSnapshot = controller.defaultMeetingTemplate()
+        let templateSnapshot = context.templateSnapshot
         let formattedNotes: String
         do {
             formattedNotes = try await MeetingSummaryClient.summarize(
                 transcript: diarizedTranscript,
-                meetingTitle: title,
+                meetingTitle: generatedTitle,
                 config: config,
                 template: templateSnapshot,
                 existingNotes: nil,
@@ -259,7 +251,7 @@ enum AudioFileImportController {
             fputs("[import] summary generation failed: \(error)\n", stderr)
             formattedNotes = MeetingSummaryClient.summaryFailureNotes(
                 transcript: diarizedTranscript,
-                meetingTitle: title,
+                meetingTitle: generatedTitle,
                 error: error,
                 manualNotes: ""
             )
@@ -268,13 +260,13 @@ enum AudioFileImportController {
         try Task.checkCancellation()
 
         // Persist the converted WAV as a saved recording so retranscription works
-        let savedRecordingPath = try persistRecording(wavURL: wavURL, title: title)
+        let savedRecordingPath = try persistRecording(wavURL: wavURL, title: generatedTitle)
 
         progress("Saving...")
         let now = Date()
         let startTime = now.addingTimeInterval(-duration)
-        let meetingID = try controller.dictationStore.insertMeeting(
-            title: title,
+        let meetingID = try await controller.persistImportedAudioMeeting(
+            title: generatedTitle,
             calendarEventID: nil,
             startTime: startTime,
             endTime: now,
@@ -291,7 +283,7 @@ enum AudioFileImportController {
 
         return ImportResult(
             meetingID: meetingID,
-            title: title,
+            title: generatedTitle,
             rawTranscript: diarizedTranscript,
             formattedNotes: formattedNotes,
             durationSeconds: duration,
@@ -308,6 +300,78 @@ enum AudioFileImportController {
         return directory.appendingPathComponent("import_\(UUID().uuidString).wav")
     }
 
+    private struct CompatibleWAVInfo {
+        let duration: TimeInterval
+    }
+
+    private static func compatibleWAVInfo(sourceURL: URL) throws -> CompatibleWAVInfo? {
+        guard sourceURL.pathExtension.lowercased() == "wav" else { return nil }
+        let file = try AVAudioFile(forReading: sourceURL)
+        let fileFormat = file.fileFormat
+        guard fileFormat.sampleRate == Double(WavWriter.sampleRate),
+              fileFormat.channelCount == UInt32(WavWriter.channels),
+              fileFormat.commonFormat == .pcmFormatInt16 else {
+            return nil
+        }
+        let duration = Double(file.length) / fileFormat.sampleRate
+        guard duration > 0, duration.isFinite else {
+            throw ImportError.readError("Invalid audio duration.")
+        }
+        return CompatibleWAVInfo(duration: duration)
+    }
+
+    private static func audioDuration(sourceURL: URL) async throws -> TimeInterval? {
+        let asset = AVURLAsset(url: sourceURL)
+        let tracks = try await asset.load(.tracks)
+        guard tracks.contains(where: { $0.mediaType == .audio }) else {
+            throw ImportError.noAudioTracks
+        }
+        let duration = CMTimeGetSeconds(try await asset.load(.duration))
+        return duration > 0 && duration.isFinite ? duration : nil
+    }
+
+    private static func decodeSamplesWithAssetReader(sourceURL: URL) async throws -> [Float] {
+        let asset = AVURLAsset(url: sourceURL)
+        let tracks = try await asset.load(.tracks)
+        guard let audioTrack = tracks.first(where: { $0.mediaType == .audio }) else {
+            throw ImportError.noAudioTracks
+        }
+
+        let reader = try AVAssetReader(asset: asset)
+        let outputSettings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false,
+        ]
+        let output = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: outputSettings)
+        output.alwaysCopiesSampleData = false
+        guard reader.canAdd(output) else {
+            throw ImportError.conversionFailed("Could not read audio samples from the selected file.")
+        }
+        reader.add(output)
+
+        guard reader.startReading() else {
+            throw ImportError.readError(reader.error?.localizedDescription ?? "Unknown read error")
+        }
+
+        let converter = AudioConverter()
+        var samples: [Float] = []
+        while reader.status == .reading {
+            try Task.checkCancellation()
+            guard let sampleBuffer = output.copyNextSampleBuffer() else {
+                break
+            }
+            samples.append(contentsOf: try converter.resampleSampleBuffer(sampleBuffer))
+        }
+
+        guard reader.status == .completed else {
+            throw ImportError.readError(reader.error?.localizedDescription ?? "Read did not complete")
+        }
+        return samples
+    }
+
     /// Copies the converted WAV to the meeting-recordings directory so the imported
     /// meeting can be retranscribed later.
     private static func persistRecording(wavURL: URL, title: String) throws -> String {
@@ -321,76 +385,77 @@ enum AudioFileImportController {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd'T'HH-mm-ss"
         let datePrefix = dateFormatter.string(from: Date())
-        let safeTitle = title.replacingOccurrences(of: "/", with: "-")
-            .replacingOccurrences(of: ":", with: "-")
-        let filename = "\(datePrefix)_\(safeTitle).wav"
+        let safeTitle = safeFilenameComponent(title)
+        let filename = "\(datePrefix)_\(safeTitle)_\(UUID().uuidString.prefix(8)).wav"
         let destinationURL = recordingsDirectory.appendingPathComponent(filename)
 
-        if FileManager.default.fileExists(atPath: destinationURL.path) {
-            try FileManager.default.removeItem(at: destinationURL)
-        }
         try FileManager.default.copyItem(at: wavURL, to: destinationURL)
         return destinationURL.path
     }
 
+    private static func safeFilenameComponent(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(.whitespaces).union(CharacterSet(charactersIn: "-_"))
+        let scalars = value.unicodeScalars.map { scalar in
+            allowed.contains(scalar) ? Character(scalar) : "-"
+        }
+        let collapsed = String(scalars)
+            .split(whereSeparator: { $0.isWhitespace || $0 == "-" })
+            .joined(separator: "-")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-_ "))
+        return collapsed.isEmpty ? "Imported-Recording" : String(collapsed.prefix(80))
+    }
+
+    private static func importedTranscriptTimelineStart() -> Date {
+        Calendar.current.startOfDay(for: Date())
+    }
+
     /// Formats transcript text with speaker labels based on diarization segments.
     /// When diarization identifies multiple speakers, the transcript is annotated with
-    /// speaker labels at segment boundaries so both the user and summarizer can
-    /// attribute spoken text to individual speakers.
+    /// speaker labels using ASR segment timestamps so both the user and summarizer can
+    /// attribute spoken text to individual speakers without inventing text boundaries.
+    static func formatTranscriptWithSpeakers(
+        transcription: SpeechTranscriptionResult,
+        diarizationSegments: [TimedSpeakerSegment],
+        meetingStart: Date
+    ) -> String {
+        let rawText = transcription.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawText.isEmpty, !diarizationSegments.isEmpty else { return rawText }
+
+        let speakerCount = Set(diarizationSegments.map(\.speakerId)).count
+        guard speakerCount > 1 else { return rawText }
+
+        if rawText.range(of: #"(?m)^\[[0-9]{2}:[0-9]{2}(?::[0-9]{2})?\]\s+(You|Others|Speaker\s+\d+):"#, options: .regularExpression) != nil {
+            return rawText
+        }
+
+        let transcribedSegments = transcription.segments.filter {
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard !transcribedSegments.isEmpty else { return rawText }
+
+        let formatted = TranscriptFormatter.merge(
+            micSegments: [],
+            systemSegments: transcribedSegments,
+            diarizationSegments: diarizationSegments,
+            meetingStart: meetingStart
+        )
+        return formatted.isEmpty ? rawText : formatted
+    }
+
+    /// Backward-compatible helper for tests and any callers that only have raw text.
     static func formatTranscriptWithSpeakers(
         rawText: String,
         diarizationSegments: [TimedSpeakerSegment],
         duration: TimeInterval
     ) -> String {
-        guard !diarizationSegments.isEmpty else { return rawText }
-
-        let speakerCount = Set(diarizationSegments.map(\.speakerId)).count
-        guard speakerCount > 1 else { return rawText }
-
-        // If the raw text already has timestamped speaker lines, use those instead.
-        if rawText.range(of: #"(?m)^\[[0-9]{2}:[0-9]{2}(?::[0-9]{2})?\]\s+(You|Others|Speaker\s+\d+):"#, options: .regularExpression) != nil {
-            return rawText
-        }
-
-        // Build a speaker-labeled transcript using diarization segments
-        var result = "## Speaker Segments\n"
-        for segment in diarizationSegments {
-            let startStr = formatTimeInterval(segment.startTime)
-            let endStr = formatTimeInterval(segment.endTime)
-            let speaker = segment.speakerId.replacingOccurrences(of: "SPEAKER_", with: "Speaker ")
-            result += "[\(startStr) - \(endStr)] \(speaker)\n"
-        }
-
-        result += "\n## Transcript\n"
-
-        // Annotate the transcript with speaker labels at segment boundaries
-        let lines = rawText.components(separatedBy: .newlines)
-        let segmentCount = diarizationSegments.count
-        let lineCount = lines.count
-
-        if lineCount > 0, segmentCount > 0 {
-            let linesPerSegment = max(1, lineCount / segmentCount)
-            for (i, line) in lines.enumerated() {
-                let segmentIndex = min(i / linesPerSegment, segmentCount - 1)
-                let speaker = diarizationSegments[segmentIndex].speakerId
-                    .replacingOccurrences(of: "SPEAKER_", with: "Speaker ")
-                let startStr = formatTimeInterval(diarizationSegments[segmentIndex].startTime)
-                result += "[\(startStr)] \(speaker): \(line)\n"
-            }
-        } else {
-            result += rawText
-        }
-
-        return result
-    }
-
-    private static func formatTimeInterval(_ interval: TimeInterval) -> String {
-        let hours = Int(interval) / 3600
-        let minutes = (Int(interval) % 3600) / 60
-        let seconds = Int(interval) % 60
-        if hours > 0 {
-            return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
-        }
-        return String(format: "%02d:%02d", minutes, seconds)
+        let transcription = SpeechTranscriptionResult(
+            text: rawText,
+            segments: [SpeechSegment(start: 0, end: max(duration, 0.1), text: rawText)]
+        )
+        return formatTranscriptWithSpeakers(
+            transcription: transcription,
+            diarizationSegments: diarizationSegments,
+            meetingStart: importedTranscriptTimelineStart()
+        )
     }
 }

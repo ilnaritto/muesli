@@ -193,6 +193,11 @@ struct MeetingDetailView: View {
                 }
             }
 
+            if let savedRecordingPath = meeting.savedRecordingPath,
+               FileManager.default.fileExists(atPath: savedRecordingPath) {
+                MeetingRecordingPlayerView(recordingPath: savedRecordingPath)
+            }
+
             if !showsManualNotesEditor(for: meeting), isRawTranscript(meeting), documentMode == .notes {
                 transcriptCTA
             }
@@ -323,25 +328,21 @@ struct MeetingDetailView: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: MuesliTheme.spacing8) {
                 templateMenu(for: meeting, appliedTemplate: appliedTemplate)
-                recordingAction(for: meeting)
+                exportMenu(for: meeting)
                 summaryAction(for: meeting)
                 editButton(for: meeting)
-                if controller.canDeleteMeeting(meeting) {
-                    deleteButton
-                }
+                moreActionsMenu(for: meeting)
             }
 
             VStack(alignment: .trailing, spacing: MuesliTheme.spacing8) {
                 HStack(spacing: MuesliTheme.spacing8) {
                     templateMenu(for: meeting, appliedTemplate: appliedTemplate)
-                    recordingAction(for: meeting)
+                    exportMenu(for: meeting)
                     summaryAction(for: meeting)
                 }
                 HStack(spacing: MuesliTheme.spacing8) {
                     editButton(for: meeting)
-                    if controller.canDeleteMeeting(meeting) {
-                        deleteButton
-                    }
+                    moreActionsMenu(for: meeting)
                 }
             }
         }
@@ -423,15 +424,6 @@ struct MeetingDetailView: View {
             }
         }
         .disabled(isRetranscribing && !isEditingNotes && !isEditingTranscript)
-    }
-
-    @ViewBuilder
-    private func recordingAction(for meeting: MeetingRecord) -> some View {
-        if let savedRecordingPath = meeting.savedRecordingPath {
-            iconButton("folder", label: "Show Recording") {
-                controller.revealMeetingRecordingInFinder(path: savedRecordingPath)
-            }
-        }
     }
 
     @ViewBuilder
@@ -544,7 +536,6 @@ struct MeetingDetailView: View {
             Spacer()
 
             retranscribeAction(for: meeting)
-            exportMenu(for: meeting)
 
             Button(action: {
                 controller.copyToClipboard(activeCopyText(for: meeting))
@@ -709,6 +700,48 @@ struct MeetingDetailView: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .disabled(isEditingNotes || isEditingTranscript)
+    }
+
+    @ViewBuilder
+    private func moreActionsMenu(for meeting: MeetingRecord) -> some View {
+        if meeting.savedRecordingPath != nil || controller.canDeleteMeeting(meeting) {
+            Menu {
+                if let savedRecordingPath = meeting.savedRecordingPath {
+                    Button {
+                        controller.revealMeetingRecordingInFinder(path: savedRecordingPath)
+                    } label: {
+                        Label("Show Recording", systemImage: "folder")
+                    }
+                }
+
+                if controller.canDeleteMeeting(meeting) {
+                    if meeting.savedRecordingPath != nil {
+                        Divider()
+                    }
+                    Button(role: .destructive) {
+                        showDeleteConfirmation = true
+                    } label: {
+                        Label("Delete Meeting", systemImage: "trash")
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundStyle(MuesliTheme.textSecondary)
+                .frame(width: 30, height: 28)
+                .background(MuesliTheme.surfacePrimary)
+                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                .overlay(
+                    RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                        .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                )
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("More actions")
+        }
     }
 
     private func templateMenuItem(title: String, systemImage: String, isSelected: Bool) -> some View {
@@ -1215,7 +1248,11 @@ private struct MarqueeTitleTextField: View {
                         Color.clear.preference(key: TitleContentWidthPreferenceKey.self, value: proxy.size.width)
                     }
                 )
+                .allowsHitTesting(false)
         )
+        .onTapGesture {
+            isTitleFocused = true
+        }
         .onPreferenceChange(TitleContainerWidthPreferenceKey.self) { width in
             containerWidth = width
             restartMarqueeIfNeeded()

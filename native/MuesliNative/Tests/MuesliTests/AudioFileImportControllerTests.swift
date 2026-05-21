@@ -23,7 +23,7 @@ struct AudioFileImportControllerTests {
 
         // Verify the output is a valid WAV with expected format
         let file = try AVAudioFile(forReading: wavURL)
-        let format = file.processingFormat
+        let format = file.fileFormat
         #expect(format.sampleRate == 16000)
         #expect(format.channelCount == 1)
         #expect(format.commonFormat == .pcmFormatInt16)
@@ -58,8 +58,23 @@ struct AudioFileImportControllerTests {
 
         #expect(duration > 0)
         let file = try AVAudioFile(forReading: wavURL)
-        #expect(file.processingFormat.channelCount == 1)
-        #expect(file.processingFormat.sampleRate == 16000)
+        #expect(file.fileFormat.channelCount == 1)
+        #expect(file.fileFormat.sampleRate == 16000)
+    }
+
+    @Test("convertToWAV handles already normalized Muesli WAV")
+    func convertToWAVHandlesAlreadyNormalizedWAV() async throws {
+        let sourceURL = try createTestAudioFile(duration: 1.0, sampleRate: 16000, channels: 1)
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+
+        let (wavURL, duration) = try await AudioFileImportController.convertToWAV(sourceURL: sourceURL)
+        defer { try? FileManager.default.removeItem(at: wavURL) }
+
+        #expect(duration > 0.9)
+        let file = try AVAudioFile(forReading: wavURL)
+        #expect(file.fileFormat.channelCount == 1)
+        #expect(file.fileFormat.sampleRate == 16000)
+        #expect(file.fileFormat.commonFormat == .pcmFormatInt16)
     }
 
     @Test("convertToWAV handles short audio clips")
@@ -72,6 +87,13 @@ struct AudioFileImportControllerTests {
 
         #expect(duration > 0)
         #expect(duration < 1.0)
+    }
+
+    @Test("supported file URL validation accepts only importable audio extensions")
+    func supportedFileURLValidation() {
+        #expect(AudioFileImportController.isSupportedFileURL(URL(fileURLWithPath: "/tmp/test.wav")))
+        #expect(AudioFileImportController.isSupportedFileURL(URL(fileURLWithPath: "/tmp/test.MP3")))
+        #expect(!AudioFileImportController.isSupportedFileURL(URL(fileURLWithPath: "/tmp/test.txt")))
     }
 
     // MARK: - Speaker Formatting Tests
@@ -89,8 +111,8 @@ struct AudioFileImportControllerTests {
     @Test("formatTranscriptWithSpeakers returns raw text for single speaker")
     func formatTranscriptWithSpeakersSingleSpeaker() {
         let segments = [
-            TimedSpeakerSegment(startTime: 0, endTime: 5, speakerId: "SPEAKER_0"),
-            TimedSpeakerSegment(startTime: 5, endTime: 10, speakerId: "SPEAKER_0"),
+            makeDiarSeg(speakerId: "SPEAKER_0", start: 0, end: 5),
+            makeDiarSeg(speakerId: "SPEAKER_0", start: 5, end: 10),
         ]
         let result = AudioFileImportController.formatTranscriptWithSpeakers(
             rawText: "Hello world",
@@ -103,26 +125,45 @@ struct AudioFileImportControllerTests {
     @Test("formatTranscriptWithSpeakers adds speaker labels for multiple speakers")
     func formatTranscriptWithSpeakersMultipleSpeakers() {
         let segments = [
-            TimedSpeakerSegment(startTime: 0, endTime: 5, speakerId: "SPEAKER_0"),
-            TimedSpeakerSegment(startTime: 5, endTime: 10, speakerId: "SPEAKER_1"),
+            makeDiarSeg(speakerId: "SPEAKER_0", start: 0, end: 5),
+            makeDiarSeg(speakerId: "SPEAKER_1", start: 5, end: 10),
+        ]
+        let transcription = SpeechTranscriptionResult(
+            text: "Hello world\nHi there",
+            segments: [
+                SpeechSegment(start: 0, end: 4, text: "Hello world"),
+                SpeechSegment(start: 6, end: 9, text: "Hi there"),
+            ]
+        )
+        let result = AudioFileImportController.formatTranscriptWithSpeakers(
+            transcription: transcription,
+            diarizationSegments: segments,
+            meetingStart: localMidnight()
+        )
+        #expect(result.contains("Speaker 1: Hello world"))
+        #expect(result.contains("Speaker 2: Hi there"))
+        #expect(!result.contains("## Speaker Segments"))
+    }
+
+    @Test("formatTranscriptWithSpeakers falls back to raw text without ASR segments")
+    func formatTranscriptWithSpeakersFallsBackWithoutASRSegments() {
+        let segments = [
+            makeDiarSeg(speakerId: "SPEAKER_0", start: 0, end: 5),
+            makeDiarSeg(speakerId: "SPEAKER_1", start: 5, end: 10),
         ]
         let result = AudioFileImportController.formatTranscriptWithSpeakers(
-            rawText: "Hello world",
+            transcription: SpeechTranscriptionResult(text: "Hello world", segments: []),
             diarizationSegments: segments,
-            duration: 10.0
+            meetingStart: Date(timeIntervalSince1970: 0)
         )
-        #expect(result.contains("## Speaker Segments"))
-        #expect(result.contains("Speaker 0"))
-        #expect(result.contains("Speaker 1"))
-        #expect(result.contains("## Transcript"))
-        #expect(result.contains("Hello world"))
+        #expect(result == "Hello world")
     }
 
     @Test("formatTranscriptWithSpeakers preserves timestamped text")
     func formatTranscriptWithSpeakersPreservesTimestampedText() {
         let segments = [
-            TimedSpeakerSegment(startTime: 0, endTime: 5, speakerId: "SPEAKER_0"),
-            TimedSpeakerSegment(startTime: 5, endTime: 10, speakerId: "SPEAKER_1"),
+            makeDiarSeg(speakerId: "SPEAKER_0", start: 0, end: 5),
+            makeDiarSeg(speakerId: "SPEAKER_1", start: 5, end: 10),
         ]
         let timestampedText = "[00:00] Speaker 1: Hello\n[00:05] Speaker 2: Hi there"
         let result = AudioFileImportController.formatTranscriptWithSpeakers(
@@ -140,31 +181,59 @@ struct AudioFileImportControllerTests {
     func formatTimeIntervalUnderHour() {
         // Test via formatTranscriptWithSpeakers which uses internal formatting
         let segments = [
-            TimedSpeakerSegment(startTime: 65.0, endTime: 125.0, speakerId: "SPEAKER_0"),
-            TimedSpeakerSegment(startTime: 125.0, endTime: 185.0, speakerId: "SPEAKER_1"),
+            makeDiarSeg(speakerId: "SPEAKER_0", start: 65.0, end: 125.0),
+            makeDiarSeg(speakerId: "SPEAKER_1", start: 125.0, end: 185.0),
         ]
-        let result = AudioFileImportController.formatTranscriptWithSpeakers(
-            rawText: "Test transcript",
-            diarizationSegments: segments,
-            duration: 200.0
+        let transcription = SpeechTranscriptionResult(
+            text: "First\nSecond",
+            segments: [
+                SpeechSegment(start: 65, end: 66, text: "First"),
+                SpeechSegment(start: 125, end: 126, text: "Second"),
+            ]
         )
-        #expect(result.contains("01:05"))
-        #expect(result.contains("02:05"))
+        let result = AudioFileImportController.formatTranscriptWithSpeakers(
+            transcription: transcription,
+            diarizationSegments: segments,
+            meetingStart: localMidnight()
+        )
+        #expect(result.contains("00:01:05"))
+        #expect(result.contains("00:02:05"))
     }
 
     @Test("format time interval over one hour")
     func formatTimeIntervalOverHour() {
         let segments = [
-            TimedSpeakerSegment(startTime: 3661.0, endTime: 3720.0, speakerId: "SPEAKER_0"),
-            TimedSpeakerSegment(startTime: 7200.0, endTime: 7260.0, speakerId: "SPEAKER_1"),
+            makeDiarSeg(speakerId: "SPEAKER_0", start: 3661.0, end: 3720.0),
+            makeDiarSeg(speakerId: "SPEAKER_1", start: 7200.0, end: 7260.0),
+        ]
+        let transcription = SpeechTranscriptionResult(
+            text: "First\nSecond",
+            segments: [
+                SpeechSegment(start: 3661, end: 3662, text: "First"),
+                SpeechSegment(start: 7200, end: 7201, text: "Second"),
+            ]
+        )
+        let result = AudioFileImportController.formatTranscriptWithSpeakers(
+            transcription: transcription,
+            diarizationSegments: segments,
+            meetingStart: localMidnight()
+        )
+        #expect(result.contains("01:01:01"))
+        #expect(result.contains("02:00:00"))
+    }
+
+    @Test("raw-text compatibility formatter preserves text without timestamped ASR segments")
+    func rawTextCompatibilityFormatterPreservesText() {
+        let segments = [
+            makeDiarSeg(speakerId: "SPEAKER_0", start: 0, end: 5),
+            makeDiarSeg(speakerId: "SPEAKER_1", start: 5, end: 10),
         ]
         let result = AudioFileImportController.formatTranscriptWithSpeakers(
             rawText: "Test transcript",
             diarizationSegments: segments,
-            duration: 8000.0
+            duration: 10.0
         )
-        #expect(result.contains("01:01:01"))
-        #expect(result.contains("02:00:00"))
+        #expect(result.contains("Test transcript"))
     }
 
     // MARK: - Helpers
@@ -206,5 +275,19 @@ struct AudioFileImportControllerTests {
         try file.write(from: buffer)
 
         return url
+    }
+
+    private func makeDiarSeg(speakerId: String, start: Float, end: Float) -> TimedSpeakerSegment {
+        TimedSpeakerSegment(
+            speakerId: speakerId,
+            embedding: [],
+            startTimeSeconds: start,
+            endTimeSeconds: end,
+            qualityScore: 1.0
+        )
+    }
+
+    private func localMidnight() -> Date {
+        Calendar.current.startOfDay(for: Date(timeIntervalSince1970: 0))
     }
 }

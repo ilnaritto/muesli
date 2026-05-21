@@ -2797,6 +2797,7 @@ final class MuesliController: NSObject {
             guard let sourceURL = await AudioFileImportController.selectFile() else {
                 self.isStartingMeetingRecording = false
                 self.importTask = nil
+                self.syncAppState()
                 return
             }
             await self.importAudioFile(from: sourceURL)
@@ -2806,6 +2807,13 @@ final class MuesliController: NSObject {
     /// Imports an audio file from a URL (drag-and-drop or file picker).
     func importAudioFileFromURL(_ url: URL) {
         guard !isMeetingRecording(), !isStartingMeetingRecording else { return }
+        guard AudioFileImportController.isSupportedFileURL(url) else {
+            presentErrorAlert(
+                title: "Import Failed",
+                message: "This audio file format is not supported."
+            )
+            return
+        }
         guard normalizeMeetingTranscriptionSelectionForAvailability() != nil else {
             presentErrorAlert(
                 title: "Import Failed",
@@ -2826,10 +2834,8 @@ final class MuesliController: NSObject {
         let filename = sourceURL.deletingPathExtension().lastPathComponent
         let title = filename.isEmpty ? "Imported Recording" : filename
 
-        self.updateMeetingStartStatus("Importing audio file...")
+        self.updateImportProgressStatus("Importing audio file...")
         self.beginMeetingActivity(reason: "Importing audio file for transcription")
-        self.statusBarController?.setStatus("Importing audio...")
-        self.statusBarController?.refresh()
 
         do {
             let result = try await AudioFileImportController.importAudioFile(
@@ -2838,9 +2844,7 @@ final class MuesliController: NSObject {
                 controller: self,
                 progress: { [weak self] status in
                     Task { @MainActor in
-                        self?.updateMeetingStartStatus(status)
-                        self?.statusBarController?.setStatus(status)
-                        self?.statusBarController?.refresh()
+                        self?.updateImportProgressStatus(status)
                     }
                 }
             )
@@ -2849,6 +2853,7 @@ final class MuesliController: NSObject {
                 self.importTask = nil
                 self.isStartingMeetingRecording = false
                 self.updateMeetingStartStatus(nil)
+                self.indicator.hideLoading()
                 self.endMeetingActivity()
                 self.statusBarController?.setStatus("Idle")
                 self.statusBarController?.refresh()
@@ -2857,24 +2862,75 @@ final class MuesliController: NSObject {
                 self.showMeetingDocument(id: result.meetingID)
                 TelemetryDeck.signal("meeting.imported")
             }
+        } catch is CancellationError {
+            await MainActor.run {
+                self.importTask = nil
+                self.isStartingMeetingRecording = false
+                self.updateMeetingStartStatus(nil)
+                self.indicator.hideLoading()
+                self.endMeetingActivity()
+                self.statusBarController?.setStatus("Idle")
+                self.statusBarController?.refresh()
+                self.syncAppState()
+            }
         } catch {
             await MainActor.run {
                 self.importTask = nil
                 self.isStartingMeetingRecording = false
                 self.updateMeetingStartStatus(nil)
+                self.indicator.hideLoading()
                 self.endMeetingActivity()
                 self.statusBarController?.setStatus("Idle")
                 self.statusBarController?.refresh()
                 self.syncAppState()
-                // Only show error if import was not cancelled by the user
-                if !Task.isCancelled {
-                    self.presentErrorAlert(
-                        title: "Import Failed",
-                        message: error.localizedDescription
-                    )
-                }
+                self.presentErrorAlert(
+                    title: "Import Failed",
+                    message: error.localizedDescription
+                )
             }
         }
+    }
+
+    func audioFileImportContext() -> AudioFileImportController.ImportContext {
+        AudioFileImportController.ImportContext(
+            config: config,
+            backend: selectedMeetingTranscriptionBackend,
+            transcriptionCoordinator: transcriptionCoordinator,
+            templateSnapshot: defaultMeetingTemplate()
+        )
+    }
+
+    func persistImportedAudioMeeting(
+        title: String,
+        calendarEventID: String?,
+        startTime: Date,
+        endTime: Date,
+        rawTranscript: String,
+        formattedNotes: String,
+        micAudioPath: String?,
+        systemAudioPath: String?,
+        savedRecordingPath: String?,
+        selectedTemplateID: String?,
+        selectedTemplateName: String?,
+        selectedTemplateKind: MeetingTemplateKind?,
+        selectedTemplatePrompt: String?
+    ) throws -> Int64 {
+        try dictationStore.insertMeeting(
+            title: title,
+            calendarEventID: calendarEventID,
+            startTime: startTime,
+            endTime: endTime,
+            rawTranscript: rawTranscript,
+            formattedNotes: formattedNotes,
+            micAudioPath: micAudioPath,
+            systemAudioPath: systemAudioPath,
+            savedRecordingPath: savedRecordingPath,
+            selectedTemplateID: selectedTemplateID,
+            selectedTemplateName: selectedTemplateName,
+            selectedTemplateKind: selectedTemplateKind,
+            selectedTemplatePrompt: selectedTemplatePrompt,
+            source: .audioImport
+        )
     }
 
     func cancelMeetingPreparation() {
@@ -3693,6 +3749,22 @@ final class MuesliController: NSObject {
         appState.meetingStartStatus = status
     }
 
+    private func updateImportProgressStatus(_ status: String) {
+        updateMeetingStartStatus(status)
+        statusBarController?.setStatus(status)
+        statusBarController?.refresh()
+        indicator.showLoading(status)
+    }
+
+    private func blockDictationForMeetingActivityIfNeeded() -> Bool {
+        guard isStartingMeetingRecording else { return false }
+        let status = meetingStartStatus ?? "Preparing meeting..."
+        indicator.showLoading(status)
+        statusBarController?.setStatus(status)
+        statusBarController?.refresh()
+        return true
+    }
+
     private func endMeetingActivity() {
         guard let activity = meetingActivity else { return }
         ProcessInfo.processInfo.endActivity(activity)
@@ -4182,6 +4254,7 @@ final class MuesliController: NSObject {
 
     private func handlePrepare() {
         if isMeetingRecording() { return }
+        if blockDictationForMeetingActivityIfNeeded() { return }
         fputs("[muesli-native] prepare\n", stderr)
         if dictationLatencyTraceID == nil {
             beginDictationLatencyTrace(reason: "prepare")
@@ -4199,6 +4272,7 @@ final class MuesliController: NSObject {
 
     private func handleArm() {
         if isMeetingRecording() { return }
+        if blockDictationForMeetingActivityIfNeeded() { return }
         if dictationLatencyTraceID == nil {
             beginDictationLatencyTrace(reason: "hotkey")
         }
@@ -4426,6 +4500,7 @@ final class MuesliController: NSObject {
 
     private func handleStart() {
         if isMeetingRecording() { return }
+        if blockDictationForMeetingActivityIfNeeded() { return }
 
         // Nemotron is handsfree-only — block hold-to-talk and show a hint
         if selectedBackend.backend == "nemotron" {
@@ -4567,6 +4642,7 @@ final class MuesliController: NSObject {
 
     private func handleToggleStart(outputMode: DictationOutputMode? = nil) {
         if isMeetingRecording() { return }
+        if blockDictationForMeetingActivityIfNeeded() { return }
         fputs("[muesli-native] toggle dictation start\n", stderr)
         if dictationLatencyTraceID == nil {
             beginDictationLatencyTrace(reason: "toggle")
