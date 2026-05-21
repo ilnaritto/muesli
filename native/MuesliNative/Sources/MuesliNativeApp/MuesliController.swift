@@ -263,6 +263,7 @@ final class MuesliController: NSObject {
     private var isStoppingMeetingRecording = false
     private var isPresentingMeetingTerminationConfirmation = false
     private var isTerminatingAfterMeetingConfirmation = false
+    private var backgroundMeetingProcessingCount = 0
     private var meetingStartTask: Task<Void, Never>?
     private var meetingStartMeetingID: Int64?
     private var importTask: Task<Void, Never>?
@@ -2622,7 +2623,7 @@ final class MuesliController: NSObject {
     }
 
     func clearMeetingHistory() {
-        guard !isMeetingRecording(), !isStartingMeetingRecording else {
+        guard !isMeetingRecording(), !isStartingMeetingRecording, backgroundMeetingProcessingCount == 0 else {
             presentErrorAlert(
                 title: "Couldn't Clear Meeting History",
                 message: "Stop the current meeting recording before clearing saved meetings."
@@ -2664,7 +2665,7 @@ final class MuesliController: NSObject {
             isStarting: isStartingMeetingRecording,
             hasActiveSession: activeMeetingSession != nil,
             isRecording: activeMeetingSession?.isRecording == true,
-            isStopping: isStoppingMeetingRecording
+            isStopping: isStoppingMeetingRecording || backgroundMeetingProcessingCount > 0
         )
     }
 
@@ -3553,7 +3554,7 @@ final class MuesliController: NSObject {
         setState(.transcribing)
         sessionToStop.onProgress = { [weak self] stage in
             Task { @MainActor [weak self] in
-                guard let self, !self.isMeetingRecording() else { return }
+                guard let self, !self.isMeetingRecording(), !self.isStartingMeetingRecording else { return }
                 self.setMeetingProcessingStage(stage)
             }
         }
@@ -3562,7 +3563,7 @@ final class MuesliController: NSObject {
         activeMeetingSession = nil
         activeMeetingID = nil
         isStoppingMeetingRecording = false
-        endMeetingActivity()
+        backgroundMeetingProcessingCount += 1
         meetingMonitor.resumeAfterCooldown()
         meetingMonitor.refreshState()
         syncDictationRecorderWarmup(reason: "meeting-stop")
@@ -3608,12 +3609,16 @@ final class MuesliController: NSObject {
                 }
             }
             await MainActor.run {
+                self.backgroundMeetingProcessingCount -= 1
                 if let failedLiveMeetingID {
                     self.resolveLiveMeetingAfterStopFailure(id: failedLiveMeetingID)
                 }
                 if !self.isMeetingRecording() && !self.isStartingMeetingRecording {
                     self.setState(.idle)
                     self.statusBarController?.refresh()
+                }
+                if self.backgroundMeetingProcessingCount == 0 {
+                    self.endMeetingActivity()
                 }
                 self.historyWindowController?.reload()
                 self.syncAppState()
@@ -3623,7 +3628,7 @@ final class MuesliController: NSObject {
                 TelemetryDeck.signal("meeting.completed")
 
                 self.presentedMeetingCandidate = nil
-                if !self.isMeetingRecording() {
+                if !self.isMeetingRecording() && !self.isStartingMeetingRecording {
                     let savedMeetingID = completedMeetingID
                     self.meetingNotification.show(
                         title: "Transcription complete",
