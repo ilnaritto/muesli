@@ -3384,15 +3384,17 @@ final class MuesliController: NSObject {
 
     private func confirmationAnchorWindow() -> NSWindow? {
         NSApp.windows.first { window in
-            window.isVisible &&
-                !window.isMiniaturized &&
-                !(window is NSPanel) &&
-                window.canBecomeKey
+            isUsableSheetHost(window, allowPanel: false)
         } ?? NSApp.windows.first { window in
-            window.isVisible &&
-                !window.isMiniaturized &&
-                window.canBecomeKey
+            isUsableSheetHost(window, allowPanel: true)
         }
+    }
+
+    private func isUsableSheetHost(_ window: NSWindow, allowPanel: Bool) -> Bool {
+        window.isVisible &&
+            !window.isMiniaturized &&
+            window.canBecomeKey &&
+            (allowPanel || !(window is NSPanel))
     }
 
     private func discardMeetingRecording(resolution: MeetingDiscardResolution = .discardRecording) {
@@ -3760,8 +3762,10 @@ final class MuesliController: NSObject {
             switch config.meetingRecordingSavePolicy {
             case .never:
                 shouldSave = false
-            case .always, .prompt:
+            case .always:
                 shouldSave = true
+            case .prompt:
+                shouldSave = false
             }
         }
 
@@ -3868,7 +3872,8 @@ final class MuesliController: NSObject {
 
     @MainActor
     private func alertPresentationWindow(showHistoryIfNeeded: Bool = true) -> NSWindow? {
-        if let window = historyWindowController?.presentationWindow, window.isVisible {
+        if let window = historyWindowController?.presentationWindow,
+           isUsableSheetHost(window, allowPanel: false) {
             return window
         }
 
@@ -3876,14 +3881,15 @@ final class MuesliController: NSObject {
             historyWindowController?.show()
         }
 
-        if let window = historyWindowController?.presentationWindow, window.isVisible {
+        if let window = historyWindowController?.presentationWindow,
+           isUsableSheetHost(window, allowPanel: false) {
             return window
         }
 
         return NSApp.windows.first { window in
-            window.isVisible && window.canBecomeKey && !(window is NSPanel)
+            isUsableSheetHost(window, allowPanel: false)
         } ?? NSApp.windows.first { window in
-            window.isVisible && window.canBecomeKey
+            isUsableSheetHost(window, allowPanel: true)
         }
     }
 

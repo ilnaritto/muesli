@@ -505,8 +505,8 @@ struct MeetingsNavigationTests {
         #expect(FileManager.default.fileExists(atPath: retainedRecordingURL.path) == false)
     }
 
-    @Test("persistCompletedMeetingResult surfaces prompt policy retained recording failures")
-    func persistCompletedMeetingResultSurfacesPromptPolicyRetainedRecordingFailures() async throws {
+    @Test("persistCompletedMeetingResult skips prompt policy retained recording failures without decision")
+    func persistCompletedMeetingResultSkipsPromptPolicyRetainedRecordingFailuresWithoutDecision() async throws {
         let store = try makeStore()
         let controller = MuesliController(
             runtime: RuntimePaths(
@@ -535,6 +535,45 @@ struct MeetingsNavigationTests {
         )
 
         let persistenceResult = try controller.persistCompletedMeetingResult(result)
+
+        let storedMeeting = try #require(try store.meeting(id: persistenceResult.meetingID))
+        #expect(storedMeeting.savedRecordingPath == nil)
+        #expect(persistenceResult.recordingSaveError == nil)
+    }
+
+    @Test("persistCompletedMeetingResult surfaces retained recording failures after explicit save decision")
+    func persistCompletedMeetingResultSurfacesRetainedRecordingFailuresAfterExplicitSaveDecision() async throws {
+        let store = try makeStore()
+        let controller = MuesliController(
+            runtime: RuntimePaths(
+                repoRoot: FileManager.default.temporaryDirectory,
+                menuIcon: nil,
+                appIcon: nil,
+                bundlePath: nil
+            ),
+            dictationStore: store
+        )
+        controller.updateConfig { $0.meetingRecordingSavePolicy = .prompt }
+
+        let result = MeetingSessionResult(
+            title: "Explicit Save Failed Retention",
+            originalTitle: "Meeting",
+            calendarEventID: nil,
+            startTime: Date(),
+            endTime: Date().addingTimeInterval(30),
+            durationSeconds: 30,
+            rawTranscript: "Explicit save retention failure transcript.",
+            formattedNotes: "## Summary\nExplicit save retention failure notes.",
+            retainedRecordingURL: nil,
+            retainedRecordingError: CocoaError(.fileWriteUnknown),
+            systemRecordingURL: nil,
+            templateSnapshot: MeetingTemplates.auto.snapshot
+        )
+
+        let persistenceResult = try controller.persistCompletedMeetingResult(
+            result,
+            recordingSaveDecision: true
+        )
 
         let storedMeeting = try #require(try store.meeting(id: persistenceResult.meetingID))
         #expect(storedMeeting.savedRecordingPath == nil)
