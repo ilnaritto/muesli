@@ -505,8 +505,8 @@ struct MeetingsNavigationTests {
         #expect(FileManager.default.fileExists(atPath: retainedRecordingURL.path) == false)
     }
 
-    @Test("persistCompletedMeetingResult skips prompt policy retained recording failures without decision")
-    func persistCompletedMeetingResultSkipsPromptPolicyRetainedRecordingFailuresWithoutDecision() async throws {
+    @Test("persistCompletedMeetingResult surfaces prompt policy retained recording failures without decision")
+    func persistCompletedMeetingResultSurfacesPromptPolicyRetainedRecordingFailuresWithoutDecision() async throws {
         let store = try makeStore()
         let controller = MuesliController(
             runtime: RuntimePaths(
@@ -538,7 +538,7 @@ struct MeetingsNavigationTests {
 
         let storedMeeting = try #require(try store.meeting(id: persistenceResult.meetingID))
         #expect(storedMeeting.savedRecordingPath == nil)
-        #expect(persistenceResult.recordingSaveError == nil)
+        #expect(persistenceResult.recordingSaveError != nil)
     }
 
     @Test("persistCompletedMeetingResult surfaces retained recording failures after explicit save decision")

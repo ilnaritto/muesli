@@ -3765,7 +3765,7 @@ final class MuesliController: NSObject {
             case .always:
                 shouldSave = true
             case .prompt:
-                shouldSave = false
+                shouldSave = result.retainedRecordingError != nil
             }
         }
 
