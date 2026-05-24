@@ -261,6 +261,8 @@ final class MuesliController: NSObject {
     private let meetingAutoStopGracePeriod: TimeInterval = 20
     private var meetingActivity: NSObjectProtocol?
     private var isStoppingMeetingRecording = false
+    private var isPresentingMeetingTerminationConfirmation = false
+    private var isTerminatingAfterMeetingConfirmation = false
     private var meetingStartTask: Task<Void, Never>?
     private var meetingStartMeetingID: Int64?
     private var importTask: Task<Void, Never>?
@@ -2672,6 +2674,11 @@ final class MuesliController: NSObject {
         let messageText: String
         let informativeText: String
 
+        if isTerminatingAfterMeetingConfirmation {
+            isTerminatingAfterMeetingConfirmation = false
+            return true
+        }
+
         switch state {
         case .none:
             return true
@@ -2686,7 +2693,9 @@ final class MuesliController: NSObject {
             informativeText = "Quitting now will interrupt transcription and the meeting notes may not be saved."
         }
 
-        NSApp.activate(ignoringOtherApps: true)
+        guard !isPresentingMeetingTerminationConfirmation else {
+            return false
+        }
 
         let alert = NSAlert()
         alert.alertStyle = .warning
@@ -2695,11 +2704,25 @@ final class MuesliController: NSObject {
         alert.addButton(withTitle: "Keep Muesli Running")
         alert.addButton(withTitle: "Quit Anyway")
 
-        let response = alert.runModal()
-        guard response == .alertSecondButtonReturn else {
-            return false
+        isPresentingMeetingTerminationConfirmation = true
+        let didPresent = presentAlert(alert, fallbackLogContext: "meeting termination confirmation") { [weak self] response in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.isPresentingMeetingTerminationConfirmation = false
+                guard response == .alertSecondButtonReturn else { return }
+                self.discardMeetingStateForTermination()
+                self.isTerminatingAfterMeetingConfirmation = true
+                NSApp.terminate(nil)
+            }
+        }
+        if !didPresent {
+            isPresentingMeetingTerminationConfirmation = false
         }
 
+        return false
+    }
+
+    private func discardMeetingStateForTermination() {
         activeMeetingSession?.discard()
         activeMeetingSession = nil
         disarmMeetingAutoStop()
@@ -2716,7 +2739,6 @@ final class MuesliController: NSObject {
         updateMeetingNotificationVisibility()
         endMeetingActivity()
         syncAppState()
-        return true
     }
 
     @objc func toggleMeetingRecording() {
@@ -2883,22 +2905,7 @@ final class MuesliController: NSObject {
                     self.endMeetingActivity()
                     self.syncDictationRecorderWarmup(reason: "meeting-start-failed")
 
-                    let isSystemAudioError = error is CoreAudioSystemRecorder.RecorderError
-                    let alert = NSAlert()
-                    alert.alertStyle = .warning
-                    if isSystemAudioError {
-                        alert.messageText = "System audio capture failed"
-                        alert.informativeText = "Could not start system audio recording. Open System Settings > Privacy & Security > Screen & System Audio Recording and enable \(AppIdentity.displayName) under \"System Audio Recording Only\".\n\nError: \(error.localizedDescription)"
-                        alert.addButton(withTitle: "Open System Settings")
-                        alert.addButton(withTitle: "OK")
-                        if alert.runModal() == .alertFirstButtonReturn {
-                            CoreAudioSystemRecorder.openSystemAudioSettings()
-                        }
-                    } else {
-                        alert.messageText = "Meeting failed to start"
-                        alert.informativeText = error.localizedDescription
-                        alert.runModal()
-                    }
+                    self.presentMeetingStartFailureAlert(error: error)
                 }
             }
             self.finishMeetingStartAttempt(meetingID: meetingID)
@@ -3377,15 +3384,17 @@ final class MuesliController: NSObject {
 
     private func confirmationAnchorWindow() -> NSWindow? {
         NSApp.windows.first { window in
-            window.isVisible &&
-                !window.isMiniaturized &&
-                !(window is NSPanel) &&
-                window.canBecomeKey
+            isUsableSheetHost(window, allowPanel: false)
         } ?? NSApp.windows.first { window in
-            window.isVisible &&
-                !window.isMiniaturized &&
-                window.canBecomeKey
+            isUsableSheetHost(window, allowPanel: true)
         }
+    }
+
+    private func isUsableSheetHost(_ window: NSWindow, allowPanel: Bool) -> Bool {
+        window.isVisible &&
+            !window.isMiniaturized &&
+            window.canBecomeKey &&
+            (allowPanel || !(window is NSPanel))
     }
 
     private func discardMeetingRecording(resolution: MeetingDiscardResolution = .discardRecording) {
@@ -3560,8 +3569,13 @@ final class MuesliController: NSObject {
                 await MainActor.run {
                     self.setMeetingProcessingStatus("Finalizing")
                 }
+                let recordingSaveDecision = await self.recordingSaveDecision(for: result)
                 let persistenceResult = try await MainActor.run {
-                    try self.persistCompletedMeetingResultAndDispatchHook(result, existingMeetingID: liveMeetingID)
+                    try self.persistCompletedMeetingResultAndDispatchHook(
+                        result,
+                        existingMeetingID: liveMeetingID,
+                        recordingSaveDecision: recordingSaveDecision
+                    )
                 }
                 completedMeetingID = persistenceResult.meetingID
                 if let recordingSaveError = persistenceResult.recordingSaveError {
@@ -3634,12 +3648,19 @@ final class MuesliController: NSObject {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
-    func persistCompletedMeetingResult(_ result: MeetingSessionResult, existingMeetingID: Int64? = nil) throws -> CompletedMeetingPersistenceResult {
+    func persistCompletedMeetingResult(
+        _ result: MeetingSessionResult,
+        existingMeetingID: Int64? = nil,
+        recordingSaveDecision: Bool? = nil
+    ) throws -> CompletedMeetingPersistenceResult {
         let meetingID: Int64
         var savedRecordingPath: String?
         var recordingSaveError: MeetingLifecycleError?
         do {
-            savedRecordingPath = try persistMeetingRecordingIfNeeded(for: result)
+            savedRecordingPath = try persistMeetingRecordingIfNeeded(
+                for: result,
+                saveDecision: recordingSaveDecision
+            )
         } catch let error as MeetingLifecycleError {
             recordingSaveError = error
         } catch {
@@ -3712,8 +3733,16 @@ final class MuesliController: NSObject {
         return liveTitle
     }
 
-    func persistCompletedMeetingResultAndDispatchHook(_ result: MeetingSessionResult, existingMeetingID: Int64? = nil) throws -> CompletedMeetingPersistenceResult {
-        let persistenceResult = try persistCompletedMeetingResult(result, existingMeetingID: existingMeetingID)
+    func persistCompletedMeetingResultAndDispatchHook(
+        _ result: MeetingSessionResult,
+        existingMeetingID: Int64? = nil,
+        recordingSaveDecision: Bool? = nil
+    ) throws -> CompletedMeetingPersistenceResult {
+        let persistenceResult = try persistCompletedMeetingResult(
+            result,
+            existingMeetingID: existingMeetingID,
+            recordingSaveDecision: recordingSaveDecision
+        )
         meetingHookDispatcher.dispatchCompletedMeetingHook(
             meetingID: persistenceResult.meetingID,
             completedAt: result.endTime,
@@ -3722,15 +3751,22 @@ final class MuesliController: NSObject {
         return persistenceResult
     }
 
-    private func persistMeetingRecordingIfNeeded(for result: MeetingSessionResult) throws -> String? {
+    private func persistMeetingRecordingIfNeeded(
+        for result: MeetingSessionResult,
+        saveDecision: Bool? = nil
+    ) throws -> String? {
         let shouldSave: Bool
-        switch config.meetingRecordingSavePolicy {
-        case .never:
-            shouldSave = false
-        case .always:
-            shouldSave = true
-        case .prompt:
-            shouldSave = promptToSaveMeetingRecording(for: result.title)
+        if let saveDecision {
+            shouldSave = saveDecision
+        } else {
+            switch config.meetingRecordingSavePolicy {
+            case .never:
+                shouldSave = false
+            case .always:
+                shouldSave = true
+            case .prompt:
+                shouldSave = result.retainedRecordingError != nil
+            }
         }
 
         guard shouldSave else {
@@ -3806,7 +3842,15 @@ final class MuesliController: NSObject {
         }
     }
 
-    private func promptToSaveMeetingRecording(for title: String) -> Bool {
+    @MainActor
+    private func recordingSaveDecision(for result: MeetingSessionResult) async -> Bool? {
+        guard config.meetingRecordingSavePolicy == .prompt else { return nil }
+        guard result.retainedRecordingURL != nil, result.retainedRecordingError == nil else { return nil }
+        return await promptToSaveMeetingRecording(for: result.title)
+    }
+
+    @MainActor
+    private func promptToSaveMeetingRecording(for title: String) async -> Bool {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Save meeting recording?"
@@ -3814,17 +3858,93 @@ final class MuesliController: NSObject {
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Save Recording")
         alert.addButton(withTitle: "Don't Save")
-        return alert.runModal() == .alertFirstButtonReturn
+        guard let window = alertPresentationWindow(showHistoryIfNeeded: true) else {
+            fputs("[muesli-native] no window available for recording save prompt; saving recording by default\n", stderr)
+            return true
+        }
+
+        return await withCheckedContinuation { continuation in
+            alert.beginSheetModal(for: window) { response in
+                continuation.resume(returning: response == .alertFirstButtonReturn)
+            }
+        }
+    }
+
+    @MainActor
+    private func alertPresentationWindow(showHistoryIfNeeded: Bool = true) -> NSWindow? {
+        if let window = historyWindowController?.presentationWindow,
+           isUsableSheetHost(window, allowPanel: false) {
+            return window
+        }
+
+        if showHistoryIfNeeded {
+            historyWindowController?.show()
+        }
+
+        if let window = historyWindowController?.presentationWindow,
+           isUsableSheetHost(window, allowPanel: false) {
+            return window
+        }
+
+        return NSApp.windows.first { window in
+            isUsableSheetHost(window, allowPanel: false)
+        } ?? NSApp.windows.first { window in
+            isUsableSheetHost(window, allowPanel: true)
+        }
+    }
+
+    @discardableResult
+    private func presentAlert(
+        _ alert: NSAlert,
+        fallbackLogContext: String,
+        completion: ((NSApplication.ModalResponse) -> Void)? = nil
+    ) -> Bool {
+        NSApp.activate(ignoringOtherApps: true)
+        guard let window = alertPresentationWindow(showHistoryIfNeeded: true) else {
+            fputs(
+                "[muesli-native] unable to present \(fallbackLogContext) alert: \(alert.messageText) - \(alert.informativeText)\n",
+                stderr
+            )
+            statusBarController?.setStatus(alert.messageText)
+            statusBarController?.refresh()
+            NSSound.beep()
+            return false
+        }
+
+        alert.beginSheetModal(for: window) { response in
+            completion?(response)
+        }
+        return true
+    }
+
+    private func presentMeetingStartFailureAlert(error: Error) {
+        let isSystemAudioError = error is CoreAudioSystemRecorder.RecorderError
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        if isSystemAudioError {
+            alert.messageText = "System audio capture failed"
+            alert.informativeText = "Could not start system audio recording. Open System Settings > Privacy & Security > Screen & System Audio Recording and enable \(AppIdentity.displayName) under \"System Audio Recording Only\".\n\nError: \(error.localizedDescription)"
+            alert.addButton(withTitle: "Open System Settings")
+            alert.addButton(withTitle: "OK")
+        } else {
+            alert.messageText = "Meeting failed to start"
+            alert.informativeText = error.localizedDescription
+            alert.addButton(withTitle: "OK")
+        }
+
+        presentAlert(alert, fallbackLogContext: "meeting start failure") { response in
+            guard isSystemAudioError, response == .alertFirstButtonReturn else { return }
+            CoreAudioSystemRecorder.openSystemAudioSettings()
+        }
     }
 
     private func presentErrorAlert(title: String, message: String) {
-        NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
-        alert.runModal()
+        presentAlert(alert, fallbackLogContext: title)
     }
 
     func copyToClipboard(_ text: String) {
