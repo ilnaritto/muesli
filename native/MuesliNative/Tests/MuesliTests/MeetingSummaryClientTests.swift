@@ -408,6 +408,12 @@ struct MeetingSummaryClientTests {
                 "https://models.example.com/v1/chat/completions"
         )
 
+        config.customLLMURL = "https://models.example.com/openai/v1"
+        #expect(
+            MeetingSummaryClient.resolveCustomLLMURL(config: config, format: .openAI)?.absoluteString ==
+                "https://models.example.com/openai/v1/chat/completions"
+        )
+
         config.customLLMURL = "https://models.example.com/v1/chat/completions/"
         #expect(
             MeetingSummaryClient.resolveCustomLLMURL(config: config, format: .openAI)?.absoluteString ==
@@ -431,6 +437,12 @@ struct MeetingSummaryClientTests {
                 "http://localhost:1234/v1/chat/completions"
         )
 
+        config.lmStudioURL = "http://localhost:1234/proxy/v1"
+        #expect(
+            MeetingSummaryClient.resolveLMStudioURL(config: config)?.absoluteString ==
+                "http://localhost:1234/proxy/v1/chat/completions"
+        )
+
         config.lmStudioURL = "http://localhost:1234/v1/chat/completions"
         #expect(
             MeetingSummaryClient.resolveLMStudioURL(config: config)?.absoluteString ==
@@ -449,6 +461,12 @@ struct MeetingSummaryClientTests {
         )
 
         config.customLLMURL = "https://models.example.com/anthropic"
+        #expect(
+            MeetingSummaryClient.resolveCustomLLMURL(config: config, format: .anthropic)?.absoluteString ==
+                "https://models.example.com/anthropic/v1/messages"
+        )
+
+        config.customLLMURL = "https://models.example.com/anthropic/v1"
         #expect(
             MeetingSummaryClient.resolveCustomLLMURL(config: config, format: .anthropic)?.absoluteString ==
                 "https://models.example.com/anthropic/v1/messages"
@@ -506,6 +524,7 @@ struct MeetingSummaryClientTests {
         config.customLLMFormat = "openai"
         config.customLLMURL = "http://localhost:1"
         config.customLLMAPIKey = ""
+        config.customLLMModel = "local-model"
 
         do {
             _ = try await MeetingSummaryClient.summarize(
@@ -523,6 +542,67 @@ struct MeetingSummaryClientTests {
                 #expect(Bool(false), "Expected requestFailed error, got \(String(describing: error))")
             }
         }
+    }
+
+    @Test("custom LLM summary requires explicit model")
+    func customLLMRequiresModel() async throws {
+        var config = AppConfig()
+        config.meetingSummaryBackend = "custom_llm"
+        config.customLLMFormat = "openai"
+        config.customLLMURL = "http://localhost:1"
+        config.customLLMModel = ""
+
+        do {
+            _ = try await MeetingSummaryClient.summarize(
+                transcript: "Test transcript",
+                meetingTitle: "My Custom Meeting",
+                config: config
+            )
+            #expect(Bool(false), "Expected error to be thrown")
+        } catch {
+            guard case .backendFailed(let backend, _, let message) = error as? MeetingSummaryError else {
+                #expect(Bool(false), "Expected backendFailed error, got \(String(describing: error))")
+                return
+            }
+            #expect(backend == "Custom LLM")
+            #expect(message.contains("No model selected"))
+        }
+    }
+
+    @Test("Anthropic custom LLM requires API key")
+    func anthropicCustomLLMRequiresAPIKey() async throws {
+        var config = AppConfig()
+        config.meetingSummaryBackend = "custom_llm"
+        config.customLLMFormat = "anthropic"
+        config.customLLMAPIKey = ""
+        config.customLLMModel = "claude-test"
+
+        #expect(MeetingSummaryClient.customLLMRequiresAPIKey(config: config))
+
+        do {
+            _ = try await MeetingSummaryClient.summarize(
+                transcript: "Test transcript",
+                meetingTitle: "My Custom Meeting",
+                config: config
+            )
+            #expect(Bool(false), "Expected error to be thrown")
+        } catch {
+            guard case .backendFailed(let backend, _, let message) = error as? MeetingSummaryError else {
+                #expect(Bool(false), "Expected backendFailed error, got \(String(describing: error))")
+                return
+            }
+            #expect(backend == "Custom LLM")
+            #expect(message.contains("API key"))
+        }
+    }
+
+    @Test("OpenAI-compatible custom LLM does not require API key")
+    func openAICustomLLMDoesNotRequireAPIKey() {
+        var config = AppConfig()
+        config.customLLMFormat = "openai"
+        config.customLLMAPIKey = ""
+
+        #expect(!MeetingSummaryClient.customLLMRequiresAPIKey(config: config))
     }
 
     @Test("generateTitle returns nil for LM Studio when unreachable")

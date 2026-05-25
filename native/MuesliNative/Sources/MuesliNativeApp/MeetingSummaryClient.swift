@@ -561,8 +561,21 @@ enum MeetingSummaryClient {
             throw MeetingSummaryError.backendFailed(backend: "Custom LLM", statusCode: nil, message: "Invalid custom URL: \(config.customLLMURL)")
         }
         let configuredModel = config.customLLMModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        let model = configuredModel.isEmpty ? (format == .anthropic ? "claude-3-5-sonnet-20241022" : "custom-model") : configuredModel
+        guard !configuredModel.isEmpty else {
+            throw MeetingSummaryError.backendFailed(
+                backend: "Custom LLM",
+                statusCode: nil,
+                message: "No model selected. Enter a model in Settings."
+            )
+        }
         let apiKey = config.customLLMAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if customLLMRequiresAPIKey(config: config) && apiKey.isEmpty {
+            throw MeetingSummaryError.backendFailed(
+                backend: "Custom LLM",
+                statusCode: nil,
+                message: "Enter an API key for the selected Custom LLM format."
+            )
+        }
 
         switch format {
         case .openAI:
@@ -570,7 +583,7 @@ enum MeetingSummaryClient {
                 backend: "Custom LLM",
                 requestURL: requestURL,
                 apiKey: apiKey,
-                model: model,
+                model: configuredModel,
                 transcript: transcript,
                 meetingTitle: meetingTitle,
                 existingNotes: existingNotes,
@@ -585,7 +598,7 @@ enum MeetingSummaryClient {
                 backend: "Custom LLM",
                 requestURL: requestURL,
                 apiKey: apiKey,
-                model: model,
+                model: configuredModel,
                 transcript: transcript,
                 meetingTitle: meetingTitle,
                 existingNotes: existingNotes,
@@ -596,6 +609,10 @@ enum MeetingSummaryClient {
                 timeout: customLLMSummaryTimeout
             )
         }
+    }
+
+    static func customLLMRequiresAPIKey(config: AppConfig) -> Bool {
+        (CustomLLMFormat(rawValue: config.customLLMFormat) ?? .openAI) == .anthropic
     }
 
     private static func summarizeWithChatCompletions(
@@ -918,8 +935,10 @@ enum MeetingSummaryClient {
         let suffixParts = endpointSuffix.split(separator: "/").map(String.init)
         var pathParts = components.path.split(separator: "/").map(String.init)
 
-        if pathParts.isEmpty || pathParts == ["v1"] {
+        if pathParts.isEmpty {
             pathParts = suffixParts
+        } else if pathParts.last == suffixParts.first {
+            pathParts = Array(pathParts.dropLast()) + suffixParts
         } else if !pathParts.suffix(suffixParts.count).elementsEqual(suffixParts) {
             pathParts.append(contentsOf: suffixParts)
         }
@@ -1064,6 +1083,51 @@ enum MeetingSummaryClient {
         }
     }
 
+    private static func callAnthropicMessages(
+        url: URL,
+        apiKey: String,
+        model: String,
+        systemPrompt: String,
+        userPrompt: String,
+        maxTokens: Int,
+        timeout: TimeInterval? = nil
+    ) async -> String? {
+        let body: [String: Any] = [
+            "model": model,
+            "max_tokens": maxTokens,
+            "system": systemPrompt,
+            "messages": [
+                ["role": "user", "content": userPrompt],
+            ],
+        ]
+
+        var request = URLRequest(url: url)
+        if let timeout {
+            request.timeoutInterval = timeout
+        }
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        if !apiKey.isEmpty {
+            request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            try validateHTTPResponse(response, data: data, backend: "Custom LLM")
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                fputs("[summary] Anthropic title generation: invalid JSON response\n", stderr)
+                return nil
+            }
+            return extractAnthropicText(from: json)?
+                .trimmingCharacters(in: .whitespacesAndNewlines.union(.init(charactersIn: "\"")))
+        } catch {
+            fputs("[summary] Anthropic title generation failed: \(error)\n", stderr)
+            return nil
+        }
+    }
+
     private static func generateTitleWithChatGPT(transcript: String, config: AppConfig) async -> String? {
         do {
             let model = config.chatGPTModel.isEmpty ? defaultChatGPTModel : config.chatGPTModel
@@ -1108,14 +1172,21 @@ enum MeetingSummaryClient {
         guard let requestURL = resolveCustomLLMURL(config: config, format: format) else { return nil }
         let apiKey = config.customLLMAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let configuredModel = config.customLLMModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        let model = configuredModel.isEmpty ? (format == .anthropic ? "claude-3-5-sonnet-20241022" : "custom-model") : configuredModel
+        guard !configuredModel.isEmpty else {
+            fputs("[summary] Custom LLM title generation: no model selected\n", stderr)
+            return nil
+        }
+        if customLLMRequiresAPIKey(config: config) && apiKey.isEmpty {
+            fputs("[summary] Custom LLM title generation: no API key configured\n", stderr)
+            return nil
+        }
 
         switch format {
         case .openAI:
             return await callChatCompletions(
                 url: requestURL,
                 apiKey: apiKey,
-                model: model,
+                model: configuredModel,
                 systemPrompt: titleInstructions,
                 userPrompt: transcript,
                 maxTokens: 100,
@@ -1123,33 +1194,15 @@ enum MeetingSummaryClient {
                 timeout: customLLMTitleTimeout
             )
         case .anthropic:
-            let body: [String: Any] = [
-                "model": model,
-                "max_tokens": 100,
-                "system": titleInstructions,
-                "messages": [
-                    ["role": "user", "content": transcript],
-                ],
-            ]
-            var request = URLRequest(url: requestURL)
-            request.timeoutInterval = customLLMTitleTimeout
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-            if !apiKey.isEmpty {
-                request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-            }
-            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-            do {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                try validateHTTPResponse(response, data: data, backend: "Custom LLM")
-                guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-                return extractAnthropicText(from: json)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines.union(.init(charactersIn: "\"")))
-            } catch {
-                fputs("[summary] Custom LLM title generation failed: \(error)\n", stderr)
-                return nil
-            }
+            return await callAnthropicMessages(
+                url: requestURL,
+                apiKey: apiKey,
+                model: configuredModel,
+                systemPrompt: titleInstructions,
+                userPrompt: transcript,
+                maxTokens: 100,
+                timeout: customLLMTitleTimeout
+            )
         }
     }
 
