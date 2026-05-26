@@ -4,7 +4,11 @@
 import SwiftUI
 
 private struct LiveTranscriptGroup: Identifiable {
-    let id: UUID = UUID()
+    // Stable ID: index of the first message in this group. Using a deterministic
+    // Int instead of UUID prevents SwiftUI from treating every group as removed+
+    // reinserted on each transcript update, which caused O(n²) render work over
+    // long meetings and froze the UI.
+    let id: Int
     let speaker: String?
     let isUser: Bool
     let lines: [String]
@@ -15,6 +19,7 @@ private struct LiveTranscriptGroup: Identifiable {
         for msg in messages {
             if let last = groups.last, last.speaker == msg.speaker {
                 let updated = LiveTranscriptGroup(
+                    id: last.id,
                     speaker: last.speaker,
                     isUser: last.isUser,
                     lines: last.lines + [msg.text],
@@ -23,6 +28,7 @@ private struct LiveTranscriptGroup: Identifiable {
                 groups[groups.count - 1] = updated
             } else {
                 groups.append(LiveTranscriptGroup(
+                    id: msg.id,
                     speaker: msg.speaker,
                     isUser: msg.isUser,
                     lines: [msg.text],
