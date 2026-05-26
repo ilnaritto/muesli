@@ -66,6 +66,23 @@ enum MeetingTemplateSelectionError: Error, LocalizedError {
     }
 }
 
+enum MeetingCompletionNotificationPolicy {
+    static func shouldShow(
+        hasPresentedMeetingCandidate: Bool,
+        isShowingCalendarNotification: Bool,
+        isMeetingNotificationVisible: Bool
+    ) -> Bool {
+        !hasPresentedMeetingCandidate
+            && !isShowingCalendarNotification
+            && !isMeetingNotificationVisible
+    }
+}
+
+struct PendingMeetingCompletionNotification {
+    let meetingID: Int64?
+    let title: String
+}
+
 enum MeetingRetranscriptionError: Error, LocalizedError {
     case controllerUnavailable
     case recordingUnavailable
@@ -263,6 +280,8 @@ final class MuesliController: NSObject {
     private var isStoppingMeetingRecording = false
     private var isPresentingMeetingTerminationConfirmation = false
     private var isTerminatingAfterMeetingConfirmation = false
+    private var backgroundMeetingProcessingCount = 0
+    private var pendingMeetingCompletionNotification: PendingMeetingCompletionNotification?
     private var meetingStartTask: Task<Void, Never>?
     private var meetingStartMeetingID: Int64?
     private var importTask: Task<Void, Never>?
@@ -1403,7 +1422,10 @@ final class MuesliController: NSObject {
                 self.meetingMonitor.suppress(for: remaining)
                 self.meetingMonitor.refreshState()
             },
-            onClose: { [weak self] in self?.isShowingCalendarNotification = false }
+            onClose: { [weak self] in
+                self?.isShowingCalendarNotification = false
+                self?.showPendingMeetingCompletionNotificationIfPossible()
+            }
         )
     }
 
@@ -2657,10 +2679,10 @@ final class MuesliController: NSObject {
     }
 
     func clearMeetingHistory() {
-        guard !isMeetingRecording(), !isStartingMeetingRecording else {
+        guard !isMeetingRecording(), !isStartingMeetingRecording, backgroundMeetingProcessingCount == 0 else {
             presentErrorAlert(
                 title: "Couldn't Clear Meeting History",
-                message: "Stop the current meeting recording before clearing saved meetings."
+                message: "A meeting is recording or still being processed. Please wait before clearing saved meetings."
             )
             return
         }
@@ -2699,7 +2721,7 @@ final class MuesliController: NSObject {
             isStarting: isStartingMeetingRecording,
             hasActiveSession: activeMeetingSession != nil,
             isRecording: activeMeetingSession?.isRecording == true,
-            isStopping: isStoppingMeetingRecording
+            isStopping: isStoppingMeetingRecording || backgroundMeetingProcessingCount > 0
         )
     }
 
@@ -3580,17 +3602,33 @@ final class MuesliController: NSObject {
         let liveMeetingID = activeMeetingID
         if let liveMeetingID {
             flushCachedMeetingManualNotes(id: liveMeetingID, sync: false)
+            flushCachedMeetingTitle(id: liveMeetingID)
             try? dictationStore.updateMeetingStatus(id: liveMeetingID, status: .processing)
             syncAppState()
         }
         indicator.setMeetingRecording(false, config: config)
         indicator.setTranscribingTitle("Transcribing", config: config)
         setState(.transcribing)
+        let processingGeneration = backgroundMeetingProcessingCount + 1
         sessionToStop.onProgress = { [weak self] stage in
             Task { @MainActor [weak self] in
-                self?.setMeetingProcessingStage(stage)
+                guard let self,
+                      !self.isMeetingRecording(),
+                      !self.isStartingMeetingRecording,
+                      self.backgroundMeetingProcessingCount == processingGeneration else { return }
+                self.setMeetingProcessingStage(stage)
             }
         }
+
+        // Unblock new recordings immediately — transcription runs in the background
+        activeMeetingSession = nil
+        activeMeetingID = nil
+        isStoppingMeetingRecording = false
+        backgroundMeetingProcessingCount += 1
+        meetingMonitor.resumeAfterCooldown()
+        meetingMonitor.refreshState()
+        syncDictationRecorderWarmup(reason: "meeting-stop")
+
         Task { [weak self] in
             guard let self else { return }
             var meetingTitle = "Meeting"
@@ -3632,39 +3670,25 @@ final class MuesliController: NSObject {
                 }
             }
             await MainActor.run {
+                self.backgroundMeetingProcessingCount -= 1
                 if let failedLiveMeetingID {
                     self.resolveLiveMeetingAfterStopFailure(id: failedLiveMeetingID)
                 }
-                self.activeMeetingSession = nil
-                self.activeMeetingID = nil
-                self.isStoppingMeetingRecording = false
+                if !self.isMeetingRecording() && !self.isStartingMeetingRecording && self.backgroundMeetingProcessingCount == 0 {
+                    self.setState(.idle)
+                    self.statusBarController?.refresh()
+                }
                 self.endMeetingActivity()
-                self.setState(.idle)
-                self.meetingMonitor.resumeAfterCooldown()
-                self.meetingMonitor.refreshState()
-                self.statusBarController?.refresh()
                 self.historyWindowController?.reload()
                 self.syncAppState()
-                self.syncDictationRecorderWarmup(reason: "meeting-stop")
                 if let meetingResult {
                     self.cleanupTemporaryMeetingAudioFiles(for: meetingResult)
                 }
                 TelemetryDeck.signal("meeting.completed")
 
-                self.presentedMeetingCandidate = nil
-                let savedMeetingID = completedMeetingID
-                self.meetingNotification.show(
-                    title: "Transcription complete",
-                    subtitle: meetingTitle,
-                    actionLabel: "View Notes",
-                    onStartRecording: { [weak self] in
-                        guard let self else { return }
-                        if let savedMeetingID {
-                            self.showMeetingDocument(id: savedMeetingID)
-                        }
-                        self.syncAppState()
-                        self.historyWindowController?.show()
-                    }
+                self.enqueueOrShowMeetingCompletionNotification(
+                    meetingID: completedMeetingID,
+                    title: meetingTitle
                 )
                 self.updateMeetingNotificationVisibility()
             }
@@ -4122,6 +4146,8 @@ final class MuesliController: NSObject {
     }
 
     private func endMeetingActivity() {
+        guard backgroundMeetingProcessingCount == 0,
+              activeMeetingSession?.isRecording != true else { return }
         guard let activity = meetingActivity else { return }
         ProcessInfo.processInfo.endActivity(activity)
         meetingActivity = nil
@@ -4135,10 +4161,55 @@ final class MuesliController: NSObject {
            meetingNotification.currentPromptID == candidate.id {
             meetingNotification.close()
         }
+        showPendingMeetingCompletionNotificationIfPossible()
     }
 
     private func updateMeetingNotificationVisibility() {
         meetingMonitor.refreshState()
+        showPendingMeetingCompletionNotificationIfPossible()
+    }
+
+    private func enqueueOrShowMeetingCompletionNotification(meetingID: Int64?, title: String) {
+        let notification = PendingMeetingCompletionNotification(meetingID: meetingID, title: title)
+        guard canShowMeetingCompletionNotification else {
+            pendingMeetingCompletionNotification = notification
+            return
+        }
+        showMeetingCompletionNotification(notification)
+    }
+
+    private func showPendingMeetingCompletionNotificationIfPossible() {
+        guard let notification = pendingMeetingCompletionNotification,
+              canShowMeetingCompletionNotification else { return }
+        pendingMeetingCompletionNotification = nil
+        showMeetingCompletionNotification(notification)
+    }
+
+    private var canShowMeetingCompletionNotification: Bool {
+        MeetingCompletionNotificationPolicy.shouldShow(
+            hasPresentedMeetingCandidate: presentedMeetingCandidate != nil,
+            isShowingCalendarNotification: isShowingCalendarNotification,
+            isMeetingNotificationVisible: meetingNotification.isVisible
+        )
+    }
+
+    private func showMeetingCompletionNotification(_ notification: PendingMeetingCompletionNotification) {
+        meetingNotification.show(
+            title: "Transcription complete",
+            subtitle: notification.title,
+            actionLabel: "View Notes",
+            onStartRecording: { [weak self] in
+                guard let self else { return }
+                if let meetingID = notification.meetingID {
+                    self.showMeetingDocument(id: meetingID)
+                }
+                self.syncAppState()
+                self.historyWindowController?.show()
+            },
+            onClose: { [weak self] in
+                self?.showPendingMeetingCompletionNotificationIfPossible()
+            }
+        )
     }
 
     private func armMeetingAutoStop(source: MeetingAutoStopSource?) {
@@ -4245,6 +4316,7 @@ final class MuesliController: NSObject {
                 ) {
                     self.meetingMonitor.markRecordingStarted(candidate)
                     self.presentedMeetingCandidate = nil
+                    self.showPendingMeetingCompletionNotificationIfPossible()
                 } else {
                     self.meetingMonitor.refreshState()
                 }
@@ -4254,6 +4326,7 @@ final class MuesliController: NSObject {
                 self.presentedMeetingCandidate = nil
                 self.meetingMonitor.markPromptUserDismissed(candidate)
                 self.meetingMonitor.refreshState()
+                self.showPendingMeetingCompletionNotificationIfPossible()
             },
             onAutoDismiss: { [weak self] in
                 guard let self else { return }
@@ -4262,11 +4335,13 @@ final class MuesliController: NSObject {
                     self.presentedMeetingCandidate = nil
                 }
                 self.meetingMonitor.refreshState()
+                self.showPendingMeetingCompletionNotificationIfPossible()
             },
             onClose: { [weak self] in
                 guard let self, self.presentedMeetingCandidate == candidate else { return }
                 self.presentedMeetingCandidate = nil
                 self.meetingMonitor.markPromptClosed(candidate)
+                self.showPendingMeetingCompletionNotificationIfPossible()
             }
         )
         if didShow {
@@ -5554,7 +5629,10 @@ final class MuesliController: NSObject {
                 self.meetingMonitor.suppress(for: remaining)
                 self.meetingMonitor.refreshState()
             },
-            onClose: { [weak self] in self?.isShowingCalendarNotification = false }
+            onClose: { [weak self] in
+                self?.isShowingCalendarNotification = false
+                self?.showPendingMeetingCompletionNotificationIfPossible()
+            }
         )
     }
 
