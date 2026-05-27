@@ -285,7 +285,7 @@ struct MeetingChunkCollectorTests {
         let initialTask = Task<[SpeechSegment], Never> {
             [SpeechSegment(start: 1, end: 2, text: "first")]
         }
-        #expect(collector.add(initialTask))
+        #expect(collector.add(initialTask).registered)
 
         let initial = await collector.closeAndDrainSortedSegments()
         #expect(initial.map(\.text) == ["first"])
@@ -293,7 +293,7 @@ struct MeetingChunkCollectorTests {
         let lateTask = Task<[SpeechSegment], Never> {
             [SpeechSegment(start: 3, end: 4, text: "late")]
         }
-        #expect(!collector.add(lateTask))
+        #expect(!collector.add(lateTask).registered)
         lateTask.cancel()
     }
 

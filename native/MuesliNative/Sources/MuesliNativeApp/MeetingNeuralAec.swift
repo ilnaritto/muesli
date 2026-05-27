@@ -208,17 +208,24 @@ final class MeetingNeuralAec {
 
     /// Process mic samples through the loaded AEC processor using the currently estimated far-end delay.
     func processStreamingMic(_ micSamples: [Float]) -> [Float] {
+        // Always maintain history so trimHistoryBuffersIfNeeded() keeps the buffer bounded
+        // regardless of whether the model is loaded. The delay estimator also benefits
+        // from having data when the model finishes preloading.
+        micHistory.append(contentsOf: micSamples)
+        micSamplesReceived += micSamples.count
+        updateDelayEstimateIfNeeded()
+
         guard let processor else {
             fputs("[meeting-aec] processor not loaded, passing through raw mic audio\n", stderr)
+            trimHistoryBuffersIfNeeded()
             return micSamples
         }
 
         pendingMicSamples.append(contentsOf: micSamples)
-        micHistory.append(contentsOf: micSamples)
-        micSamplesReceived += micSamples.count
-        updateDelayEstimateIfNeeded()
         return processQueuedFrames(processor: processor, flush: false)
     }
+
+    var micHistoryCount: Int { micHistory.count }
 
     /// Flush remaining buffered mic samples (zero-padded to frame boundary).
     func flushStreamingMic() -> [Float] {
@@ -393,10 +400,17 @@ final class MeetingNeuralAec {
         let latestComparableSystemSample = min(systemAbsoluteEndSample, micSamplesReceived - maxCandidateDelaySamples)
         let oldestNeededForEstimator = latestComparableSystemSample > 0
             ? max(0, latestComparableSystemSample - delayEstimator.windowSamples)
-            : 0
+            : max(0, systemSamplesReceived - retentionSamples)
         let oldestNeededForAec = max(0, pendingMicStartSample - maxCandidateDelaySamples - frameSize)
-        trimSystemHistory(before: min(oldestNeededForEstimator, oldestNeededForAec))
-        trimMicHistory(before: min(oldestNeededForEstimator, max(0, micSamplesReceived - retentionSamples)))
+        let micRetentionFloor = max(0, micSamplesReceived - retentionSamples)
+        let systemRetentionFloor = max(0, systemSamplesReceived - retentionSamples)
+        // micHistory is only used by the delay estimator. retentionSamples is sized to hold
+        // exactly what the estimator needs, so always cap to it. When system audio is lagging,
+        // the estimator cannot use old mic samples anyway.
+        trimMicHistory(before: micRetentionFloor)
+        // systemHistory is used by both estimator and AEC. Respect both needs, but enforce
+        // the retention floor so the buffer doesn't grow unboundedly.
+        trimSystemHistory(before: max(systemRetentionFloor, min(oldestNeededForEstimator, oldestNeededForAec)))
     }
 
     private func delayDecision(for result: MeetingAecDelayEstimator.Result) -> (shouldApply: Bool, reason: String) {

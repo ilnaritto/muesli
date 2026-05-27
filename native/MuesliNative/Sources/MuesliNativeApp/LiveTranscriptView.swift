@@ -109,7 +109,6 @@ struct LiveTranscriptView: View {
                     Text(line)
                         .font(.system(size: 13))
                         .foregroundStyle(MuesliTheme.textPrimary)
-                        .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

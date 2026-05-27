@@ -90,6 +90,36 @@ struct MeetingNeuralAecTests {
         ]) == 6_400)
     }
 
+    @Test("micHistory stays bounded at retentionSamples when processor is absent")
+    func micHistoryBoundedWithoutProcessor() {
+        let aec = MeetingNeuralAec()
+        let estimator = MeetingAecDelayEstimator()
+        let retentionSamples = estimator.windowSamples + estimator.maxCandidateDelaySamples
+        let chunkSize = 1_600
+        let chunk = [Float](repeating: 0.1, count: chunkSize)
+
+        for _ in 0..<((retentionSamples * 5) / chunkSize) {
+            _ = aec.processStreamingMic(chunk)
+        }
+
+        #expect(aec.micHistoryCount <= retentionSamples + chunkSize)
+    }
+
+    @Test("systemHistory stays bounded at retentionSamples when mic audio is absent")
+    func systemHistoryBoundedWithoutMicAudio() {
+        let aec = MeetingNeuralAec()
+        let estimator = MeetingAecDelayEstimator()
+        let retentionSamples = estimator.windowSamples + estimator.maxCandidateDelaySamples
+        let chunkSize = 1_600
+        let chunk = [Float](repeating: 0.1, count: chunkSize)
+
+        for _ in 0..<((retentionSamples * 5) / chunkSize) {
+            aec.feedSystemSamples(chunk)
+        }
+
+        #expect(aec.diagnosticsSnapshot.bufferedSystemSamples <= retentionSamples + chunkSize)
+    }
+
     @Test("delay estimator exposes finer shared candidate grid")
     func delayEstimatorCandidateGridIncludesFineRange() {
         let candidates = MeetingAecDelayEstimator.defaultCandidateDelaysMs
