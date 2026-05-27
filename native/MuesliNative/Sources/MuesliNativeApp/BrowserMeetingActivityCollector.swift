@@ -14,27 +14,24 @@ final class BrowserMeetingActivityCollector {
     private let browserBundleIDs = Set(MeetingCandidateResolver.browserApps.keys)
     private let cachedMeetingTTL: TimeInterval
     private let focusedDocumentURLProvider: ((RunningAppSnapshot) -> String?)?
-    private let activeBrowserURLProvider: ((RunningAppSnapshot) -> String?)?
-    private let isBrowserProcessRunningProvider: (RunningAppSnapshot) -> Bool
+    private let activeTabURLProvider: ((RunningAppSnapshot) -> String?)?
     private var cachedMeetings: [String: CachedBrowserMeeting] = [:]
 
     init(
         cachedMeetingTTL: TimeInterval = 30,
         focusedDocumentURLProvider: ((RunningAppSnapshot) -> String?)? = nil,
-        activeBrowserURLProvider: ((RunningAppSnapshot) -> String?)? = nil,
-        isBrowserProcessRunningProvider: @escaping (RunningAppSnapshot) -> Bool = BrowserMeetingActivityCollector.browserProcessIsRunning
+        activeTabURLProvider: ((RunningAppSnapshot) -> String?)? = nil
     ) {
         self.cachedMeetingTTL = cachedMeetingTTL
         self.focusedDocumentURLProvider = focusedDocumentURLProvider
-        self.activeBrowserURLProvider = activeBrowserURLProvider
-        self.isBrowserProcessRunningProvider = isBrowserProcessRunningProvider
+        self.activeTabURLProvider = activeTabURLProvider
     }
 
     func collect(
         runningApps: [RunningAppSnapshot],
         refresh: Bool,
         now: Date = Date(),
-        shouldAttemptAppleScript: (String) -> Bool = { _ in true }
+        shouldAttemptActiveTabFallback: (String) -> Bool = { _ in true }
     ) async -> [BrowserMeetingContext] {
         let browserApps = runningApps.filter { browserBundleIDs.contains($0.bundleID) }
         let runningBrowserIDs = Set(browserApps.map(\.bundleID))
@@ -48,7 +45,7 @@ final class BrowserMeetingActivityCollector {
         for app in browserApps {
             let probeResult = await probeFocusedMeetingURL(
                 for: app,
-                shouldAttemptAppleScript: shouldAttemptAppleScript
+                shouldAttemptActiveTabFallback: shouldAttemptActiveTabFallback
             )
 
             guard case .meeting(let normalized) = probeResult else {
@@ -78,7 +75,7 @@ final class BrowserMeetingActivityCollector {
 
     private func probeFocusedMeetingURL(
         for app: RunningAppSnapshot,
-        shouldAttemptAppleScript: (String) -> Bool
+        shouldAttemptActiveTabFallback: (String) -> Bool
     ) async -> BrowserMeetingURLProbeResult {
         if let focusedDocumentURLProvider {
             guard let rawURL = focusedDocumentURLProvider(app) else {
@@ -91,13 +88,13 @@ final class BrowserMeetingActivityCollector {
             return MeetingURLNormalizer.normalize(rawURL).map(BrowserMeetingURLProbeResult.meeting) ?? .noMeeting
         }
 
-        // Query the browser's active tab even after another app/overlay becomes
-        // frontmost. Strict URL normalization plus resolver media checks keep
-        // background meeting tabs from prompting by themselves.
-        guard shouldAttemptAppleScript(app.bundleID) else {
+        guard activeTabURLProvider != nil else {
+            return .noMeeting
+        }
+        guard shouldAttemptActiveTabFallback(app.bundleID) else {
             return .skipped
         }
-        guard let url = await activeBrowserURLViaAppleScript(for: app) else {
+        guard let url = activeTabURLProvider?(app) else {
             return .noMeeting
         }
         return MeetingURLNormalizer.normalize(url).map(BrowserMeetingURLProbeResult.meeting) ?? .noMeeting
@@ -133,74 +130,41 @@ final class BrowserMeetingActivityCollector {
 
     private func axDocumentURL(for app: RunningAppSnapshot) -> String? {
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
+
+        for attribute in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
+            if let window = axWindowAttribute(attribute, from: axApp),
+               let rawURL = axDocumentURL(from: window) {
+                return rawURL
+            }
+        }
+
+        var windowsRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+              let windows = windowsRef as? [AXUIElement] else {
+            return nil
+        }
+
+        return windows.lazy.compactMap(axDocumentURL(from:)).first
+    }
+
+    private func axWindowAttribute(_ attribute: String, from app: AXUIElement) -> AXUIElement? {
         var windowRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &windowRef) == .success,
+        guard AXUIElementCopyAttributeValue(app, attribute as CFString, &windowRef) == .success,
               let window = windowRef,
               CFGetTypeID(window) == AXUIElementGetTypeID() else {
             return nil
         }
+        return (window as! AXUIElement)
+    }
 
-        let axWindow = (window as! AXUIElement)
+    private func axDocumentURL(from window: AXUIElement) -> String? {
         var documentRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(axWindow, kAXDocumentAttribute as CFString, &documentRef) == .success,
+        guard AXUIElementCopyAttributeValue(window, kAXDocumentAttribute as CFString, &documentRef) == .success,
               let rawURL = documentRef as? String else {
             return nil
         }
 
         return rawURL
-    }
-
-    private func activeBrowserURLViaAppleScript(for app: RunningAppSnapshot) async -> String? {
-        // Bundle-id Apple Events can launch a closed browser. Re-check the
-        // exact process from the snapshot immediately before sending them.
-        guard isBrowserProcessRunningProvider(app) else {
-            return nil
-        }
-
-        if let activeBrowserURLProvider {
-            return activeBrowserURLProvider(app)
-        }
-
-        guard let source = activeBrowserURLAppleScriptSource(bundleID: app.bundleID) else {
-            return nil
-        }
-
-        return await Task.detached(priority: .utility) {
-            var errorInfo: NSDictionary?
-            guard let output = NSAppleScript(source: source)?.executeAndReturnError(&errorInfo).stringValue,
-                  !output.isEmpty else {
-                return nil
-            }
-            return output
-        }.value
-    }
-
-    private static func browserProcessIsRunning(_ app: RunningAppSnapshot) -> Bool {
-        NSWorkspace.shared.runningApplications.contains {
-            $0.bundleIdentifier == app.bundleID && $0.processIdentifier == app.processIdentifier
-        }
-    }
-
-    private func activeBrowserURLAppleScriptSource(bundleID: String) -> String? {
-        let escapedBundleID = bundleID.replacingOccurrences(of: "\"", with: "\\\"")
-        switch bundleID {
-        case "com.apple.Safari":
-            return """
-            tell application id "\(escapedBundleID)"
-                if (count of windows) is 0 then return ""
-                return URL of current tab of front window
-            end tell
-            """
-        case "com.google.Chrome", "com.brave.Browser", "company.thebrowser.Browser", "com.microsoft.edgemac":
-            return """
-            tell application id "\(escapedBundleID)"
-                if (count of windows) is 0 then return ""
-                return URL of active tab of front window
-            end tell
-            """
-        default:
-            return nil
-        }
     }
 }
 

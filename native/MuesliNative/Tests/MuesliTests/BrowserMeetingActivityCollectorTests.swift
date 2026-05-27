@@ -36,7 +36,7 @@ struct BrowserMeetingActivityCollectorTests {
             runningApps: [chrome(isActive: false)],
             refresh: true,
             now: now,
-            shouldAttemptAppleScript: { _ in false }
+            shouldAttemptActiveTabFallback: { _ in false }
         )
 
         #expect(meetings.map(\.normalizedID) == ["googleMeet:meet.google.com/pwm-txwq-txy"])
@@ -54,7 +54,7 @@ struct BrowserMeetingActivityCollectorTests {
             runningApps: [chrome(isActive: true)],
             refresh: true,
             now: now,
-            shouldAttemptAppleScript: { _ in false }
+            shouldAttemptActiveTabFallback: { _ in false }
         )
 
         focusedURL = nil
@@ -62,13 +62,13 @@ struct BrowserMeetingActivityCollectorTests {
             runningApps: [chrome(isActive: false)],
             refresh: true,
             now: now.addingTimeInterval(1),
-            shouldAttemptAppleScript: { _ in false }
+            shouldAttemptActiveTabFallback: { _ in false }
         )
         let cachedAfterFailedRefresh = await collector.collect(
             runningApps: [chrome(isActive: false)],
             refresh: false,
             now: now.addingTimeInterval(2),
-            shouldAttemptAppleScript: { _ in false }
+            shouldAttemptActiveTabFallback: { _ in false }
         )
 
         #expect(first.count == 1)
@@ -76,19 +76,18 @@ struct BrowserMeetingActivityCollectorTests {
         #expect(cachedAfterFailedRefresh.isEmpty)
     }
 
-    @Test("refresh preserves cache when AppleScript probe is throttled")
-    func refreshPreservesCacheWhenAppleScriptProbeIsThrottled() async {
+    @Test("refresh preserves cache when active-tab fallback probe is throttled")
+    func refreshPreservesCacheWhenActiveTabFallbackProbeIsThrottled() async {
         var activeTabURL: String? = "https://meet.google.com/pwm-txwq-txy"
         let collector = BrowserMeetingActivityCollector(
-            activeBrowserURLProvider: { _ in activeTabURL },
-            isBrowserProcessRunningProvider: { _ in true }
+            activeTabURLProvider: { _ in activeTabURL }
         )
 
         let first = await collector.collect(
             runningApps: [chrome(isActive: false)],
             refresh: true,
             now: now,
-            shouldAttemptAppleScript: { _ in true }
+            shouldAttemptActiveTabFallback: { _ in true }
         )
 
         activeTabURL = nil
@@ -96,13 +95,13 @@ struct BrowserMeetingActivityCollectorTests {
             runningApps: [chrome(isActive: false)],
             refresh: true,
             now: now.addingTimeInterval(1),
-            shouldAttemptAppleScript: { _ in false }
+            shouldAttemptActiveTabFallback: { _ in false }
         )
         let cachedAfterSkippedRefresh = await collector.collect(
             runningApps: [chrome(isActive: false)],
             refresh: false,
             now: now.addingTimeInterval(2),
-            shouldAttemptAppleScript: { _ in false }
+            shouldAttemptActiveTabFallback: { _ in false }
         )
 
         #expect(first.count == 1)
@@ -110,19 +109,18 @@ struct BrowserMeetingActivityCollectorTests {
         #expect(cachedAfterSkippedRefresh.map(\.normalizedID) == ["googleMeet:meet.google.com/pwm-txwq-txy"])
     }
 
-    @Test("refresh clears cache when AppleScript probe runs and finds no meeting URL")
-    func refreshClearsCacheWhenAppleScriptProbeFindsNoMeetingURL() async {
+    @Test("refresh clears cache when active-tab fallback probe runs and finds no meeting URL")
+    func refreshClearsCacheWhenActiveTabFallbackProbeFindsNoMeetingURL() async {
         var activeTabURL: String? = "https://meet.google.com/pwm-txwq-txy"
         let collector = BrowserMeetingActivityCollector(
-            activeBrowserURLProvider: { _ in activeTabURL },
-            isBrowserProcessRunningProvider: { _ in true }
+            activeTabURLProvider: { _ in activeTabURL }
         )
 
         let first = await collector.collect(
             runningApps: [chrome(isActive: false)],
             refresh: true,
             now: now,
-            shouldAttemptAppleScript: { _ in true }
+            shouldAttemptActiveTabFallback: { _ in true }
         )
 
         activeTabURL = "https://example.com"
@@ -130,13 +128,13 @@ struct BrowserMeetingActivityCollectorTests {
             runningApps: [chrome(isActive: false)],
             refresh: true,
             now: now.addingTimeInterval(1),
-            shouldAttemptAppleScript: { _ in true }
+            shouldAttemptActiveTabFallback: { _ in true }
         )
         let cachedAfterFailedRefresh = await collector.collect(
             runningApps: [chrome(isActive: false)],
             refresh: false,
             now: now.addingTimeInterval(2),
-            shouldAttemptAppleScript: { _ in false }
+            shouldAttemptActiveTabFallback: { _ in false }
         )
 
         #expect(first.count == 1)
@@ -144,48 +142,56 @@ struct BrowserMeetingActivityCollectorTests {
         #expect(cachedAfterFailedRefresh.isEmpty)
     }
 
-    @Test("refresh skips AppleScript when browser process from snapshot has exited")
-    func refreshSkipsAppleScriptWhenBrowserProcessHasExited() async {
-        var didAttemptAppleScriptProbe = false
+    @Test("refresh clears cache when active-tab fallback has no URL")
+    func refreshClearsCacheWhenActiveTabFallbackHasNoURL() async {
+        var activeTabURL: String? = "https://meet.google.com/pwm-txwq-txy"
         let collector = BrowserMeetingActivityCollector(
-            activeBrowserURLProvider: { _ in
-                didAttemptAppleScriptProbe = true
-                return "https://meet.google.com/pwm-txwq-txy"
-            },
-            isBrowserProcessRunningProvider: { _ in false }
+            activeTabURLProvider: { _ in activeTabURL }
         )
+
+        let first = await collector.collect(
+            runningApps: [chrome(isActive: false)],
+            refresh: true,
+            now: now,
+            shouldAttemptActiveTabFallback: { _ in true }
+        )
+
+        activeTabURL = nil
+        let second = await collector.collect(
+            runningApps: [chrome(isActive: false)],
+            refresh: true,
+            now: now.addingTimeInterval(1),
+            shouldAttemptActiveTabFallback: { _ in true }
+        )
+        let cachedAfterMissingURL = await collector.collect(
+            runningApps: [chrome(isActive: false)],
+            refresh: false,
+            now: now.addingTimeInterval(2),
+            shouldAttemptActiveTabFallback: { _ in false }
+        )
+
+        #expect(first.count == 1)
+        #expect(second.isEmpty)
+        #expect(cachedAfterMissingURL.isEmpty)
+    }
+
+    @Test("refresh skips active-tab fallback when no provider is installed")
+    func refreshSkipsActiveTabFallbackWhenNoProviderIsInstalled() async {
+        var didAttemptActiveTabFallbackProbe = false
+        let collector = BrowserMeetingActivityCollector()
 
         let meetings = await collector.collect(
             runningApps: [brave(isActive: false)],
             refresh: true,
             now: now,
-            shouldAttemptAppleScript: { _ in true }
+            shouldAttemptActiveTabFallback: { _ in
+                didAttemptActiveTabFallbackProbe = true
+                return true
+            }
         )
 
         #expect(meetings.isEmpty)
-        #expect(didAttemptAppleScriptProbe == false)
-    }
-
-    @Test("refresh checks exact browser process before AppleScript")
-    func refreshChecksExactBrowserProcessBeforeAppleScript() async {
-        var probedPID: pid_t?
-        let collector = BrowserMeetingActivityCollector(
-            activeBrowserURLProvider: { app in
-                probedPID = app.processIdentifier
-                return "https://meet.google.com/pwm-txwq-txy"
-            },
-            isBrowserProcessRunningProvider: { app in app.processIdentifier == 1234 }
-        )
-
-        let meetings = await collector.collect(
-            runningApps: [chrome(isActive: false)],
-            refresh: true,
-            now: now,
-            shouldAttemptAppleScript: { _ in true }
-        )
-
-        #expect(meetings.map(\.normalizedID) == ["googleMeet:meet.google.com/pwm-txwq-txy"])
-        #expect(probedPID == 1234)
+        #expect(didAttemptActiveTabFallbackProbe == false)
     }
 
     @Test("non-refresh pass can reuse recent cached browser room")
@@ -199,7 +205,7 @@ struct BrowserMeetingActivityCollectorTests {
             runningApps: [chrome(isActive: true)],
             refresh: true,
             now: now,
-            shouldAttemptAppleScript: { _ in false }
+            shouldAttemptActiveTabFallback: { _ in false }
         )
 
         focusedURL = nil
@@ -207,7 +213,7 @@ struct BrowserMeetingActivityCollectorTests {
             runningApps: [chrome(isActive: false)],
             refresh: false,
             now: now.addingTimeInterval(1),
-            shouldAttemptAppleScript: { _ in false }
+            shouldAttemptActiveTabFallback: { _ in false }
         )
 
         #expect(cached.map(\.normalizedID) == ["googleMeet:meet.google.com/pwm-txwq-txy"])
