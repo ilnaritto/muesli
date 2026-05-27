@@ -82,11 +82,13 @@ final class BrowserMeetingActivityCollector {
             guard let rawURL = focusedDocumentURLProvider(app) else {
                 return .noMeeting
             }
-            return MeetingURLNormalizer.normalize(rawURL).map(BrowserMeetingURLProbeResult.meeting) ?? .noMeeting
+            if let normalized = MeetingURLNormalizer.normalize(rawURL) {
+                return .meeting(normalized)
+            }
         }
 
-        if let rawURL = axDocumentURL(for: app) {
-            return MeetingURLNormalizer.normalize(rawURL).map(BrowserMeetingURLProbeResult.meeting) ?? .noMeeting
+        if let normalized = axMeetingURL(for: app) {
+            return .meeting(normalized)
         }
 
         guard activeTabURLProvider != nil else {
@@ -129,13 +131,13 @@ final class BrowserMeetingActivityCollector {
         )
     }
 
-    private func axDocumentURL(for app: RunningAppSnapshot) -> String? {
+    private func axMeetingURL(for app: RunningAppSnapshot) -> NormalizedMeetingURL? {
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
 
         for attribute in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
             if let window = axWindowAttribute(attribute, from: axApp),
-               let rawURL = axDocumentURL(from: window) {
-                return rawURL
+               let normalized = normalizedMeetingURL(from: window) {
+                return normalized
             }
         }
 
@@ -145,7 +147,7 @@ final class BrowserMeetingActivityCollector {
             return nil
         }
 
-        return windows.lazy.compactMap(axDocumentURL(from:)).first
+        return windows.lazy.compactMap(normalizedMeetingURL(from:)).first
     }
 
     private func axWindowAttribute(_ attribute: String, from app: AXUIElement) -> AXUIElement? {
@@ -158,14 +160,14 @@ final class BrowserMeetingActivityCollector {
         return (window as! AXUIElement)
     }
 
-    private func axDocumentURL(from window: AXUIElement) -> String? {
+    private func normalizedMeetingURL(from window: AXUIElement) -> NormalizedMeetingURL? {
         var documentRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(window, kAXDocumentAttribute as CFString, &documentRef) == .success,
               let rawURL = documentRef as? String else {
             return nil
         }
 
-        return rawURL
+        return MeetingURLNormalizer.normalize(rawURL)
     }
 
     private static func activeTabURLViaScriptingBridge(for app: RunningAppSnapshot) -> String? {

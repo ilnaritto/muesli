@@ -76,6 +76,23 @@ struct BrowserMeetingActivityCollectorTests {
         #expect(cachedAfterFailedRefresh.isEmpty)
     }
 
+    @Test("refresh falls through to active-tab fallback when document URL is not a meeting")
+    func refreshFallsThroughToActiveTabFallbackWhenDocumentURLIsNotMeeting() async {
+        let collector = BrowserMeetingActivityCollector(
+            focusedDocumentURLProvider: { _ in "https://example.com" },
+            activeTabURLProvider: { _ in "https://meet.google.com/pwm-txwq-txy" }
+        )
+
+        let meetings = await collector.collect(
+            runningApps: [chrome(isActive: false)],
+            refresh: true,
+            now: now,
+            shouldAttemptActiveTabFallback: { _ in true }
+        )
+
+        #expect(meetings.map(\.normalizedID) == ["googleMeet:meet.google.com/pwm-txwq-txy"])
+    }
+
     @Test("refresh preserves cache when active-tab fallback probe is throttled")
     func refreshPreservesCacheWhenActiveTabFallbackProbeIsThrottled() async {
         var activeTabURL: String? = "https://meet.google.com/pwm-txwq-txy"
