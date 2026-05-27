@@ -16,6 +16,7 @@ final class BrowserMeetingActivityCollector {
     private let cachedMeetingTTL: TimeInterval
     private let focusedDocumentURLProvider: ((RunningAppSnapshot) -> String?)?
     private let activeTabURLProviderOverride: ((RunningAppSnapshot) -> String?)?
+    private let activeTabProbeResultProvider: ((RunningAppSnapshot) -> BrowserActiveTabProbeResult)?
     private let activeTabFallbackEnabled: Bool
     private var cachedMeetings: [String: CachedBrowserMeeting] = [:]
 
@@ -23,11 +24,13 @@ final class BrowserMeetingActivityCollector {
         cachedMeetingTTL: TimeInterval = 30,
         focusedDocumentURLProvider: ((RunningAppSnapshot) -> String?)? = nil,
         activeTabURLProvider: ((RunningAppSnapshot) -> String?)? = nil,
+        activeTabProbeResultProvider: ((RunningAppSnapshot) -> BrowserActiveTabProbeResult)? = nil,
         activeTabFallbackEnabled: Bool = true
     ) {
         self.cachedMeetingTTL = cachedMeetingTTL
         self.focusedDocumentURLProvider = focusedDocumentURLProvider
         self.activeTabURLProviderOverride = activeTabURLProvider
+        self.activeTabProbeResultProvider = activeTabProbeResultProvider
         self.activeTabFallbackEnabled = activeTabFallbackEnabled
     }
 
@@ -52,28 +55,33 @@ final class BrowserMeetingActivityCollector {
                 shouldAttemptActiveTabFallback: shouldAttemptActiveTabFallback
             )
 
-            guard case .meeting(let normalized, let isFocused) = probeResult else {
-                if case .noMeeting = probeResult {
-                    cachedMeetings.removeValue(forKey: app.bundleID)
+            switch probeResult {
+            case .meeting(let normalized, let isFocused):
+                let context = BrowserMeetingContext(
+                    bundleID: app.bundleID,
+                    appName: app.appName,
+                    pid: app.processIdentifier,
+                    url: normalized.url,
+                    normalizedID: normalized.id,
+                    platform: normalized.platform,
+                    isFocused: isFocused
+                )
+                cachedMeetings[app.bundleID] = CachedBrowserMeeting(context: context, observedAt: now)
+                liveMeetings.append(context)
+            case .noMeeting:
+                cachedMeetings.removeValue(forKey: app.bundleID)
+            case .inconclusive:
+                if let cached = cachedMeetings[app.bundleID] {
+                    liveMeetings.append(context(cached.context, runningApps: browserApps))
                 }
+            case .skipped:
                 continue
             }
-
-            let context = BrowserMeetingContext(
-                bundleID: app.bundleID,
-                appName: app.appName,
-                pid: app.processIdentifier,
-                url: normalized.url,
-                normalizedID: normalized.id,
-                platform: normalized.platform,
-                isFocused: isFocused
-            )
-            cachedMeetings[app.bundleID] = CachedBrowserMeeting(context: context, observedAt: now)
-            liveMeetings.append(context)
         }
 
-        // Refresh passes intentionally return only fresh probe results. Skipped
-        // probes preserve cache entries for later non-refresh passes.
+        // Refresh passes return fresh probe results except for inconclusive
+        // fallback timeouts, where a TTL-bound cache entry prevents transient
+        // ScriptingBridge stalls from flickering an active browser meeting off.
         return liveMeetings
     }
 
@@ -94,7 +102,7 @@ final class BrowserMeetingActivityCollector {
             return .meeting(axMeeting.normalized, isFocused: app.isActive && axMeeting.isFocused)
         }
 
-        guard activeTabFallbackEnabled || activeTabURLProviderOverride != nil else {
+        guard activeTabFallbackEnabled || activeTabURLProviderOverride != nil || activeTabProbeResultProvider != nil else {
             return .noMeeting
         }
         guard shouldAttemptActiveTabFallback(app.bundleID) else {
@@ -103,7 +111,7 @@ final class BrowserMeetingActivityCollector {
         let activeTabResult = await activeTabURL(for: app)
         guard case .url(let url) = activeTabResult else {
             if case .timedOut = activeTabResult {
-                return .skipped
+                return .inconclusive
             }
             return .noMeeting
         }
@@ -170,6 +178,7 @@ final class BrowserMeetingActivityCollector {
               CFGetTypeID(window) == AXUIElementGetTypeID() else {
             return nil
         }
+        // CFGetTypeID above verifies this bridge before the force cast.
         return (window as! AXUIElement)
     }
 
@@ -184,11 +193,17 @@ final class BrowserMeetingActivityCollector {
     }
 
     private func activeTabURL(for app: RunningAppSnapshot) async -> BrowserActiveTabProbeResult {
+        if let activeTabProbeResultProvider {
+            return activeTabProbeResultProvider(app)
+        }
         if let activeTabURLProviderOverride {
             return activeTabURLProviderOverride(app).map(BrowserActiveTabProbeResult.url) ?? .noURL
         }
-        return await Self.activeTabURLViaScriptingBridge(for: app, deadline: 2)
+        return await Self.activeTabURLViaScriptingBridge(for: app, deadline: Self.activeTabFallbackDeadline)
     }
+
+    private static let activeTabFallbackDeadline: TimeInterval = 1.8
+    private static let scriptingBridgeTimeoutTicks = 120
 
     private static func activeTabURLViaScriptingBridge(
         for app: RunningAppSnapshot,
@@ -218,7 +233,7 @@ final class BrowserMeetingActivityCollector {
         let errorDelegate = BrowserScriptingBridgeErrorDelegate()
         browser.delegate = errorDelegate
         // ScriptingBridge uses Apple Event ticks: 120 ticks is 2 seconds.
-        browser.timeout = 120
+        browser.timeout = Self.scriptingBridgeTimeoutTicks
 
         guard let windows = browser.value(forKey: "windows") as? SBElementArray,
               let frontWindow = windows.firstObject as? NSObject else {
@@ -234,6 +249,8 @@ final class BrowserMeetingActivityCollector {
     }
 
     private static func browserSupportsScriptingBridgeActiveTab(_ bundleID: String) -> Bool {
+        // Keep aligned with MeetingCandidateResolver.browserApps for browsers
+        // whose scripting dictionaries expose window and active-tab URL fields.
         switch bundleID {
         case "com.apple.Safari",
              "com.google.Chrome",
@@ -250,10 +267,11 @@ final class BrowserMeetingActivityCollector {
 private enum BrowserMeetingURLProbeResult {
     case meeting(NormalizedMeetingURL, isFocused: Bool)
     case noMeeting
+    case inconclusive
     case skipped
 }
 
-private enum BrowserActiveTabProbeResult {
+enum BrowserActiveTabProbeResult {
     case url(String)
     case noURL
     case timedOut

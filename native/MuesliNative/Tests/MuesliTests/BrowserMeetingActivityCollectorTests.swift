@@ -126,6 +126,39 @@ struct BrowserMeetingActivityCollectorTests {
         #expect(cachedAfterSkippedRefresh.map(\.normalizedID) == ["googleMeet:meet.google.com/pwm-txwq-txy"])
     }
 
+    @Test("refresh returns cached room when active-tab fallback times out")
+    func refreshReturnsCachedRoomWhenActiveTabFallbackTimesOut() async {
+        var activeTabResult: BrowserActiveTabProbeResult = .url("https://meet.google.com/pwm-txwq-txy")
+        let collector = BrowserMeetingActivityCollector(
+            activeTabProbeResultProvider: { _ in activeTabResult }
+        )
+
+        let first = await collector.collect(
+            runningApps: [chrome(isActive: true)],
+            refresh: true,
+            now: now,
+            shouldAttemptActiveTabFallback: { _ in true }
+        )
+
+        activeTabResult = .timedOut
+        let second = await collector.collect(
+            runningApps: [chrome(isActive: true)],
+            refresh: true,
+            now: now.addingTimeInterval(1),
+            shouldAttemptActiveTabFallback: { _ in true }
+        )
+        let cachedAfterTimeout = await collector.collect(
+            runningApps: [chrome(isActive: true)],
+            refresh: false,
+            now: now.addingTimeInterval(2),
+            shouldAttemptActiveTabFallback: { _ in false }
+        )
+
+        #expect(first.count == 1)
+        #expect(second.map(\.normalizedID) == ["googleMeet:meet.google.com/pwm-txwq-txy"])
+        #expect(cachedAfterTimeout.map(\.normalizedID) == ["googleMeet:meet.google.com/pwm-txwq-txy"])
+    }
+
     @Test("refresh clears cache when active-tab fallback probe runs and finds no meeting URL")
     func refreshClearsCacheWhenActiveTabFallbackProbeFindsNoMeetingURL() async {
         var activeTabURL: String? = "https://meet.google.com/pwm-txwq-txy"
