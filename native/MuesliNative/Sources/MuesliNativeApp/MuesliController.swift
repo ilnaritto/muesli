@@ -3274,6 +3274,7 @@ final class MuesliController: NSObject {
                 meetingSession.onChunkTranscribed = { [weak self, weak meetingSession] segments, speaker in
                     Task { @MainActor [weak self] in
                         guard let self else { return }
+                        guard self.appState.liveMeetingTranscriptOwnerID == meetingID else { return }
                         let start = meetingSession?.startTime ?? Date()
                         let formatter = DateFormatter()
                         formatter.dateFormat = "HH:mm:ss"
@@ -3287,6 +3288,7 @@ final class MuesliController: NSObject {
                         self.appState.liveMeetingTranscript += lines.joined(separator: "\n") + "\n"
                     }
                 }
+                appState.liveMeetingTranscriptOwnerID = meetingID
                 appState.liveMeetingTranscript = ""
                 try await meetingSession.start()
                 if Task.isCancelled || canceledMeetingStartIDs.contains(meetingID) {
@@ -3728,7 +3730,10 @@ final class MuesliController: NSObject {
                 self.endMeetingActivity()
                 self.historyWindowController?.reload()
                 self.syncAppState()
-                self.appState.liveMeetingTranscript = ""
+                if self.appState.liveMeetingTranscriptOwnerID == liveMeetingID {
+                    self.appState.liveMeetingTranscript = ""
+                    self.appState.liveMeetingTranscriptOwnerID = nil
+                }
                 if let meetingResult {
                     self.cleanupTemporaryMeetingAudioFiles(for: meetingResult)
                 }

@@ -70,6 +70,7 @@ final class AppState {
     var isMeetingStarting: Bool = false
     var meetingStartStatus: String?
     var liveMeetingTranscript: String = ""
+    var liveMeetingTranscriptOwnerID: Int64? = nil
     var dictationState: DictationState = .idle
     var isVoiceNoteRecording: Bool = false
     var isChatGPTAuthenticated: Bool = false
