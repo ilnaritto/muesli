@@ -743,7 +743,10 @@ final class MuesliController: NSObject {
 
         for meeting in meetings {
             do {
-                try dictationStore.updateMeetingStatus(id: meeting.id, status: .failed)
+                let recovered = try dictationStore.recoverLiveMeetingFromTranscriptCheckpoints(id: meeting.id)
+                if !recovered {
+                    try dictationStore.updateMeetingStatus(id: meeting.id, status: .failed)
+                }
                 staleLiveMeetingRecoveryFailures.remove(meeting.id)
             } catch {
                 staleLiveMeetingRecoveryFailures.insert(meeting.id)
@@ -2243,7 +2246,7 @@ final class MuesliController: NSObject {
             } catch {
                 fputs("[muesli-native] failed to generate or persist meeting summary: \(error)\n", stderr)
                 await MainActor.run {
-                    if error is LLMBackendError {
+                    if error is MeetingSummaryError {
                         completion(.failure(error))
                     } else {
                         completion(.failure(MeetingSummaryPersistenceError.failedToSaveSummary(underlying: error)))
@@ -3284,19 +3287,34 @@ final class MuesliController: NSObject {
                     }
                 }
                 meetingSession.onChunkTranscribed = { [weak self, weak meetingSession] segments, speaker in
+                    guard let self else { return }
+                    let start = meetingSession?.startTime ?? Date()
+                    let formatter = DateFormatter()
+                    formatter.locale = Locale(identifier: "en_US_POSIX")
+                    formatter.dateFormat = "HH:mm:ss"
+                    let entries = segments.compactMap { segment -> LiveTranscriptCheckpointEntry? in
+                        let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !text.isEmpty else { return nil }
+                        let timestamp = formatter.string(from: start.addingTimeInterval(segment.start))
+                        return LiveTranscriptCheckpointEntry(
+                            timestampLabel: timestamp,
+                            speaker: speaker,
+                            startSeconds: segment.start,
+                            endSeconds: segment.end,
+                            text: text
+                        )
+                    }
+                    guard !entries.isEmpty else { return }
+                    do {
+                        try self.dictationStore.appendLiveTranscriptCheckpoints(meetingID: meetingID, entries: entries)
+                    } catch {
+                        fputs("[muesli-native] failed to checkpoint live transcript for meeting \(meetingID): \(error)\n", stderr)
+                    }
+
                     Task { @MainActor [weak self] in
                         guard let self else { return }
                         guard self.appState.liveMeetingTranscriptOwnerID == meetingID else { return }
-                        let start = meetingSession?.startTime ?? Date()
-                        let formatter = DateFormatter()
-                        formatter.dateFormat = "HH:mm:ss"
-                        let lines = segments.compactMap { seg -> String? in
-                            let text = seg.text.trimmingCharacters(in: .whitespaces)
-                            guard !text.isEmpty else { return nil }
-                            let ts = formatter.string(from: start.addingTimeInterval(seg.start))
-                            return "[\(ts)] \(speaker): \(text)"
-                        }
-                        guard !lines.isEmpty else { return }
+                        let lines = entries.map { "[\($0.timestampLabel)] \($0.speaker): \($0.text)" }
                         self.appState.liveMeetingTranscript += lines.joined(separator: "\n") + "\n"
                     }
                 }

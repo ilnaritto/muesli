@@ -4,13 +4,11 @@ import MuesliCore
 private enum MeetingDocumentMode: Hashable {
     case notes
     case transcript
-    case chat
 }
 
 private enum RecordingContentMode: Hashable {
     case notes
     case live
-    case chat
 }
 
 private enum ManualNotesSaveStatus {
@@ -37,24 +35,6 @@ private struct LiveTranscriptSection: View {
     }
 }
 
-private struct MeetingChatSection: View {
-    let appState: AppState
-    @Binding var history: [MeetingChatView.ChatTurn]
-    @Binding var inputText: String
-    @Binding var isThinking: Bool
-    @Binding var errorMessage: String?
-    var body: some View {
-        MeetingChatView(
-            transcript: appState.liveMeetingTranscript,
-            config: appState.config,
-            history: $history,
-            inputText: $inputText,
-            isThinking: $isThinking,
-            errorMessage: $errorMessage
-        )
-    }
-}
-
 struct MeetingDetailView: View {
     let meeting: MeetingRecord?
     let controller: MuesliController
@@ -75,14 +55,6 @@ struct MeetingDetailView: View {
     @State private var pendingTemplateID: String
     @State private var documentMode: MeetingDocumentMode
     @State private var recordingMode: RecordingContentMode = .notes
-    @State private var chatHistory: [MeetingChatView.ChatTurn] = []
-    @State private var chatInputText: String = ""
-    @State private var chatIsThinking: Bool = false
-    @State private var chatErrorMessage: String? = nil
-    @State private var postMeetingChatHistory: [MeetingChatView.ChatTurn] = []
-    @State private var postMeetingChatInputText: String = ""
-    @State private var postMeetingChatIsThinking: Bool = false
-    @State private var postMeetingChatErrorMessage: String? = nil
     @State private var titleSaveTask: DispatchWorkItem?
     @State private var notesSaveTask: DispatchWorkItem?
     @State private var transcriptSaveTask: DispatchWorkItem?
@@ -303,17 +275,6 @@ struct MeetingDetailView: View {
                         .allowsHitTesting(recordingMode == .live)
                         .accessibilityHidden(recordingMode != .live)
 
-                    MeetingChatSection(
-                        appState: appState,
-                        history: $chatHistory,
-                        inputText: $chatInputText,
-                        isThinking: $chatIsThinking,
-                        errorMessage: $chatErrorMessage
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .opacity(recordingMode == .chat ? 1 : 0)
-                    .allowsHitTesting(recordingMode == .chat)
-                    .accessibilityHidden(recordingMode != .chat)
                 }
             } else {
                 let isManualNotesEditable = canEditManualNotes(for: meeting)
@@ -396,18 +357,6 @@ struct MeetingDetailView: View {
                         .opacity(documentMode == .transcript ? 1 : 0)
                         .allowsHitTesting(documentMode == .transcript)
                         .accessibilityHidden(documentMode != .transcript)
-
-                    MeetingChatView(
-                        transcript: meeting.rawTranscript,
-                        config: appState.config,
-                        history: $postMeetingChatHistory,
-                        inputText: $postMeetingChatInputText,
-                        isThinking: $postMeetingChatIsThinking,
-                        errorMessage: $postMeetingChatErrorMessage
-                    )
-                    .opacity(documentMode == .chat ? 1 : 0)
-                    .allowsHitTesting(documentMode == .chat)
-                    .accessibilityHidden(documentMode != .chat)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
@@ -423,11 +372,10 @@ struct MeetingDetailView: View {
         Picker("", selection: $documentMode) {
             Text("Notes").tag(MeetingDocumentMode.notes)
             Text("Transcript").tag(MeetingDocumentMode.transcript)
-            Text("Chat").tag(MeetingDocumentMode.chat)
         }
         .pickerStyle(.segmented)
         .tint(MuesliTheme.accent)
-        .frame(width: 300)
+        .frame(width: 220)
         .disabled(isEditingNotes || isEditingTranscript)
     }
 
@@ -435,11 +383,10 @@ struct MeetingDetailView: View {
         Picker("", selection: $recordingMode) {
             Text("Notes").tag(RecordingContentMode.notes)
             Text("Live").tag(RecordingContentMode.live)
-            Text("Chat").tag(RecordingContentMode.chat)
         }
         .pickerStyle(.segmented)
         .tint(MuesliTheme.accent)
-        .frame(width: 220)
+        .frame(width: 180)
     }
 
     private func showsManualNotesEditor(for meeting: MeetingRecord) -> Bool {
@@ -1201,8 +1148,6 @@ struct MeetingDetailView: View {
             return isEditingNotes ? editableNotes : Self.notesContent(for: meeting)
         case .transcript:
             return isEditingTranscript ? editableTranscript : meeting.rawTranscript
-        case .chat:
-            return meeting.rawTranscript
         }
     }
 
