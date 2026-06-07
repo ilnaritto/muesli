@@ -219,7 +219,11 @@ struct DictationStoreTests {
     @Test("live transcript checkpoints recover stale meetings as raw transcript fallback")
     func liveTranscriptCheckpointsRecoverStaleMeeting() throws {
         let store = try makeStore()
-        let id = try store.createLiveMeeting(title: "Crashed Meeting", calendarEventID: nil, startTime: Date())
+        let id = try store.createLiveMeeting(
+            title: "Crashed Meeting",
+            calendarEventID: nil,
+            startTime: Date(timeIntervalSince1970: 1_700_000_000)
+        )
         try store.updateMeetingManualNotes(id: id, manualNotes: "Remember this decision")
 
         try store.appendLiveTranscriptCheckpoints(meetingID: id, entries: [
@@ -237,6 +241,7 @@ struct DictationStoreTests {
         #expect(meeting.rawTranscript.contains("[10:00:03] Others: Agreed with the plan."))
         #expect(meeting.formattedNotes.contains("Recovered from live transcript checkpoints"))
         #expect(meeting.wordCount == DictationStore.countWords(in: meeting.rawTranscript) + 3)
+        #expect(meeting.durationSeconds == 4)
         #expect(try store.liveTranscriptCheckpointText(meetingID: id) == nil)
     }
 

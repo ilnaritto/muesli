@@ -847,9 +847,11 @@ public final class DictationStore {
         \(transcript)
         """
         let wordCount = Self.countWords(in: transcript) + Self.countWords(in: manualNotes)
+        let durationSeconds = try liveTranscriptCheckpointDuration(meetingID: id, db: db)
+        let endTime = try liveMeetingFallbackEndTime(meetingID: id, durationSeconds: durationSeconds, db: db)
         let sql = """
         UPDATE meetings
-        SET raw_transcript = ?, formatted_notes = ?, meeting_status = ?, word_count = ?
+        SET end_time = ?, duration_seconds = ?, raw_transcript = ?, formatted_notes = ?, meeting_status = ?, word_count = ?
         WHERE id = ?
         """
         var statement: OpaquePointer?
@@ -857,11 +859,13 @@ public final class DictationStore {
             throw lastError(db)
         }
         defer { sqlite3_finalize(statement) }
-        sqlite3_bind_text(statement, 1, (transcript as NSString).utf8String, -1, nil)
-        sqlite3_bind_text(statement, 2, (formattedNotes as NSString).utf8String, -1, nil)
-        sqlite3_bind_text(statement, 3, (MeetingStatus.completed.rawValue as NSString).utf8String, -1, nil)
-        sqlite3_bind_int(statement, 4, Int32(wordCount))
-        sqlite3_bind_int64(statement, 5, id)
+        bindOptionalText(endTime, at: 1, statement: statement)
+        sqlite3_bind_double(statement, 2, durationSeconds)
+        sqlite3_bind_text(statement, 3, (transcript as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(statement, 4, (formattedNotes as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(statement, 5, (MeetingStatus.completed.rawValue as NSString).utf8String, -1, nil)
+        sqlite3_bind_int(statement, 6, Int32(wordCount))
+        sqlite3_bind_int64(statement, 7, id)
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw lastError(db)
         }
@@ -1028,6 +1032,43 @@ public final class DictationStore {
 
         guard !lines.isEmpty else { return nil }
         return lines.joined(separator: "\n")
+    }
+
+    private func liveTranscriptCheckpointDuration(meetingID: Int64, db: OpaquePointer?) throws -> Double {
+        let sql = """
+        SELECT COALESCE(MAX(end_seconds), 0)
+        FROM meeting_transcript_checkpoints
+        WHERE meeting_id = ?
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw lastError(db)
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int64(statement, 1, meetingID)
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            throw lastError(db)
+        }
+        return max(sqlite3_column_double(statement, 0), 0)
+    }
+
+    private func liveMeetingFallbackEndTime(meetingID: Int64, durationSeconds: Double, db: OpaquePointer?) throws -> String? {
+        guard durationSeconds > 0 else { return nil }
+        let sql = "SELECT start_time FROM meetings WHERE id = ? LIMIT 1"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw lastError(db)
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int64(statement, 1, meetingID)
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            throw DictationStoreError.meetingNotFound(id: meetingID)
+        }
+        let startTimeString = stringColumn(statement, index: 0)
+        guard let startTime = ISO8601DateFormatter().date(from: startTimeString) else {
+            return nil
+        }
+        return ISO8601DateFormatter().string(from: startTime.addingTimeInterval(durationSeconds))
     }
 
     private func deleteLiveTranscriptCheckpoints(meetingID: Int64, db: OpaquePointer?) throws {

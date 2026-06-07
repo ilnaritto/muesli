@@ -35,11 +35,12 @@ final class MeetingChunkCollector {
 
     /// Move a completed task's result into the collector and drop the Task reference.
     /// Must be called from the watcher Task after awaiting the transcription task's value.
-    func retire(id: UUID, segments: [SpeechSegment]) {
+    func retire(id: UUID, segments: [SpeechSegment]) -> Bool {
         lock.withLock { state in
-            guard !state.isClosed else { return }
+            guard !state.isClosed else { return false }
             state.completedSegments.append(contentsOf: segments)
             state.pendingTasks.removeAll { $0.id == id }
+            return true
         }
     }
 
@@ -604,7 +605,7 @@ final class MeetingSession {
         if registered {
             Task { [weak self] in
                 let segments = await task.value
-                self?.micChunkCollector.retire(id: retireID, segments: segments)
+                guard self?.micChunkCollector.retire(id: retireID, segments: segments) == true else { return }
                 guard !segments.isEmpty else { return }
                 self?.onChunkTranscribed?(segments, "You")
             }
@@ -671,7 +672,7 @@ final class MeetingSession {
         if registered {
             Task { [weak self] in
                 let segments = await task.value
-                self?.systemChunkCollector.retire(id: retireID, segments: segments)
+                guard self?.systemChunkCollector.retire(id: retireID, segments: segments) == true else { return }
                 guard !segments.isEmpty else { return }
                 self?.onChunkTranscribed?(segments, "Others")
             }
