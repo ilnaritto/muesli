@@ -95,8 +95,8 @@ struct BackendOption: Equatable {
         backend: "sensevoice",
         model: "FluidInference/sensevoice-small-coreml",
         label: "SenseVoice Small",
-        sizeLabel: "~1.6 GB",
-        description: "FunASR SenseVoiceSmall via FluidAudio. CoreML/ANE, 50+ languages. Non-autoregressive with built-in punctuation.",
+        sizeLabel: SenseVoiceTranscriber.downloadedModelSizeLabel,
+        description: "FunASR SenseVoiceSmall via FluidAudio. INT8 CoreML/ANE, 50+ languages. Non-autoregressive with built-in punctuation.",
         recommended: false
     )
 

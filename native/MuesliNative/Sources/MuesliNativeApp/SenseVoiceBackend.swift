@@ -4,6 +4,7 @@ import Foundation
 /// Native Swift transcription backend for FunASR's SenseVoiceSmall via FluidAudio.
 actor SenseVoiceTranscriber {
     private var manager: SenseVoiceManager?
+    private static let precision: SenseVoiceEncoderPrecision = .int8
 
     enum TranscriberError: Error, LocalizedError {
         case notLoaded
@@ -21,17 +22,11 @@ actor SenseVoiceTranscriber {
         if manager != nil { return }
 
         fputs("[sensevoice] downloading/loading models...\n", stderr)
-        let loaded = try await SenseVoiceManager.load(precision: .fp16) { downloadProgress in
-            switch downloadProgress.phase {
-            case .listing:
-                progress?(downloadProgress.fractionCompleted, "Preparing SenseVoice download...")
-            case .downloading(_, _):
-                progress?(downloadProgress.fractionCompleted, "Downloading SenseVoice...")
-            case .compiling(_):
-                progress?(downloadProgress.fractionCompleted, "Compiling SenseVoice...")
-            }
-        }
-        self.manager = loaded
+        let modelDirectory = try await Self.downloadRequiredModels(progress: progress)
+        progress?(0.95, "Loading SenseVoice...")
+        let models = try SenseVoiceModels.load(from: modelDirectory, precision: Self.precision)
+        self.manager = SenseVoiceManager(models: models)
+        progress?(1.0, nil)
         fputs("[sensevoice] models ready\n", stderr)
     }
 
@@ -48,6 +43,7 @@ actor SenseVoiceTranscriber {
     }
 
     static let cacheRelativePath = "Library/Application Support/FluidAudio/Models/sensevoice-small-coreml"
+    static let downloadedModelSizeLabel = "~240 MB"
 
     static func cacheDirectory(fileManager: FileManager = .default) -> URL {
         fileManager.homeDirectoryForCurrentUser
@@ -55,10 +51,80 @@ actor SenseVoiceTranscriber {
     }
 
     static func isModelDownloaded() -> Bool {
-        SenseVoiceModels.modelsExist(at: cacheDirectory(), precision: .fp16)
+        SenseVoiceModels.modelsExist(at: cacheDirectory(), precision: precision)
     }
 
     static func deleteModelFiles(fileManager: FileManager = .default) {
         try? fileManager.removeItem(at: cacheDirectory(fileManager: fileManager))
+    }
+
+    private static func downloadRequiredModels(progress: ((Double, String?) -> Void)?) async throws -> URL {
+        let directory = cacheDirectory()
+        if SenseVoiceModels.modelsExist(at: directory, precision: precision) {
+            progress?(1.0, nil)
+            return directory
+        }
+
+        // FluidAudio 0.15.x downloads every SenseVoice encoder precision via SenseVoiceManager.load.
+        // Muesli only needs the INT8 ANE encoder, so fetch that subset and then use FluidAudio's loader.
+        let fm = FileManager.default
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        try await downloadSubdirectory(
+            ModelNames.SenseVoice.preprocessorFile,
+            to: directory,
+            progressRange: 0.0...0.2,
+            message: "Downloading SenseVoice preprocessor...",
+            progress: progress
+        )
+        try await downloadSubdirectory(
+            ModelNames.SenseVoice.encoderInt8File,
+            to: directory,
+            progressRange: 0.2...0.9,
+            message: "Downloading SenseVoice INT8 encoder...",
+            progress: progress
+        )
+        try await downloadVocabulary(to: directory, progress: progress)
+
+        return directory
+    }
+
+    private static func downloadSubdirectory(
+        _ subdirectory: String,
+        to directory: URL,
+        progressRange: ClosedRange<Double>,
+        message: String,
+        progress: ((Double, String?) -> Void)?
+    ) async throws {
+        try await DownloadUtils.downloadSubdirectory(
+            .senseVoiceSmall,
+            subdirectory: subdirectory,
+            to: directory,
+            progressHandler: { downloadProgress in
+                let span = progressRange.upperBound - progressRange.lowerBound
+                let fraction = progressRange.lowerBound + span * downloadProgress.fractionCompleted
+                progress?(min(max(fraction, 0.0), 1.0), message)
+            }
+        )
+    }
+
+    private static func downloadVocabulary(to directory: URL, progress: ((Double, String?) -> Void)?) async throws {
+        let vocabularyURL = directory.appendingPathComponent(ModelNames.SenseVoice.vocabularyFile)
+        if FileManager.default.fileExists(atPath: vocabularyURL.path) {
+            progress?(0.95, "SenseVoice vocabulary ready...")
+            return
+        }
+
+        progress?(0.9, "Downloading SenseVoice vocabulary...")
+        let remoteURL = try ModelRegistry.resolveModel(
+            Repo.senseVoiceSmall.remotePath,
+            ModelNames.SenseVoice.vocabularyFile
+        )
+        let data = try await DownloadUtils.fetchHuggingFaceFile(
+            from: remoteURL,
+            description: "SenseVoice vocabulary"
+        )
+        try data.write(to: vocabularyURL, options: .atomic)
+        progress?(0.95, "SenseVoice vocabulary ready...")
     }
 }

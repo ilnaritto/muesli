@@ -67,6 +67,13 @@ struct SenseVoiceTranscriberTests {
         #expect(SenseVoiceTranscriber.cacheRelativePath == "Library/Application Support/FluidAudio/Models/sensevoice-small-coreml")
         #expect(SenseVoiceTranscriber.cacheDirectory().path.hasSuffix(SenseVoiceTranscriber.cacheRelativePath))
     }
+
+    @Test("sensevoice metadata reflects INT8 download footprint")
+    func senseVoiceInt8DownloadMetadata() {
+        #expect(SenseVoiceTranscriber.downloadedModelSizeLabel == "~240 MB")
+        #expect(BackendOption.senseVoiceSmall.sizeLabel == SenseVoiceTranscriber.downloadedModelSizeLabel)
+        #expect(BackendOption.senseVoiceSmall.description.contains("INT8"))
+    }
 }
 
 @Suite("NemotronStreamingTranscriber")
