@@ -21,6 +21,8 @@ actor SenseVoiceTranscriber {
 
     /// Downloads models if needed and initializes the SenseVoice manager.
     func loadModels(progress: ((Double, String?) -> Void)? = nil) async throws {
+        // Actor isolation makes this check-and-set race-free. Waiters retry after
+        // a failed load so a transient download error does not poison the actor.
         while isLoading {
             try await Task.sleep(nanoseconds: 50_000_000)
             if manager != nil { return }
@@ -62,7 +64,7 @@ actor SenseVoiceTranscriber {
     }
 
     static func isModelDownloaded() -> Bool {
-        SenseVoiceModels.modelsExist(at: cacheDirectory(), precision: precision)
+        requiredModelsExist(at: cacheDirectory())
     }
 
     static func deleteModelFiles(fileManager: FileManager = .default) {
@@ -71,7 +73,7 @@ actor SenseVoiceTranscriber {
 
     private static func downloadRequiredModels(progress: ((Double, String?) -> Void)?) async throws -> URL {
         let directory = cacheDirectory()
-        if SenseVoiceModels.modelsExist(at: directory, precision: precision) {
+        if requiredModelsExist(at: directory) {
             return directory
         }
 
@@ -125,6 +127,7 @@ actor SenseVoiceTranscriber {
             return
         }
 
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         progress?(0.9, "Downloading SenseVoice vocabulary...")
         let remoteURL = try ModelRegistry.resolveModel(
             Repo.senseVoiceSmall.remotePath,
@@ -136,6 +139,12 @@ actor SenseVoiceTranscriber {
         )
         try data.write(to: vocabularyURL, options: .atomic)
         progress?(0.95, "SenseVoice vocabulary ready...")
+    }
+
+    private static func requiredModelsExist(at directory: URL, fileManager: FileManager = .default) -> Bool {
+        let vocabularyURL = directory.appendingPathComponent(ModelNames.SenseVoice.vocabularyFile)
+        return SenseVoiceModels.modelsExist(at: directory, precision: precision)
+            && fileManager.fileExists(atPath: vocabularyURL.path)
     }
 
     private func warmupIfNeeded(progress: ((Double, String?) -> Void)?) async {
