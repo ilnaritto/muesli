@@ -131,7 +131,7 @@ struct DictationStoreTests {
         let store = try makeStore()
         let createdAt = Date(timeIntervalSince1970: 1_770_000_000)
 
-        try store.upsertSyncedTextRecord(SyncTextRecord(
+        let applied = try store.upsertSyncedTextRecord(SyncTextRecord(
             id: "dictation-ios-1",
             kind: .dictation,
             text: "Captured on iPhone",
@@ -145,9 +145,47 @@ struct DictationStoreTests {
             cloudChangeTag: "tag-1"
         ))
 
+        #expect(applied == true)
         let row = try #require(try store.recentDictations(limit: 1).first)
         #expect(row.rawText == "Captured on iPhone")
         #expect(row.source == "ios")
+        #expect(try store.textRecordsNeedingSync().isEmpty)
+    }
+
+    @Test("older synced dictation is skipped and reported as not applied")
+    func olderSyncedDictationIsSkipped() throws {
+        let store = try makeStore()
+        let older = Date(timeIntervalSince1970: 1_770_000_000)
+        let newer = older.addingTimeInterval(60)
+
+        let firstApply = try store.upsertSyncedTextRecord(SyncTextRecord(
+            id: "dictation-ios-newer",
+            kind: .dictation,
+            text: "Newer local text",
+            source: "ios",
+            createdAt: older,
+            updatedAt: newer,
+            durationSeconds: 2,
+            wordCount: 3,
+            cloudChangeTag: "tag-new"
+        ))
+        #expect(firstApply == true)
+
+        let secondApply = try store.upsertSyncedTextRecord(SyncTextRecord(
+            id: "dictation-ios-newer",
+            kind: .dictation,
+            text: "Older cloud text",
+            source: "ios",
+            createdAt: older,
+            updatedAt: older,
+            durationSeconds: 2,
+            wordCount: 3,
+            cloudChangeTag: "tag-old"
+        ))
+        #expect(secondApply == false)
+
+        let row = try #require(try store.recentDictations(limit: 1).first)
+        #expect(row.rawText == "Newer local text")
         #expect(try store.textRecordsNeedingSync().isEmpty)
     }
 

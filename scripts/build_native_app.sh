@@ -236,8 +236,17 @@ if [[ "$SKIP_SIGN" != "1" ]]; then
   TEMP_ENTITLEMENTS=""
   APS_ENVIRONMENT="${MUESLI_APS_ENVIRONMENT:-}"
   PROFILE_PLIST=""
+  SIGN_TEMP_FILES=()
+  cleanup_sign_temp_files() {
+    local temp_file
+    for temp_file in "${SIGN_TEMP_FILES[@]:-}"; do
+      [[ -n "$temp_file" ]] && rm -f "$temp_file"
+    done
+  }
+  trap cleanup_sign_temp_files EXIT
   if [[ -n "$PROVISIONING_PROFILE" ]]; then
     PROFILE_PLIST="$(mktemp "${TMPDIR:-/tmp}/muesli-profile.XXXXXX.plist")"
+    SIGN_TEMP_FILES+=("$PROFILE_PLIST")
     if security cms -D -i "$PROVISIONING_PROFILE" > "$PROFILE_PLIST" 2>/dev/null; then
       if [[ -z "$APS_ENVIRONMENT" ]]; then
         APS_ENVIRONMENT="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.aps-environment' "$PROFILE_PLIST" 2>/dev/null || true)"
@@ -250,6 +259,7 @@ if [[ "$SKIP_SIGN" != "1" ]]; then
 
   if [[ -n "$APS_ENVIRONMENT" || -n "$PROFILE_PLIST" ]]; then
     TEMP_ENTITLEMENTS="$(mktemp "${TMPDIR:-/tmp}/muesli-entitlements.XXXXXX.plist")"
+    SIGN_TEMP_FILES+=("$TEMP_ENTITLEMENTS")
     cp "$ENTITLEMENTS" "$TEMP_ENTITLEMENTS"
     copy_profile_string_entitlement() {
       local key="$1"
@@ -284,6 +294,7 @@ if [[ "$SKIP_SIGN" != "1" ]]; then
   if [[ -n "$TEMP_ENTITLEMENTS" ]]; then
     rm -f "$TEMP_ENTITLEMENTS"
   fi
+  trap - EXIT
 
   # Deep-verify entire bundle — fail fast if any component has an invalid signature
   echo "Verifying deep signature..."

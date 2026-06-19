@@ -27,6 +27,51 @@ struct ICloudSyncResult: Equatable {
     let syncedAt: Date
 }
 
+private struct ICloudZoneChangesPage {
+    let records: [CKRecord]
+    let serverChangeToken: CKServerChangeToken
+    let moreComing: Bool
+}
+
+protocol ICloudChangeTokenStore {
+    func loadToken() -> CKServerChangeToken?
+    func saveToken(_ token: CKServerChangeToken)
+    func clearToken()
+}
+
+final class UserDefaultsICloudChangeTokenStore: ICloudChangeTokenStore {
+    private let defaults: UserDefaults
+    private let key: String
+
+    init(
+        defaults: UserDefaults = .standard,
+        key: String = "muesli.icloud.textRecords.privateDefaultZone.serverChangeToken.v1"
+    ) {
+        self.defaults = defaults
+        self.key = key
+    }
+
+    func loadToken() -> CKServerChangeToken? {
+        guard let data = defaults.data(forKey: key) else { return nil }
+        return try? NSKeyedUnarchiver.unarchivedObject(
+            ofClass: CKServerChangeToken.self,
+            from: data
+        )
+    }
+
+    func saveToken(_ token: CKServerChangeToken) {
+        guard let data = try? NSKeyedArchiver.archivedData(
+            withRootObject: token,
+            requiringSecureCoding: true
+        ) else { return }
+        defaults.set(data, forKey: key)
+    }
+
+    func clearToken() {
+        defaults.removeObject(forKey: key)
+    }
+}
+
 private enum ICloudSyncAccountError: LocalizedError {
     case noAccount
     case restricted
@@ -56,21 +101,27 @@ final class MuesliICloudSyncEngine {
 
     private let container: CKContainer
     private let database: CKDatabase
+    private let changeTokenStore: ICloudChangeTokenStore
 
-    init(container: CKContainer = CKContainer(identifier: Schema.containerIdentifier)) {
+    init(
+        container: CKContainer = CKContainer(identifier: Schema.containerIdentifier),
+        changeTokenStore: ICloudChangeTokenStore = UserDefaultsICloudChangeTokenStore()
+    ) {
         self.container = container
         self.database = container.privateCloudDatabase
+        self.changeTokenStore = changeTokenStore
     }
 
     func sync(store: DictationStore) async throws -> ICloudSyncResult {
         try await verifyAccountAvailable()
 
-        let remoteRecords = try await fetchTextRecords()
+        let remoteRecords = try await fetchChangedTextRecords()
         var downloaded = ICloudSyncKindCounts()
         for record in remoteRecords {
             guard let syncRecord = Self.syncTextRecord(from: record) else { continue }
-            try store.upsertSyncedTextRecord(syncRecord)
-            downloaded.increment(syncRecord.kind)
+            if try store.upsertSyncedTextRecord(syncRecord) {
+                downloaded.increment(syncRecord.kind)
+            }
         }
 
         let dirtyRecords = try store.textRecordsNeedingSync()
@@ -159,32 +210,99 @@ final class MuesliICloudSyncEngine {
         }
     }
 
-    private func fetchTextRecords() async throws -> [CKRecord] {
-        let query = CKQuery(recordType: Schema.textRecordType, predicate: NSPredicate(value: true))
-        var records: [CKRecord] = []
-        let firstPage = try await fetch(query: query)
-        records.append(contentsOf: firstPage.records)
-        var cursor = firstPage.cursor
-        while let nextCursor = cursor {
-            let page = try await fetch(cursor: nextCursor)
-            records.append(contentsOf: page.records)
-            cursor = page.cursor
+    private func fetchChangedTextRecords() async throws -> [CKRecord] {
+        do {
+            return try await fetchChangedTextRecordsUsingStoredToken()
+        } catch let error as CKError where error.code == .changeTokenExpired {
+            changeTokenStore.clearToken()
+            return try await fetchChangedTextRecordsUsingStoredToken()
         }
+    }
+
+    private func fetchChangedTextRecordsUsingStoredToken() async throws -> [CKRecord] {
+        let zoneID = CKRecordZone.default().zoneID
+        var previousToken = changeTokenStore.loadToken()
+        var records: [CKRecord] = []
+
+        while true {
+            let page = try await fetchZoneChangesPage(
+                zoneID: zoneID,
+                previousServerChangeToken: previousToken
+            )
+            records.append(contentsOf: page.records)
+            previousToken = page.serverChangeToken
+            changeTokenStore.saveToken(page.serverChangeToken)
+            if !page.moreComing {
+                break
+            }
+        }
+
         return records
     }
 
-    private func fetch(query: CKQuery) async throws -> (records: [CKRecord], cursor: CKQueryOperation.Cursor?) {
+    private func fetchZoneChangesPage(
+        zoneID: CKRecordZone.ID,
+        previousServerChangeToken: CKServerChangeToken?
+    ) async throws -> ICloudZoneChangesPage {
         try await withCheckedThrowingContinuation { continuation in
-            let operation = CKQueryOperation(query: query)
-            collect(operation: operation, continuation: continuation)
-            database.add(operation)
-        }
-    }
+            let configuration = CKFetchRecordZoneChangesOperation.ZoneConfiguration(
+                previousServerChangeToken: previousServerChangeToken,
+                resultsLimit: nil,
+                desiredKeys: Self.desiredTextRecordKeys
+            )
+            let operation = CKFetchRecordZoneChangesOperation(
+                recordZoneIDs: [zoneID],
+                configurationsByRecordZoneID: [zoneID: configuration]
+            )
+            let lock = NSLock()
+            var records: [CKRecord] = []
+            var zoneResult: Result<(serverChangeToken: CKServerChangeToken, moreComing: Bool), Error>?
 
-    private func fetch(cursor: CKQueryOperation.Cursor) async throws -> (records: [CKRecord], cursor: CKQueryOperation.Cursor?) {
-        try await withCheckedThrowingContinuation { continuation in
-            let operation = CKQueryOperation(cursor: cursor)
-            collect(operation: operation, continuation: continuation)
+            operation.recordWasChangedBlock = { _, result in
+                if case .success(let record) = result,
+                   record.recordType == Schema.textRecordType {
+                    lock.lock()
+                    records.append(record)
+                    lock.unlock()
+                }
+            }
+            operation.recordWithIDWasDeletedBlock = { _, _ in
+                // Muesli sync uses soft deletes via the isDeleted field, so hard CloudKit
+                // deletions are ignored until we have a record-name-to-kind tombstone map.
+            }
+            operation.recordZoneFetchResultBlock = { _, result in
+                lock.lock()
+                defer { lock.unlock() }
+                switch result {
+                case .success(let page):
+                    zoneResult = .success((page.serverChangeToken, page.moreComing))
+                case .failure(let error):
+                    zoneResult = .failure(error)
+                }
+            }
+            operation.fetchRecordZoneChangesResultBlock = { result in
+                switch result {
+                case .success:
+                    lock.lock()
+                    let pageRecords = records
+                    let pageResult = zoneResult
+                    lock.unlock()
+                    switch pageResult {
+                    case .success(let page):
+                        continuation.resume(returning: ICloudZoneChangesPage(
+                            records: pageRecords,
+                            serverChangeToken: page.serverChangeToken,
+                            moreComing: page.moreComing
+                        ))
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    case .none:
+                        continuation.resume(throwing: CKError(.internalError))
+                    }
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
             database.add(operation)
         }
     }
@@ -199,32 +317,6 @@ final class MuesliICloudSyncEngine {
                 } else {
                     continuation.resume(throwing: CKError(.unknownItem))
                 }
-            }
-        }
-    }
-
-    private func collect(
-        operation: CKQueryOperation,
-        continuation: CheckedContinuation<(records: [CKRecord], cursor: CKQueryOperation.Cursor?), Error>
-    ) {
-        let lock = NSLock()
-        var records: [CKRecord] = []
-        operation.recordMatchedBlock = { _, result in
-            if case .success(let record) = result {
-                lock.lock()
-                records.append(record)
-                lock.unlock()
-            }
-        }
-        operation.queryResultBlock = { result in
-            switch result {
-            case .success(let cursor):
-                lock.lock()
-                let pageRecords = records
-                lock.unlock()
-                continuation.resume(returning: (pageRecords, cursor))
-            case .failure(let error):
-                continuation.resume(throwing: error)
             }
         }
     }
@@ -325,5 +417,26 @@ final class MuesliICloudSyncEngine {
     private static func kind(from record: CKRecord) -> SyncTextRecordKind? {
         guard let raw = record["kind"] as? String else { return nil }
         return SyncTextRecordKind(rawValue: raw)
+    }
+
+    private static var desiredTextRecordKeys: [CKRecord.FieldKey] {
+        [
+            "kind",
+            "title",
+            "text",
+            "speakerTranscript",
+            "summaryText",
+            "manualNotes",
+            "source",
+            "engineIdentifier",
+            "createdAt",
+            "updatedAt",
+            "startedAt",
+            "endedAt",
+            "durationSeconds",
+            "wordCount",
+            "isDeleted",
+            "schemaVersion",
+        ]
     }
 }

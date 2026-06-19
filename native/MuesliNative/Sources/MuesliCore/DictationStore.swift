@@ -1421,15 +1421,16 @@ public final class DictationStore {
         return records
     }
 
-    public func upsertSyncedTextRecord(_ record: SyncTextRecord) throws {
+    @discardableResult
+    public func upsertSyncedTextRecord(_ record: SyncTextRecord) throws -> Bool {
         let db = try openDatabase()
         defer { sqlite3_close(db) }
 
         switch record.kind {
         case .dictation:
-            try upsertSyncedDictation(record, db: db)
+            return try upsertSyncedDictation(record, db: db)
         case .meeting:
-            try upsertSyncedMeeting(record, db: db)
+            return try upsertSyncedMeeting(record, db: db)
         }
     }
 
@@ -1577,10 +1578,10 @@ public final class DictationStore {
         }
     }
 
-    private func upsertSyncedDictation(_ record: SyncTextRecord, db: OpaquePointer?) throws {
+    private func upsertSyncedDictation(_ record: SyncTextRecord, db: OpaquePointer?) throws -> Bool {
         if let localUpdatedAt = try localUpdatedAt(table: "dictations", recordName: record.id, db: db),
            localUpdatedAt > record.updatedAt.timeIntervalSince1970 {
-            return
+            return false
         }
 
         let sql = """
@@ -1626,12 +1627,13 @@ public final class DictationStore {
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw lastError(db)
         }
+        return true
     }
 
-    private func upsertSyncedMeeting(_ record: SyncTextRecord, db: OpaquePointer?) throws {
+    private func upsertSyncedMeeting(_ record: SyncTextRecord, db: OpaquePointer?) throws -> Bool {
         if let localUpdatedAt = try localUpdatedAt(table: "meetings", recordName: record.id, db: db),
            localUpdatedAt > record.updatedAt.timeIntervalSince1970 {
-            return
+            return false
         }
 
         let start = record.startedAt ?? record.createdAt
@@ -1686,6 +1688,7 @@ public final class DictationStore {
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw lastError(db)
         }
+        return true
     }
 
     private func localUpdatedAt(table: String, recordName: String, db: OpaquePointer?) throws -> Double? {
