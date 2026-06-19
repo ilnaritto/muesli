@@ -33,6 +33,11 @@ private struct ICloudZoneChangesPage {
     let moreComing: Bool
 }
 
+private struct ICloudQueryPage {
+    let records: [CKRecord]
+    let cursor: CKQueryOperation.Cursor?
+}
+
 protocol ICloudChangeTokenStore {
     func loadToken() -> CKServerChangeToken?
     func saveToken(_ token: CKServerChangeToken)
@@ -216,6 +221,10 @@ final class MuesliICloudSyncEngine {
         } catch let error as CKError where error.code == .changeTokenExpired {
             changeTokenStore.clearToken()
             return try await fetchChangedTextRecordsUsingStoredToken()
+        } catch {
+            guard Self.isDefaultZoneChangeFetchUnsupported(error) else { throw error }
+            changeTokenStore.clearToken()
+            return try await fetchAllTextRecords()
         }
     }
 
@@ -238,6 +247,57 @@ final class MuesliICloudSyncEngine {
         }
 
         return records
+    }
+
+    private func fetchAllTextRecords() async throws -> [CKRecord] {
+        var cursor: CKQueryOperation.Cursor?
+        var records: [CKRecord] = []
+
+        repeat {
+            let page = try await fetchTextRecordsPage(cursor: cursor)
+            records.append(contentsOf: page.records)
+            cursor = page.cursor
+        } while cursor != nil
+
+        return records
+    }
+
+    private func fetchTextRecordsPage(cursor: CKQueryOperation.Cursor?) async throws -> ICloudQueryPage {
+        try await withCheckedThrowingContinuation { continuation in
+            let operation: CKQueryOperation
+            if let cursor {
+                operation = CKQueryOperation(cursor: cursor)
+            } else {
+                operation = CKQueryOperation(query: CKQuery(
+                    recordType: Schema.textRecordType,
+                    predicate: NSPredicate(value: true)
+                ))
+            }
+            operation.desiredKeys = Self.desiredTextRecordKeys
+            operation.resultsLimit = 200
+
+            let lock = NSLock()
+            var records: [CKRecord] = []
+            operation.recordMatchedBlock = { _, result in
+                if case .success(let record) = result {
+                    lock.lock()
+                    records.append(record)
+                    lock.unlock()
+                }
+            }
+            operation.queryResultBlock = { result in
+                switch result {
+                case .success(let cursor):
+                    lock.lock()
+                    let pageRecords = records
+                    lock.unlock()
+                    continuation.resume(returning: ICloudQueryPage(records: pageRecords, cursor: cursor))
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+            database.add(operation)
+        }
     }
 
     private func fetchZoneChangesPage(
@@ -417,6 +477,20 @@ final class MuesliICloudSyncEngine {
     private static func kind(from record: CKRecord) -> SyncTextRecordKind? {
         guard let raw = record["kind"] as? String else { return nil }
         return SyncTextRecordKind(rawValue: raw)
+    }
+
+    private static func isDefaultZoneChangeFetchUnsupported(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        let message = [
+            nsError.localizedDescription,
+            nsError.localizedFailureReason,
+            nsError.localizedRecoverySuggestion,
+        ]
+            .compactMap { $0?.lowercased() }
+            .joined(separator: " ")
+        return message.contains("appdefaultzone")
+            && message.contains("does not support")
+            && message.contains("change")
     }
 
     private static var desiredTextRecordKeys: [CKRecord.FieldKey] {
