@@ -296,6 +296,7 @@ final class MuesliController: NSObject {
     private var importSessionID: UUID?
     private var canceledMeetingStartIDs = Set<Int64>()
     private var iCloudSyncTask: Task<Void, Never>?
+    private var iCloudSyncGeneration = 0
     private var iCloudSyncDebounceTask: Task<Void, Never>?
     private var iCloudSubscriptionTask: Task<Void, Never>?
     private var hasEnsuredICloudSubscription = false
@@ -615,8 +616,7 @@ final class MuesliController: NSObject {
             NSWorkspace.shared.notificationCenter.removeObserver(iCloudWakeObserver)
             self.iCloudWakeObserver = nil
         }
-        iCloudSyncTask?.cancel()
-        iCloudSyncTask = nil
+        cancelActiveICloudSyncTask()
         iCloudSyncDebounceTask?.cancel()
         iCloudSyncDebounceTask = nil
         iCloudSubscriptionTask?.cancel()
@@ -929,8 +929,7 @@ final class MuesliController: NSObject {
             enableICloudPersistentSync()
             scheduleICloudSync(delay: 0.2, userInitiated: false)
         } else if wasICloudSyncEnabled && !config.iCloudSyncEnabled {
-            iCloudSyncTask?.cancel()
-            iCloudSyncTask = nil
+            cancelActiveICloudSyncTask()
             iCloudSyncDebounceTask?.cancel()
             iCloudSyncDebounceTask = nil
             iCloudSubscriptionTask?.cancel()
@@ -1079,11 +1078,13 @@ final class MuesliController: NSObject {
         enableICloudPersistentSync()
         appState.iCloudSyncStatus = "Syncing with private iCloud..."
         let store = dictationStore
+        iCloudSyncGeneration += 1
+        let generation = iCloudSyncGeneration
         iCloudSyncTask = Task { [weak self] in
             do {
                 let result = try await MuesliICloudSyncEngine().sync(store: store)
                 await MainActor.run {
-                    guard let self else { return }
+                    guard let self, self.iCloudSyncGeneration == generation else { return }
                     self.iCloudSyncTask = nil
                     let summary = self.formatICloudSyncSummary(result)
                     self.appState.iCloudSyncStatus = result.downloaded.total > 0
@@ -1102,14 +1103,18 @@ final class MuesliController: NSObject {
                         TelemetryDeck.signal("bridge_enable_completed", parameters: ["platform": "macos"])
                     }
                     self.refreshUI()
+                    if result.hasPendingUploads {
+                        self.scheduleICloudSync(delay: 0.2, userInitiated: false)
+                    }
                 }
             } catch is CancellationError {
                 await MainActor.run {
-                    self?.iCloudSyncTask = nil
+                    guard let self, self.iCloudSyncGeneration == generation else { return }
+                    self.iCloudSyncTask = nil
                 }
             } catch {
                 await MainActor.run {
-                    guard let self else { return }
+                    guard let self, self.iCloudSyncGeneration == generation else { return }
                     self.iCloudSyncTask = nil
                     self.appState.iCloudSyncStatus = "Sync failed: \(error.localizedDescription)"
                     if self.bridgeActivationPending {
@@ -1122,6 +1127,12 @@ final class MuesliController: NSObject {
                 }
             }
         }
+    }
+
+    private func cancelActiveICloudSyncTask() {
+        iCloudSyncGeneration += 1
+        iCloudSyncTask?.cancel()
+        iCloudSyncTask = nil
     }
 
     private func formatICloudSyncSummary(_ result: ICloudSyncResult) -> String {

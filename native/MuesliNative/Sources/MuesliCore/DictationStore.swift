@@ -1437,15 +1437,16 @@ public final class DictationStore {
         kind: SyncTextRecordKind,
         recordName: String,
         changeTag: String?,
+        recordUpdatedAt: Date,
         syncedAt: Date = Date()
-    ) throws {
+    ) throws -> Bool {
         let db = try openDatabase()
         defer { sqlite3_close(db) }
         let table = kind == .dictation ? "dictations" : "meetings"
         let sql = """
         UPDATE \(table)
         SET cloud_change_tag = ?, last_synced_at = ?, sync_dirty = 0
-        WHERE cloud_record_name = ?
+        WHERE cloud_record_name = ? AND updated_at <= ?
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -1455,9 +1456,11 @@ public final class DictationStore {
         bindOptionalText(changeTag, at: 1, statement: statement)
         sqlite3_bind_double(statement, 2, syncedAt.timeIntervalSince1970)
         sqlite3_bind_text(statement, 3, (recordName as NSString).utf8String, -1, nil)
+        sqlite3_bind_double(statement, 4, recordUpdatedAt.timeIntervalSince1970)
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw lastError(db)
         }
+        return sqlite3_changes(db) > 0
     }
 
     public func databasePath() -> URL {

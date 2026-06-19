@@ -23,6 +23,7 @@ struct ICloudSyncKindCounts: Equatable {
 struct ICloudSyncResult: Equatable {
     let uploaded: ICloudSyncKindCounts
     let downloaded: ICloudSyncKindCounts
+    let hasPendingUploads: Bool
     let syncedAt: Date
 }
 
@@ -73,19 +74,33 @@ final class MuesliICloudSyncEngine {
         }
 
         let dirtyRecords = try store.textRecordsNeedingSync()
+        var dirtyRecordsByName: [String: SyncTextRecord] = [:]
+        for dirtyRecord in dirtyRecords {
+            dirtyRecordsByName[dirtyRecord.id] = dirtyRecord
+        }
         let savedRecords = try await save(records: dirtyRecords.map(Self.cloudRecord(from:)))
         var uploaded = ICloudSyncKindCounts()
+        var hasPendingUploads = false
         for savedRecord in savedRecords {
-            guard let kind = Self.kind(from: savedRecord) else { continue }
+            let recordName = savedRecord.recordID.recordName
+            guard let kind = Self.kind(from: savedRecord),
+                  let dirtyRecord = dirtyRecordsByName[recordName] else { continue }
             uploaded.increment(kind)
-            try store.markTextRecordSynced(
+            let didMarkSynced = try store.markTextRecordSynced(
                 kind: kind,
-                recordName: savedRecord.recordID.recordName,
-                changeTag: savedRecord.recordChangeTag
+                recordName: recordName,
+                changeTag: savedRecord.recordChangeTag,
+                recordUpdatedAt: dirtyRecord.updatedAt
             )
+            hasPendingUploads = hasPendingUploads || !didMarkSynced
         }
 
-        return ICloudSyncResult(uploaded: uploaded, downloaded: downloaded, syncedAt: Date())
+        return ICloudSyncResult(
+            uploaded: uploaded,
+            downloaded: downloaded,
+            hasPendingUploads: hasPendingUploads,
+            syncedAt: Date()
+        )
     }
 
     func ensureTextRecordSubscription() async throws {
