@@ -398,7 +398,7 @@ struct SettingsView: View {
             settingsSection("iCloud Text Sync") {
                 settingsRow("Private iCloud sync") {
                     settingsSwitch(isOn: appState.config.iCloudSyncEnabled) { newValue in
-                        controller.updateConfig { $0.iCloudSyncEnabled = newValue }
+                        controller.setICloudSyncEnabledFromSettings(newValue)
                     }
                 }
                 settingsDescription("Sync dictation text, meeting transcripts, notes, summaries, and manual notes with Muesli for iPhone through your private iCloud account. Audio recordings are never synced.")

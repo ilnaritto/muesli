@@ -448,8 +448,9 @@ final class MuesliICloudSyncEngine {
                 }
             }
             operation.recordWithIDWasDeletedBlock = { _, _ in
-                // Muesli sync uses soft deletes via the isDeleted field, so hard CloudKit
-                // deletions are ignored until we have a record-name-to-kind tombstone map.
+                // Sync contract: Muesli clients must delete text records by writing
+                // isDeleted tombstones. Hard CloudKit deletes do not include enough
+                // metadata to resolve local conflict state safely, so they are ignored.
             }
             operation.recordZoneFetchResultBlock = { _, result in
                 lock.lock()

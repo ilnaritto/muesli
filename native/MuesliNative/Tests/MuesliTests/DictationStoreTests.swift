@@ -404,8 +404,8 @@ struct DictationStoreTests {
         #expect(tombstone.durationSeconds == 0)
     }
 
-    @Test("dirty sync queue gives each record kind an independent page")
-    func dirtySyncQueueGivesEachRecordKindAnIndependentPage() throws {
+    @Test("dirty sync queue respects total limit while including both record kinds")
+    func dirtySyncQueueRespectsTotalLimitWhileIncludingBothRecordKinds() throws {
         let store = try makeStore()
         let baseDate = Date(timeIntervalSince1970: 1_770_000_000)
 
@@ -430,8 +430,8 @@ struct DictationStoreTests {
         )
 
         let firstPage = try store.textRecordsNeedingSync(limit: 200)
-        #expect(firstPage.count == 201)
-        #expect(firstPage.filter { $0.kind == .dictation }.count == 200)
+        #expect(firstPage.count == 200)
+        #expect(firstPage.filter { $0.kind == .dictation }.count == 199)
         #expect(firstPage.contains { $0.kind == .meeting && $0.title == "Dirty meeting" })
         #expect(try store.hasTextRecordsNeedingSync())
 
@@ -446,7 +446,7 @@ struct DictationStoreTests {
 
         #expect(try store.hasTextRecordsNeedingSync())
         let secondPage = try store.textRecordsNeedingSync(limit: 200)
-        #expect(secondPage.count == 5)
+        #expect(secondPage.count == 6)
         #expect(secondPage.allSatisfy { $0.kind == .dictation })
 
         for record in secondPage {

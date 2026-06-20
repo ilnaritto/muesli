@@ -1456,8 +1456,34 @@ public final class DictationStore {
         defer { sqlite3_close(db) }
         try ensureCloudRecordNames(db: db)
 
-        var records: [SyncTextRecord] = []
         let boundedLimit = max(limit, 1)
+        let dictationShare = (boundedLimit + 1) / 2
+        let meetingShare = boundedLimit - dictationShare
+
+        var dictations = try dirtyDictationTextRecords(limit: dictationShare, offset: 0, db: db)
+        var meetings = try dirtyMeetingTextRecords(limit: meetingShare, offset: 0, db: db)
+
+        var remaining = boundedLimit - dictations.count - meetings.count
+        if remaining > 0, dictations.count == dictationShare {
+            let additional = try dirtyDictationTextRecords(limit: remaining, offset: dictationShare, db: db)
+            dictations.append(contentsOf: additional)
+            remaining -= additional.count
+        }
+        if remaining > 0, meetings.count == meetingShare {
+            let additional = try dirtyMeetingTextRecords(limit: remaining, offset: meetingShare, db: db)
+            meetings.append(contentsOf: additional)
+        }
+
+        return Array((dictations + meetings).prefix(boundedLimit))
+    }
+
+    private func dirtyDictationTextRecords(
+        limit: Int,
+        offset: Int,
+        db: OpaquePointer?
+    ) throws -> [SyncTextRecord] {
+        guard limit > 0 else { return [] }
+        var records: [SyncTextRecord] = []
         let dictationSQL = """
         SELECT cloud_record_name, raw_text, app_context, timestamp, started_at, ended_at,
                duration_seconds, word_count, source, updated_at, deleted_at, cloud_change_tag
@@ -1465,18 +1491,29 @@ public final class DictationStore {
         WHERE sync_dirty = 1 AND cloud_record_name IS NOT NULL
         ORDER BY updated_at DESC, id DESC
         LIMIT ?
+        OFFSET ?
         """
         var dictationStatement: OpaquePointer?
         guard sqlite3_prepare_v2(db, dictationSQL, -1, &dictationStatement, nil) == SQLITE_OK else {
             throw lastError(db)
         }
         defer { sqlite3_finalize(dictationStatement) }
-        sqlite3_bind_int(dictationStatement, 1, Int32(boundedLimit))
+        sqlite3_bind_int(dictationStatement, 1, Int32(limit))
+        sqlite3_bind_int(dictationStatement, 2, Int32(max(offset, 0)))
         while sqlite3_step(dictationStatement) == SQLITE_ROW {
             guard let record = makeSyncDictationRecord(dictationStatement) else { continue }
             records.append(record)
         }
+        return records
+    }
 
+    private func dirtyMeetingTextRecords(
+        limit: Int,
+        offset: Int,
+        db: OpaquePointer?
+    ) throws -> [SyncTextRecord] {
+        guard limit > 0 else { return [] }
+        var records: [SyncTextRecord] = []
         let meetingSQL = """
         SELECT cloud_record_name, title, raw_transcript, formatted_notes, manual_notes,
                start_time, duration_seconds, word_count, source, meeting_status,
@@ -1485,13 +1522,15 @@ public final class DictationStore {
         WHERE sync_dirty = 1 AND cloud_record_name IS NOT NULL
         ORDER BY updated_at DESC, id DESC
         LIMIT ?
+        OFFSET ?
         """
         var meetingStatement: OpaquePointer?
         guard sqlite3_prepare_v2(db, meetingSQL, -1, &meetingStatement, nil) == SQLITE_OK else {
             throw lastError(db)
         }
         defer { sqlite3_finalize(meetingStatement) }
-        sqlite3_bind_int(meetingStatement, 1, Int32(boundedLimit))
+        sqlite3_bind_int(meetingStatement, 1, Int32(limit))
+        sqlite3_bind_int(meetingStatement, 2, Int32(max(offset, 0)))
         while sqlite3_step(meetingStatement) == SQLITE_ROW {
             guard let record = makeSyncMeetingRecord(meetingStatement) else { continue }
             records.append(record)

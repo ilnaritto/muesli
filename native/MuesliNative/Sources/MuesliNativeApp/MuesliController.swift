@@ -944,6 +944,14 @@ final class MuesliController: NSObject {
         startICloudSync(userInitiated: true)
     }
 
+    func setICloudSyncEnabledFromSettings(_ enabled: Bool) {
+        if enabled {
+            enableIPhoneBridgeSync()
+        } else {
+            updateConfig { $0.iCloudSyncEnabled = false }
+        }
+    }
+
     func enableIPhoneBridgeSync() {
         if config.iCloudSyncEnabled {
             performICloudSync()
