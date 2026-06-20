@@ -1,5 +1,5 @@
 import AppKit
-import Darwin
+import CoreAudio
 import Foundation
 
 protocol MediaPlaybackManaging: AnyObject {
@@ -7,30 +7,8 @@ protocol MediaPlaybackManaging: AnyObject {
     func restoreDictationMediaPause()
 }
 
-/// Actual playback state of the system now-playing application, as opposed to
-/// `AudioOutputActivityStatus`, which only reflects whether an app's audio
-/// output pipeline is running. Browsers and most video players keep their
-/// audio engine/IO alive while a video is *paused*, so `IsRunningOutput` (and
-/// therefore `AudioOutputActivityStatus`) reports "active" for paused media
-/// and cannot be used to decide whether to send a play/pause toggle.
-enum MediaPlaybackState: Equatable, CustomStringConvertible {
-    case playing
-    case notPlaying
-    case unknown
-
-    var description: String {
-        switch self {
-        case .playing: return "playing"
-        case .notPlaying: return "not-playing"
-        case .unknown: return "unknown"
-        }
-    }
-}
-
 protocol MediaPlaybackClient {
-    /// Whether the current now-playing application is actually producing audio.
-    /// `.unknown` is returned when the signal cannot be obtained.
-    func nowPlayingPlaybackState() -> MediaPlaybackState
+    func outputActivityStatus() -> AudioOutputActivityStatus
     func sendMediaPlayPauseToggle()
 }
 
@@ -52,13 +30,7 @@ final class MediaPlaybackController: MediaPlaybackManaging {
             guard enabled else { return }
             guard !pausedForSession else { return }
             guard routeKind == .speakerLike else { return }
-            // The media key is a blind global toggle: sending it to already-
-            // paused media would *start* playback. Only pause when we can
-            // positively confirm something is actually playing. IsRunningOutput
-            // cannot be used here because it stays true for paused media
-            // (browsers/video players keep their audio engine alive while
-            // paused), so an unknown state must also be a no-op.
-            guard client.nowPlayingPlaybackState() == .playing else { return }
+            guard client.outputActivityStatus() == .active else { return }
             client.sendMediaPlayPauseToggle()
             pausedForSession = true
         }
@@ -68,14 +40,12 @@ final class MediaPlaybackController: MediaPlaybackManaging {
         queue.async { [self] in
             guard pausedForSession else { return }
             pausedForSession = false
-            // We only paused media we confirmed was playing, so resume it. Do
-            // not gate on IsRunningOutput here: a paused video still reports
-            // its audio engine as running, which would block the resume and
-            // strand playback. Only skip the resume when something is actively
-            // playing again (the user resumed/started playback) so we do not
-            // pause it. When state is unknown, prefer restoring media we know
-            // Muesli paused over leaving playback stranded.
-            guard client.nowPlayingPlaybackState() != .playing else { return }
+            // macOS exposes a reliable public media key toggle, not a global
+            // "resume only what I paused" API. Resume only when output still
+            // does not look active so we do not pause user-started playback.
+            // If activity is unknown, prefer restoring media we know Muesli
+            // paused over leaving playback stranded.
+            guard client.outputActivityStatus() != .active else { return }
             client.sendMediaPlayPauseToggle()
         }
     }
@@ -86,10 +56,18 @@ final class MediaPlaybackController: MediaPlaybackManaging {
 }
 
 final class SystemMediaPlaybackClient: MediaPlaybackClient {
-    private let nowPlaying = NowPlayingMediaRemoteClient()
+    private let currentProcessID = ProcessInfo.processInfo.processIdentifier
 
-    func nowPlayingPlaybackState() -> MediaPlaybackState {
-        nowPlaying.playbackState()
+    func outputActivityStatus() -> AudioOutputActivityStatus {
+        guard let processIDs = processObjectIDs() else { return .unknown }
+        for processObjectID in processIDs {
+            guard boolProperty(kAudioProcessPropertyIsRunningOutput, objectID: processObjectID),
+                  let pid = pidProperty(objectID: processObjectID),
+                  pid > 0,
+                  pid != currentProcessID else { continue }
+            return .active
+        }
+        return .inactive
     }
 
     func sendMediaPlayPauseToggle() {
@@ -116,57 +94,89 @@ final class SystemMediaPlaybackClient: MediaPlaybackClient {
         )?.cgEvent else { return }
         event.post(tap: .cghidEventTap)
     }
-}
 
-/// Reads the system now-playing playback state through the private MediaRemote
-/// framework, loaded lazily via `dlsym`. MediaRemote tracks the application
-/// that owns the current "now playing" info and exposes whether it is actually
-/// playing — the signal that `kAudioProcessPropertyIsRunningOutput` cannot
-/// provide (an app's audio engine stays running while media is paused).
-///
-/// The query is asynchronous (MediaRemote delivers the result on a dispatch
-/// queue), so it is turned into a synchronous call with a short timeout. The
-/// private symbols have been stable across macOS releases for many years; if
-/// the framework or symbol is unavailable we conservatively report `.unknown`
-/// and the caller treats that as "do not toggle".
-private final class NowPlayingMediaRemoteClient {
-    private typealias MRNowPlayingIsPlayingHandler = @convention(block) (Bool) -> Void
-    private typealias MRGetNowPlayingIsPlayingFn =
-        @convention(c) (DispatchQueue, MRNowPlayingIsPlayingHandler) -> Void
-
-    private let callbackQueue = DispatchQueue(label: "com.muesli.media-playback.now-playing")
-    private let queryTimeout: DispatchTimeInterval
-    private let isPlayingFn: MRGetNowPlayingIsPlayingFn?
-
-    init(queryTimeout: DispatchTimeInterval = .milliseconds(250)) {
-        self.queryTimeout = queryTimeout
-        // dlopen is globally refcounted by dyld, so the framework stays loaded
-        // for the process lifetime; the handle does not need to be retained.
-        guard let handle = dlopen(
-            "/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote",
-            RTLD_NOW | RTLD_LOCAL
-        ),
-            let symbol = dlsym(handle, "MRMediaRemoteGetNowPlayingApplicationIsPlaying") else {
-            self.isPlayingFn = nil
-            return
+    private func processObjectIDs() -> [AudioObjectID]? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyProcessObjectList,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            0,
+            nil,
+            &dataSize
+        ) == noErr else {
+            return nil
         }
-        self.isPlayingFn = unsafeBitCast(symbol, to: MRGetNowPlayingIsPlayingFn.self)
+        guard dataSize > 0 else { return [] }
+
+        let count = Int(dataSize) / MemoryLayout<AudioObjectID>.size
+        var ids = [AudioObjectID](repeating: AudioObjectID(kAudioObjectUnknown), count: count)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            0,
+            nil,
+            &dataSize,
+            &ids
+        ) == noErr else {
+            return nil
+        }
+        return ids.filter { $0 != AudioObjectID(kAudioObjectUnknown) }
     }
 
-    func playbackState() -> MediaPlaybackState {
-        guard let isPlayingFn else { return .unknown }
-        let semaphore = DispatchSemaphore(value: 0)
-        var didCall = false
-        var isPlaying = false
-        let handler: MRNowPlayingIsPlayingHandler = { value in
-            isPlaying = value
-            didCall = true
-            semaphore.signal()
+    private func pidProperty(objectID: AudioObjectID) -> pid_t? {
+        var pid = pid_t(0)
+        guard getPid(kAudioProcessPropertyPID, objectID: objectID, value: &pid) else {
+            return nil
         }
-        isPlayingFn(callbackQueue, handler)
-        if semaphore.wait(timeout: .now() + queryTimeout) == .timedOut {
-            return .unknown
+        return pid
+    }
+
+    private func boolProperty(_ selector: AudioObjectPropertySelector, objectID: AudioObjectID) -> Bool {
+        var value: UInt32 = 0
+        guard getUInt32(
+            selector,
+            objectID: objectID,
+            scope: kAudioObjectPropertyScopeGlobal,
+            element: kAudioObjectPropertyElementMain,
+            value: &value
+        ) else {
+            return false
         }
-        return didCall ? (isPlaying ? .playing : .notPlaying) : .unknown
+        return value != 0
+    }
+
+    private func getPid(
+        _ selector: AudioObjectPropertySelector,
+        objectID: AudioObjectID,
+        value: inout pid_t
+    ) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize = UInt32(MemoryLayout<pid_t>.size)
+        return AudioObjectGetPropertyData(objectID, &address, 0, nil, &dataSize, &value) == noErr
+    }
+
+    private func getUInt32(
+        _ selector: AudioObjectPropertySelector,
+        objectID: AudioObjectID,
+        scope: AudioObjectPropertyScope,
+        element: AudioObjectPropertyElement,
+        value: inout UInt32
+    ) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: scope,
+            mElement: element
+        )
+        var dataSize = UInt32(MemoryLayout<UInt32>.size)
+        return AudioObjectGetPropertyData(objectID, &address, 0, nil, &dataSize, &value) == noErr
     }
 }
