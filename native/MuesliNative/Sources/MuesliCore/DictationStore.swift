@@ -678,6 +678,7 @@ public final class DictationStore {
     public func deleteDictation(id: Int64) throws {
         let db = try openDatabase()
         defer { sqlite3_close(db) }
+        try deleteComputerUseTrace(dictationID: id, db: db)
         let sql = "UPDATE dictations SET deleted_at = ?, updated_at = ?, sync_dirty = 1 WHERE id = ? AND deleted_at IS NULL"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -699,6 +700,7 @@ public final class DictationStore {
     public func deleteMeeting(id: Int64) throws {
         let db = try openDatabase()
         defer { sqlite3_close(db) }
+        try deleteLiveTranscriptCheckpoints(meetingID: id, db: db)
         let sql = "UPDATE meetings SET deleted_at = ?, updated_at = ?, sync_dirty = 1 WHERE id = ? AND deleted_at IS NULL"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -720,6 +722,7 @@ public final class DictationStore {
     public func clearDictations() throws {
         let db = try openDatabase()
         defer { sqlite3_close(db) }
+        try exec("DELETE FROM computer_use_traces", db: db)
         try exec("UPDATE dictations SET deleted_at = strftime('%s','now'), updated_at = strftime('%s','now'), sync_dirty = 1 WHERE deleted_at IS NULL", db: db)
     }
 
@@ -1153,6 +1156,19 @@ public final class DictationStore {
         }
         defer { sqlite3_finalize(statement) }
         sqlite3_bind_int64(statement, 1, meetingID)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw lastError(db)
+        }
+    }
+
+    private func deleteComputerUseTrace(dictationID: Int64, db: OpaquePointer?) throws {
+        let sql = "DELETE FROM computer_use_traces WHERE dictation_id = ?"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw lastError(db)
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int64(statement, 1, dictationID)
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw lastError(db)
         }

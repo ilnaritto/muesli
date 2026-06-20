@@ -1261,6 +1261,37 @@ struct DictationStoreTests {
         #expect(remaining.first?.title == "Keep Me")
     }
 
+    @Test("delete meeting removes live transcript checkpoints")
+    func deleteMeetingRemovesLiveTranscriptCheckpoints() throws {
+        let store = try makeStore()
+        let now = Date()
+        try store.insertMeeting(
+            title: "Delete Checkpoints",
+            calendarEventID: nil,
+            startTime: now,
+            endTime: now.addingTimeInterval(60),
+            rawTranscript: "",
+            formattedNotes: "",
+            micAudioPath: nil,
+            systemAudioPath: nil
+        )
+        let meetingID = try #require(try store.recentMeetings(limit: 1).first?.id)
+        try store.appendLiveTranscriptCheckpoints(meetingID: meetingID, entries: [
+            LiveTranscriptCheckpointEntry(
+                timestampLabel: "10:00:01",
+                speaker: "You",
+                startSeconds: 1,
+                endSeconds: 2,
+                text: "Temporary checkpoint"
+            )
+        ])
+        #expect(try store.liveTranscriptCheckpointText(meetingID: meetingID) != nil)
+
+        try store.deleteMeeting(id: meetingID)
+
+        #expect(try store.liveTranscriptCheckpointText(meetingID: meetingID) == nil)
+    }
+
     @Test("recent dictations respects limit")
     func limitRespected() throws {
         let store = try makeStore()
