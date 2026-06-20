@@ -253,7 +253,7 @@ struct DictationStoreTests {
         #expect(record.title == "Mac Meeting")
         #expect(record.source == "macos")
         #expect(record.localSource == MeetingSource.meeting.rawValue)
-        #expect(record.speakerTranscript == "Mac transcript")
+        #expect(record.speakerTranscript == nil)
         #expect(record.meetingStatus == .completed)
     }
 

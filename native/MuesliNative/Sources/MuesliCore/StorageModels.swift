@@ -46,6 +46,8 @@ public struct SyncTextRecord: Identifiable, Codable, Sendable, Equatable {
     public var summaryText: String?
     public var manualNotes: String?
     public var source: String?
+    /// Platform origin for UI badges lives in `source`; this preserves the
+    /// local capture subtype such as dictation, cua, meeting, or audio_import.
     public var localSource: String?
     public var meetingStatus: MeetingStatus?
     public var engineIdentifier: String?

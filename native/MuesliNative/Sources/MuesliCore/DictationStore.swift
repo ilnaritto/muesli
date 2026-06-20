@@ -190,6 +190,8 @@ public final class DictationStore {
         let _ = sqlite3_exec(db, "DROP INDEX IF EXISTS idx_meetings_cloud_record_name", nil, nil, nil)
         let _ = sqlite3_exec(db, "CREATE UNIQUE INDEX IF NOT EXISTS idx_dictations_cloud_record_name ON dictations(cloud_record_name)", nil, nil, nil)
         let _ = sqlite3_exec(db, "CREATE UNIQUE INDEX IF NOT EXISTS idx_meetings_cloud_record_name ON meetings(cloud_record_name)", nil, nil, nil)
+        let _ = sqlite3_exec(db, "CREATE INDEX IF NOT EXISTS idx_dictations_sync_dirty ON dictations(updated_at DESC) WHERE sync_dirty = 1", nil, nil, nil)
+        let _ = sqlite3_exec(db, "CREATE INDEX IF NOT EXISTS idx_meetings_sync_dirty ON meetings(updated_at DESC) WHERE sync_dirty = 1", nil, nil, nil)
         try repairLegacyMacOriginSources(db: db)
     }
 
@@ -1675,7 +1677,6 @@ public final class DictationStore {
             kind: .meeting,
             title: stringColumn(statement, index: 1),
             text: rawTranscript,
-            speakerTranscript: rawTranscript,
             summaryText: optionalStringColumn(statement, index: 3),
             manualNotes: optionalStringColumn(statement, index: 4),
             source: source,
@@ -1833,6 +1834,7 @@ public final class DictationStore {
             cloud_change_tag = excluded.cloud_change_tag,
             last_synced_at = excluded.last_synced_at,
             sync_dirty = 0
+        WHERE excluded.updated_at >= dictations.updated_at
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -1856,7 +1858,7 @@ public final class DictationStore {
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw lastError(db)
         }
-        return true
+        return sqlite3_changes(db) > 0
     }
 
     private func upsertSyncedMeeting(_ record: SyncTextRecord, db: OpaquePointer?) throws -> Bool {
@@ -1892,6 +1894,7 @@ public final class DictationStore {
             cloud_change_tag = excluded.cloud_change_tag,
             last_synced_at = excluded.last_synced_at,
             sync_dirty = 0
+        WHERE excluded.updated_at >= meetings.updated_at
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -1919,7 +1922,7 @@ public final class DictationStore {
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw lastError(db)
         }
-        return true
+        return sqlite3_changes(db) > 0
     }
 
     private func localUpdatedAt(table: String, recordName: String, db: OpaquePointer?) throws -> Double? {
