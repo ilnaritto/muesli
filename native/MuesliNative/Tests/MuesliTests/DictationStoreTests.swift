@@ -230,6 +230,65 @@ struct DictationStoreTests {
         #expect(record.meetingStatus == .completed)
     }
 
+    @Test("migration repairs macOS-origin meeting source corrupted by stale iOS CloudKit metadata")
+    func migrationRepairsMacOriginMeetingSource() throws {
+        let store = try makeStore()
+        var db: OpaquePointer?
+        #expect(sqlite3_open(store.databasePath().path, &db) == SQLITE_OK)
+        defer { sqlite3_close(db) }
+
+        let updatedAt = Date(timeIntervalSince1970: 1_770_000_000).timeIntervalSince1970
+        let recordName = "meeting-00000000-0000-4000-8000-000000000001"
+        let sql = """
+        INSERT INTO meetings (
+            title, start_time, end_time, duration_seconds, raw_transcript,
+            formatted_notes, word_count, source, updated_at, cloud_record_name,
+            last_synced_at, sync_dirty
+        )
+        VALUES (
+            'Mac-origin meeting', '2026-06-16T10:00:00Z', '2026-06-16T10:01:00Z',
+            60, 'Mac text', 'Mac notes', 2, 'ios', \(updatedAt),
+            '\(recordName)', \(updatedAt), 0
+        )
+        """
+        #expect(sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK)
+
+        try store.migrateIfNeeded()
+
+        let meeting = try #require(try store.recentMeetings(limit: 1).first)
+        #expect(meeting.source == .meeting)
+        let record = try #require(try store.textRecordsNeedingSync().first { $0.kind == .meeting })
+        #expect(record.id == recordName)
+        #expect(record.source == "macos")
+    }
+
+    @Test("sync import treats macOS-prefixed meeting records as Mac origin")
+    func syncImportTreatsMacPrefixedMeetingRecordsAsMacOrigin() throws {
+        let store = try makeStore()
+        let startedAt = Date(timeIntervalSince1970: 1_770_000_000)
+
+        try store.upsertSyncedTextRecord(SyncTextRecord(
+            id: "meeting-00000000-0000-4000-8000-000000000001",
+            kind: .meeting,
+            title: "Mac Meeting",
+            text: "Mac transcript",
+            summaryText: "Mac notes",
+            source: "ios",
+            meetingStatus: .completed,
+            createdAt: startedAt,
+            updatedAt: startedAt,
+            startedAt: startedAt,
+            endedAt: startedAt.addingTimeInterval(60),
+            durationSeconds: 60,
+            wordCount: 2,
+            cloudChangeTag: "tag-1"
+        ))
+
+        let meeting = try #require(try store.recentMeetings(limit: 1).first)
+        #expect(meeting.source == .meeting)
+        #expect(try store.textRecordsNeedingSync().isEmpty)
+    }
+
     @Test("deleted unsynced local text records are not uploaded")
     func deletedUnsyncedLocalTextRecordsAreNotUploaded() throws {
         let store = try makeStore()

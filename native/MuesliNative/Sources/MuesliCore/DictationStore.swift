@@ -187,6 +187,7 @@ public final class DictationStore {
         let _ = sqlite3_exec(db, "DROP INDEX IF EXISTS idx_meetings_cloud_record_name", nil, nil, nil)
         let _ = sqlite3_exec(db, "CREATE UNIQUE INDEX IF NOT EXISTS idx_dictations_cloud_record_name ON dictations(cloud_record_name)", nil, nil, nil)
         let _ = sqlite3_exec(db, "CREATE UNIQUE INDEX IF NOT EXISTS idx_meetings_cloud_record_name ON meetings(cloud_record_name)", nil, nil, nil)
+        try repairLegacyMacOriginSources(db: db)
     }
 
     @discardableResult
@@ -1672,6 +1673,85 @@ public final class DictationStore {
         }
     }
 
+    private func syncImportSource(for record: SyncTextRecord, fallback: String) -> String {
+        switch record.kind {
+        case .dictation where isMacGeneratedCloudRecordName(record.id, prefix: "dictation"):
+            return "dictation"
+        case .meeting where isMacGeneratedCloudRecordName(record.id, prefix: "meeting"):
+            return MeetingSource.meeting.rawValue
+        default:
+            return record.source ?? fallback
+        }
+    }
+
+    private func repairLegacyMacOriginSources(db: OpaquePointer?) throws {
+        try repairLegacyMacOriginSource(
+            table: "dictations",
+            source: "dictation",
+            recordPrefix: "dictation",
+            db: db
+        )
+        try repairLegacyMacOriginSource(
+            table: "meetings",
+            source: MeetingSource.meeting.rawValue,
+            recordPrefix: "meeting",
+            db: db
+        )
+    }
+
+    private func repairLegacyMacOriginSource(
+        table: String,
+        source: String,
+        recordPrefix: String,
+        db: OpaquePointer?
+    ) throws {
+        let selectSQL = """
+        SELECT id, cloud_record_name
+        FROM \(table)
+        WHERE lower(trim(source)) IN ('ios', 'iphone')
+          AND cloud_record_name LIKE ?
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, selectSQL, -1, &statement, nil) == SQLITE_OK else {
+            throw lastError(db)
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_text(statement, 1, ("\(recordPrefix)-%" as NSString).utf8String, -1, nil)
+
+        var ids: [Int64] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let recordName = stringColumn(statement, index: 1)
+            guard isMacGeneratedCloudRecordName(recordName, prefix: recordPrefix) else { continue }
+            ids.append(sqlite3_column_int64(statement, 0))
+        }
+
+        let updateSQL = """
+        UPDATE \(table)
+        SET source = ?,
+            sync_dirty = 1
+        WHERE id = ?
+        """
+        for id in ids {
+            var update: OpaquePointer?
+            guard sqlite3_prepare_v2(db, updateSQL, -1, &update, nil) == SQLITE_OK else {
+                throw lastError(db)
+            }
+            defer { sqlite3_finalize(update) }
+            sqlite3_bind_text(update, 1, (source as NSString).utf8String, -1, nil)
+            sqlite3_bind_int64(update, 2, id)
+            guard sqlite3_step(update) == SQLITE_DONE else {
+                throw lastError(db)
+            }
+        }
+    }
+
+    private func isMacGeneratedCloudRecordName(_ recordName: String, prefix: String) -> Bool {
+        let marker = "\(prefix)-"
+        guard recordName.hasPrefix(marker) else { return false }
+        let uuidPart = String(recordName.dropFirst(marker.count))
+        return UUID(uuidString: uuidPart) != nil
+    }
+
     private func upsertSyncedDictation(_ record: SyncTextRecord, db: OpaquePointer?) throws -> Bool {
         if let localUpdatedAt = try localUpdatedAt(table: "dictations", recordName: record.id, db: db),
            localUpdatedAt > record.updatedAt.timeIntervalSince1970 {
@@ -1710,7 +1790,7 @@ public final class DictationStore {
         sqlite3_bind_double(statement, 2, record.durationSeconds)
         sqlite3_bind_text(statement, 3, (record.text as NSString).utf8String, -1, nil)
         sqlite3_bind_int(statement, 4, Int32(record.wordCount))
-        sqlite3_bind_text(statement, 5, ((record.source ?? "icloud") as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(statement, 5, (syncImportSource(for: record, fallback: "icloud") as NSString).utf8String, -1, nil)
         bindOptionalText(record.startedAt.map(formatISODate), at: 6, statement: statement)
         bindOptionalText(record.endedAt.map(formatISODate), at: 7, statement: statement)
         sqlite3_bind_double(statement, 8, record.updatedAt.timeIntervalSince1970)
@@ -1774,7 +1854,7 @@ public final class DictationStore {
         sqlite3_bind_text(statement, 7, (meetingStatus.rawValue as NSString).utf8String, -1, nil)
         sqlite3_bind_text(statement, 8, ((record.manualNotes ?? "") as NSString).utf8String, -1, nil)
         sqlite3_bind_int(statement, 9, Int32(record.wordCount))
-        sqlite3_bind_text(statement, 10, ((record.source ?? MeetingSource.meeting.rawValue) as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(statement, 10, (syncImportSource(for: record, fallback: MeetingSource.meeting.rawValue) as NSString).utf8String, -1, nil)
         sqlite3_bind_double(statement, 11, record.updatedAt.timeIntervalSince1970)
         bindOptionalDouble(record.isDeleted ? record.updatedAt.timeIntervalSince1970 : nil, at: 12, statement: statement)
         sqlite3_bind_text(statement, 13, (record.id as NSString).utf8String, -1, nil)
