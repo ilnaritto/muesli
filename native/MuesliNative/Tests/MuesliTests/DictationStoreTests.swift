@@ -399,10 +399,13 @@ struct DictationStoreTests {
         let tombstone = try #require(try store.textRecordsNeedingSync().first { $0.kind == .dictation })
         #expect(tombstone.id == outbound.id)
         #expect(tombstone.isDeleted)
+        #expect(tombstone.text.isEmpty)
+        #expect(tombstone.wordCount == 0)
+        #expect(tombstone.durationSeconds == 0)
     }
 
-    @Test("dirty sync queue reports remaining records after a full page")
-    func dirtySyncQueueReportsRemainingRecordsAfterFullPage() throws {
+    @Test("dirty sync queue gives each record kind an independent page")
+    func dirtySyncQueueGivesEachRecordKindAnIndependentPage() throws {
         let store = try makeStore()
         let baseDate = Date(timeIntervalSince1970: 1_770_000_000)
 
@@ -427,8 +430,9 @@ struct DictationStoreTests {
         )
 
         let firstPage = try store.textRecordsNeedingSync(limit: 200)
-        #expect(firstPage.count == 200)
-        #expect(firstPage.allSatisfy { $0.kind == .dictation })
+        #expect(firstPage.count == 201)
+        #expect(firstPage.filter { $0.kind == .dictation }.count == 200)
+        #expect(firstPage.contains { $0.kind == .meeting && $0.title == "Dirty meeting" })
         #expect(try store.hasTextRecordsNeedingSync())
 
         for record in firstPage {
@@ -442,8 +446,8 @@ struct DictationStoreTests {
 
         #expect(try store.hasTextRecordsNeedingSync())
         let secondPage = try store.textRecordsNeedingSync(limit: 200)
-        #expect(secondPage.count == 6)
-        #expect(secondPage.contains { $0.kind == .meeting && $0.title == "Dirty meeting" })
+        #expect(secondPage.count == 5)
+        #expect(secondPage.allSatisfy { $0.kind == .dictation })
 
         for record in secondPage {
             #expect(try store.markTextRecordSynced(
@@ -455,6 +459,64 @@ struct DictationStoreTests {
         }
         let hasPendingAfterSecondPage = try store.hasTextRecordsNeedingSync()
         #expect(hasPendingAfterSecondPage == false)
+    }
+
+    @Test("soft delete tombstones purge only after sync and retention")
+    func softDeleteTombstonesPurgeOnlyAfterSyncAndRetention() throws {
+        let store = try makeStore()
+        let now = Date()
+        let retention: TimeInterval = 30 * 24 * 60 * 60
+
+        let syncedDictationID = try store.insertDictation(
+            text: "Already synced",
+            durationSeconds: 2,
+            startedAt: now.addingTimeInterval(-2),
+            endedAt: now
+        )
+        let outbound = try #require(try store.textRecordsNeedingSync().first { $0.kind == .dictation })
+        #expect(try store.markTextRecordSynced(
+            kind: .dictation,
+            recordName: outbound.id,
+            changeTag: "tag-before-delete",
+            recordUpdatedAt: outbound.updatedAt,
+            syncedAt: now
+        ))
+        try store.deleteDictation(id: syncedDictationID)
+        let syncedTombstone = try #require(try store.textRecordsNeedingSync().first { $0.id == outbound.id })
+        #expect(try store.markTextRecordSynced(
+            kind: .dictation,
+            recordName: syncedTombstone.id,
+            changeTag: "tag-after-delete",
+            recordUpdatedAt: syncedTombstone.updatedAt,
+            syncedAt: now
+        ))
+
+        let unsyncedDictationID = try store.insertDictation(
+            text: "Never uploaded",
+            durationSeconds: 2,
+            startedAt: now.addingTimeInterval(-2),
+            endedAt: now
+        )
+        let unsyncedRecord = try #require(try store.textRecordsNeedingSync().first { $0.kind == .dictation })
+        try store.deleteDictation(id: unsyncedDictationID)
+
+        let earlyPurge = try store.purgeSoftDeletedTextRecords(
+            olderThan: retention,
+            now: now.addingTimeInterval(retention - 60)
+        )
+        #expect(earlyPurge.dictations == 0)
+        #expect(earlyPurge.meetings == 0)
+
+        let latePurge = try store.purgeSoftDeletedTextRecords(
+            olderThan: retention,
+            now: now.addingTimeInterval(retention + 60)
+        )
+        #expect(latePurge.dictations == 1)
+        #expect(latePurge.meetings == 0)
+
+        let remainingDirty = try store.textRecordsNeedingSync()
+        #expect(remainingDirty.contains { $0.id == unsyncedRecord.id && $0.isDeleted })
+        #expect(!remainingDirty.contains { $0.id == outbound.id })
     }
 
     @Test("deleted sync cloud records omit text content fields")
