@@ -1834,18 +1834,17 @@ final class MuesliController: NSObject {
         let key = notificationKey(id: event.id, startDate: event.startDate)
         guard !autoRecordedCalendarEventIDs.contains(key) else { return false }
         guard !isMeetingRecording(), !isStartingMeetingRecording else { return false }
-        let didStart = startMeetingRecording(
+        // Claim on attempt: auto-record fires at most once per event. A failed
+        // start surfaces its own error and the user can record manually; we do
+        // not retry, to avoid re-prompting every poll within the catch-up window.
+        autoRecordedCalendarEventIDs.insert(key)
+        startMeetingRecording(
             title: event.title,
             calendarEventID: event.id,
             openDocument: true,
             endDate: event.endDate,
             autoStopSource: event.meetingURL.flatMap { MeetingAutoStopSource(meetingURL: $0) }
         )
-        // Only claim the event once recording actually started, so a transient
-        // failure (model not ready, live-meeting creation race) is retried by a
-        // later poll/wake within the catch-up window instead of being lost.
-        guard didStart else { return false }
-        autoRecordedCalendarEventIDs.insert(key)
         return true
     }
 
