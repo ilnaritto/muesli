@@ -236,7 +236,47 @@ if [[ "$SKIP_SIGN" != "1" ]]; then
   fi
   echo "  Deep signature valid."
 else
-  echo "Skipping codesign because MUESLI_SKIP_SIGN=1"
+  # No Developer ID certificate: ad-hoc sign for local dev instead of leaving the
+  # bundle with SwiftPM's incoherent per-binary signature. An ad-hoc *bundle* signature
+  # binds Info.plist and adopts the bundle's CFBundleIdentifier (com.muesli.*) as the
+  # signing identity, which macOS TCC needs to attribute Accessibility / Input-Monitoring
+  # grants to the running process. Without it, AXIsProcessTrusted()/CGPreflightListenEventAccess()
+  # keep returning false even after the user grants permission, so onboarding stalls.
+  #
+  # Note: ad-hoc signatures have no stable designated requirement, so the cdhash changes on
+  # every rebuild and macOS privacy grants must be re-approved after each dev build. For grants
+  # that persist across rebuilds, create a self-signed code-signing certificate and pass its name
+  # via MUESLI_SIGN_IDENTITY. No hardened runtime here: ad-hoc has no Team ID, so library
+  # validation would block dlopen of the bundled frameworks/dylibs.
+  echo "Ad-hoc signing for local dev (MUESLI_SKIP_SIGN=1; no Developer ID)..."
+  ENTITLEMENTS="$ROOT/scripts/Muesli.entitlements"
+
+  find "$APP_DIR/Contents/MacOS" -maxdepth 1 -name "*.framework" -type d | while read -r framework; do
+    find "$framework" \( -name "*.xpc" -o -name "*.app" \) -type d | while read -r nested; do
+      codesign --force --sign - "$nested"
+    done
+    codesign --force --sign - "$framework"
+  done
+
+  find "$APP_DIR/Contents/MacOS" -maxdepth 1 \( -name "*.dylib" -o -name "*.so" \) -type f | while read -r library; do
+    if file "$library" | grep -q "Mach-O"; then
+      codesign --force --sign - "$library"
+    fi
+  done
+
+  if [[ -f "$APP_DIR/Contents/MacOS/muesli-cli" ]]; then
+    codesign --force --sign - "$APP_DIR/Contents/MacOS/muesli-cli"
+  fi
+
+  # Sign the bundle last so the Info.plist binding / identity stick.
+  codesign --force --sign - --entitlements "$ENTITLEMENTS" "$APP_DIR"
+
+  echo "Verifying ad-hoc signature..."
+  if ! codesign --verify --deep --strict "$APP_DIR" 2>&1; then
+    echo "ERROR: ad-hoc signature verification failed" >&2
+    exit 1
+  fi
+  echo "  Ad-hoc signature valid (identity: com.muesli.dev). Re-approve macOS privacy permissions if prompted."
 fi
 
 rm -rf "$STAGED_APP_DIR"
