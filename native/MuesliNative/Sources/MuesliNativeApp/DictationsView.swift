@@ -199,7 +199,6 @@ struct DictationsView: View {
                 isAnimating: bridgeSyncIconIsAnimating,
                 font: .system(size: 18, weight: .semibold)
             )
-                .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(bridgeIconColor)
                 .frame(width: 28)
 
@@ -285,7 +284,9 @@ struct DictationsView: View {
         switch bridgeState {
         case .notConfigured, .needsICloud, .error:
             return true
-        case .checkingICloud, .syncing, .active:
+        case .active:
+            return appState.iCloudBridgeRemoteDeviceName == nil
+        case .checkingICloud, .syncing:
             return false
         }
     }

@@ -57,12 +57,31 @@ struct MuesliBridgeDeviceIdentityTests {
         ))
     }
 
-    @Test("shouldRefresh returns false within one hour and true after one hour")
-    func shouldRefreshUsesOneHourInterval() throws {
+    @Test("shouldRefresh uses a short interval before a remote device is known")
+    func shouldRefreshUsesShortIntervalBeforeRemoteDeviceIsKnown() throws {
         let (defaults, suiteName) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let now = Date(timeIntervalSince1970: 1_770_000_000)
 
+        MuesliBridgeDeviceIdentity.markRefreshed(defaults: defaults, at: now)
+
+        #expect(!MuesliBridgeDeviceIdentity.shouldRefresh(
+            defaults: defaults,
+            now: now.addingTimeInterval(59)
+        ))
+        #expect(MuesliBridgeDeviceIdentity.shouldRefresh(
+            defaults: defaults,
+            now: now.addingTimeInterval(60)
+        ))
+    }
+
+    @Test("shouldRefresh returns false within one hour and true after one hour once linked")
+    func shouldRefreshUsesOneHourIntervalOnceLinked() throws {
+        let (defaults, suiteName) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let now = Date(timeIntervalSince1970: 1_770_000_000)
+
+        defaults.set("remote-iphone", forKey: DefaultsKey.remoteDeviceID)
         MuesliBridgeDeviceIdentity.markRefreshed(defaults: defaults, at: now)
 
         #expect(!MuesliBridgeDeviceIdentity.shouldRefresh(

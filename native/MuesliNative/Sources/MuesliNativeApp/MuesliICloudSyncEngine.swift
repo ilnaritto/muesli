@@ -99,7 +99,8 @@ enum MuesliBridgeDeviceIdentity {
     private static let remoteDevicePlatformKey = "muesli.sync.bridge.remoteDevicePlatform.v1"
     private static let remoteDeviceLastSeenAtKey = "muesli.sync.bridge.remoteDeviceLastSeenAt.v1"
     private static let lastRefreshKey = "muesli.sync.bridge.lastRefreshed.v1"
-    private static let refreshInterval: TimeInterval = 60 * 60
+    private static let linkedRefreshInterval: TimeInterval = 60 * 60
+    private static let unlinkedRefreshInterval: TimeInterval = 60
 
     static func local(defaults: UserDefaults = .standard) -> MuesliBridgeDeviceSnapshot {
         let deviceID: String
@@ -137,7 +138,8 @@ enum MuesliBridgeDeviceIdentity {
         guard let lastRefresh = defaults.object(forKey: lastRefreshKey) as? Date else {
             return true
         }
-        return now.timeIntervalSince(lastRefresh) >= refreshInterval
+        let interval = hasRemoteDevice(defaults: defaults) ? linkedRefreshInterval : unlinkedRefreshInterval
+        return now.timeIntervalSince(lastRefresh) >= interval
     }
 
     static func markRefreshed(defaults: UserDefaults = .standard, at date: Date = Date()) {
@@ -350,9 +352,7 @@ final class MuesliICloudSyncEngine {
             try await upsertLocalBridgeDeviceRecord()
             let records = try await fetchBridgeDeviceRecords()
             MuesliBridgeDeviceIdentity.updateRemoteDevices(from: records, defaults: defaults)
-            if MuesliBridgeDeviceIdentity.hasRemoteDevice(defaults: defaults) {
-                MuesliBridgeDeviceIdentity.markRefreshed(defaults: defaults)
-            }
+            MuesliBridgeDeviceIdentity.markRefreshed(defaults: defaults)
         } catch {
             fputs("Failed to refresh iCloud bridge device identity: \(error)\n", stderr)
         }
@@ -666,6 +666,7 @@ final class MuesliICloudSyncEngine {
                 operation = CKQueryOperation(query: query)
                 operation.zoneID = Schema.syncZoneID
             }
+            operation.desiredKeys = Self.desiredBridgeDeviceKeys
             operation.resultsLimit = 100
 
             let lock = NSLock()
@@ -1111,6 +1112,16 @@ final class MuesliICloudSyncEngine {
             "wordCount",
             "isDeleted",
             "schemaVersion",
+        ]
+    }
+
+    private static var desiredBridgeDeviceKeys: [CKRecord.FieldKey] {
+        [
+            "deviceID",
+            "platform",
+            "deviceName",
+            "appVersion",
+            "lastSeenAt",
         ]
     }
 }
