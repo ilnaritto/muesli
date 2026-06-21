@@ -40,7 +40,7 @@ struct DictionaryView: View {
                 controller.requestDictionaryCorrectionAccessibilityEnable()
             }
         } message: {
-            Text("Dictionary suggestions need Accessibility to detect text edits after dictation.")
+            Text("Dictionary suggestions need Accessibility to detect text edits after dictation. Grant access, restart Muesli, then turn suggestions on.")
         }
     }
 
