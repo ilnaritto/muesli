@@ -252,6 +252,15 @@ else
   ENTITLEMENTS="$ROOT/scripts/Muesli.entitlements"
 
   find "$APP_DIR/Contents/MacOS" -maxdepth 1 -name "*.framework" -type d | while read -r framework; do
+    # Sign every nested standalone Mach-O (e.g. Sparkle's Versions/B/Autoupdate),
+    # then nested .xpc/.app bundles, then the framework itself — mirroring the
+    # Developer-ID path so `codesign --verify --deep --strict` cannot fail on a
+    # nested executable the framework-level sign doesn't reseal.
+    find "$framework" -type f -perm +111 | while read -r binary; do
+      if file "$binary" | grep -q "Mach-O"; then
+        codesign --force --sign - "$binary"
+      fi
+    done
     find "$framework" \( -name "*.xpc" -o -name "*.app" \) -type d | while read -r nested; do
       codesign --force --sign - "$nested"
     done

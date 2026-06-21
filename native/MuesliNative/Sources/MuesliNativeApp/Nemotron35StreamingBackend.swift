@@ -27,17 +27,16 @@ actor Nemotron35StreamingTranscriber: NemotronStreamingTranscribing {
     private var tokenizer: [Int: String] = [:]
     private var loaded = false
 
-    // Config from metadata.json (multilingual/2240ms variant)
+    // Config from metadata.json (multilingual/2240ms variant).
+    // Geometry reference: chunk_mel_frames 224 + pre_encode_cache 9 = total 233;
+    // 8× subsampling → 28 encoder frames/chunk. Only the values the pipeline reads
+    // are kept as fields; the rest live in this comment to avoid implying they're tunable.
     nonisolated let chunkSamples = 35840 // 2240ms at 16kHz (read cross-actor by the runtime/controller)
-    private let chunkMelFrames = 224
-    private let preEncodeCacheFrames = 9
-    private let totalMelFrames = 233     // chunk + cache
-    private let encoderOutputFrames = 28 // 224 / 8 (subsampling)
+    private let totalMelFrames = 233     // chunk_mel_frames + pre_encode_cache
     private let encoderDim = 1024
     private let decoderHiddenSize = 640
-    private let vocabSize = 13087
-    private let blankTokenId = 13087     // = vocabSize (last logit)
-    private let attContextLeft = 42      // cache_channel third dim
+    private let blankTokenId = 13087     // = vocab_size (last logit index)
+    private let attContextLeft = 42      // cache_channel third dim (att_context left)
     private let promptId: Int32 = 101    // auto-detect language
 
     // MARK: - Streaming State (reuses the EN backend's StreamState struct)
