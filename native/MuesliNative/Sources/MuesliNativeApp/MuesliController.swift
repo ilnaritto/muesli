@@ -1834,14 +1834,18 @@ final class MuesliController: NSObject {
         let key = notificationKey(id: event.id, startDate: event.startDate)
         guard !autoRecordedCalendarEventIDs.contains(key) else { return false }
         guard !isMeetingRecording(), !isStartingMeetingRecording else { return false }
-        autoRecordedCalendarEventIDs.insert(key)
-        startMeetingRecording(
+        let didStart = startMeetingRecording(
             title: event.title,
             calendarEventID: event.id,
             openDocument: true,
             endDate: event.endDate,
             autoStopSource: event.meetingURL.flatMap { MeetingAutoStopSource(meetingURL: $0) }
         )
+        // Only claim the event once recording actually started, so a transient
+        // failure (model not ready, live-meeting creation race) is retried by a
+        // later poll/wake within the catch-up window instead of being lost.
+        guard didStart else { return false }
+        autoRecordedCalendarEventIDs.insert(key)
         return true
     }
 
@@ -1893,6 +1897,9 @@ final class MuesliController: NSObject {
     }
 
     private func fireAutoRecordWake(eventID: String, startDate: Date) {
+        // Re-validate against current state: a wake delayed by sleep or timer
+        // coalescing must still pass the same catch-up policy as the poll path,
+        // so it never records a meeting that already ended or is long past start.
         guard config.autoRecordMeetings,
               !isMeetingRecording(),
               !isStartingMeetingRecording,
@@ -1900,6 +1907,11 @@ final class MuesliController: NSObject {
                 from: appState.upcomingCalendarEvents,
                 eventID: eventID,
                 startDate: startDate,
+                hiddenEventIDs: appState.hiddenCalendarEventIDs
+              ),
+              ScheduledMeetingNotificationPolicy.shouldAutoRecordNow(
+                for: event,
+                now: Date(),
                 hiddenEventIDs: appState.hiddenCalendarEventIDs
               ) else { return }
         autoRecordEventIfNeeded(event)

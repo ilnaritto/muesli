@@ -95,7 +95,7 @@ enum ScheduledMeetingNotificationPolicy {
     ) -> Bool {
         guard isJoinableMeeting(event, hiddenEventIDs: hiddenEventIDs) else { return false }
         return event.startDate <= now
-            && event.startDate > now.addingTimeInterval(-catchUpWindow)
+            && event.startDate >= now.addingTimeInterval(-catchUpWindow)
             && event.endDate > now
     }
 
