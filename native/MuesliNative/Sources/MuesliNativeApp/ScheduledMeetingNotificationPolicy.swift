@@ -15,6 +15,14 @@ enum ScheduledMeetingNotificationPolicy {
     /// every calendar refresh.
     static let autoRecordWakeHorizon: TimeInterval = 18 * 60 * 60
 
+    /// How long before a scheduled wake the App Nap opt-out is engaged. Outside
+    /// this window the assertion is released so App Nap can throttle the idle
+    /// app (and its 60s poll), cutting energy use on a meeting-heavy day. Kept
+    /// wider than `autoRecordCatchUpWindow` so that even if App Nap delays the
+    /// arming timer, the assertion still engages before the wake fires; the
+    /// catch-up window then absorbs any residual lateness.
+    static let autoRecordPreRollLeadTime: TimeInterval = 8 * 60
+
     static func upcomingCandidates(
         from events: [UnifiedCalendarEvent],
         now: Date,

@@ -219,6 +219,7 @@ final class MuesliController: NSObject {
     private var autoRecordedCalendarEventIDs = Set<String>()
     private var autoRecordTimers = [String: Timer]()
     private var autoRecordWakeActivity: NSObjectProtocol?
+    private var autoRecordPreRollTimer: Timer?
     private var meetingFeatureMonitorsAllowed = false
     private var meetingDetectionMonitorStarted = false
 
@@ -1851,9 +1852,11 @@ final class MuesliController: NSObject {
     /// Schedule a one-shot wake at each upcoming joinable event's start time so
     /// auto-record fires reliably instead of depending on the App Nap–throttled
     /// 60s poll (which only the change-driven `EKEventStoreChanged` path and a
-    /// suspendable `Timer` feed). A process-activity assertion is held while any
-    /// wake is pending so the timers themselves are not coalesced away by App
-    /// Nap. Reconciled on every calendar refresh and config change.
+    /// suspendable `Timer` feed). A process-activity assertion is engaged only
+    /// for a short pre-roll window before the next wake (see
+    /// `updateAutoRecordWakeActivity`) so the timers fire on time without
+    /// keeping App Nap disabled — and the poll running — across idle gaps.
+    /// Reconciled on every calendar refresh and config change.
     private func syncAutoRecordWakes() {
         guard meetingFeatureMonitorsAllowed, config.autoRecordMeetings else {
             cancelAllAutoRecordWakes()
@@ -1922,19 +1925,58 @@ final class MuesliController: NSObject {
         updateAutoRecordWakeActivity()
     }
 
-    /// Hold an App Nap opt-out while wakes are pending, release it when none are.
-    /// Allows idle system sleep so the Mac can still sleep normally between meetings.
+    /// Engage the App Nap opt-out only for a pre-roll window before the next
+    /// pending wake, instead of holding it across the whole wake horizon. Across
+    /// the idle gaps between meetings the assertion is released so App Nap can
+    /// throttle the app (and its 60s poll), which is the bulk of the energy cost
+    /// on a meeting-heavy day. A single arming timer re-engages the assertion
+    /// `autoRecordPreRollLeadTime` before the earliest wake. Always allows idle
+    /// system sleep so the Mac can still sleep normally between meetings.
+    ///
+    /// The arming timer is itself App Nap–suspendable, so the pre-roll lead is
+    /// kept wider than `autoRecordCatchUpWindow`: even if arming is delayed, the
+    /// assertion engages before the wake, and the catch-up window absorbs any
+    /// residual lateness.
     private func updateAutoRecordWakeActivity() {
-        if autoRecordTimers.isEmpty {
-            if let activity = autoRecordWakeActivity {
-                ProcessInfo.processInfo.endActivity(activity)
-                autoRecordWakeActivity = nil
+        autoRecordPreRollTimer?.invalidate()
+        autoRecordPreRollTimer = nil
+
+        guard let nextFire = autoRecordTimers.values.map(\.fireDate).min() else {
+            releaseAutoRecordWakeActivity()
+            return
+        }
+
+        let now = Date()
+        let armDate = nextFire.addingTimeInterval(-ScheduledMeetingNotificationPolicy.autoRecordPreRollLeadTime)
+        if now >= armDate {
+            beginAutoRecordWakeActivity()
+        } else {
+            releaseAutoRecordWakeActivity()
+            autoRecordPreRollTimer = Timer.scheduledTimer(
+                withTimeInterval: armDate.timeIntervalSince(now),
+                repeats: false
+            ) { [weak self] _ in
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.autoRecordPreRollTimer = nil
+                    self.updateAutoRecordWakeActivity()
+                }
             }
-        } else if autoRecordWakeActivity == nil {
-            autoRecordWakeActivity = ProcessInfo.processInfo.beginActivity(
-                options: [.userInitiatedAllowingIdleSystemSleep],
-                reason: "Waiting to auto-record scheduled meetings"
-            )
+        }
+    }
+
+    private func beginAutoRecordWakeActivity() {
+        guard autoRecordWakeActivity == nil else { return }
+        autoRecordWakeActivity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep],
+            reason: "Waiting to auto-record scheduled meetings"
+        )
+    }
+
+    private func releaseAutoRecordWakeActivity() {
+        if let activity = autoRecordWakeActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+            autoRecordWakeActivity = nil
         }
     }
 
