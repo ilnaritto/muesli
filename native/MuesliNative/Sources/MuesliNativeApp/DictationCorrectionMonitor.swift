@@ -121,6 +121,9 @@ struct DictionaryCorrectionDetector {
               let replacement = normalizedCandidate(diff.inserted)
         else { return nil }
 
+        guard isSingleTokenCandidate(observed), isSingleTokenCandidate(replacement) else {
+            return nil
+        }
         guard originalText.range(of: observed, options: [.caseInsensitive, .diacriticInsensitive]) != nil else {
             return nil
         }
@@ -153,8 +156,11 @@ struct DictionaryCorrectionDetector {
         let operations = alignmentOperations(from: originalTokens, to: editedTokens)
         var suggestions: [DictionarySuggestion] = []
         var seenKeys = Set<String>()
-        for operation in operations {
+        for (index, operation) in operations.enumerated() {
             guard case .substitution(let observed, let replacement) = operation else { continue }
+            guard !isAdjacentToTokenCountChange(index: index, operations: operations) else {
+                continue
+            }
             guard let observedCandidate = normalizedCandidate(observed.text),
                   let replacementCandidate = normalizedCandidate(replacement.text)
             else { continue }
@@ -177,6 +183,18 @@ struct DictionaryCorrectionDetector {
             }
         }
         return suggestions
+    }
+
+    private static func isAdjacentToTokenCountChange(index: Int, operations: [AlignmentOperation]) -> Bool {
+        for adjacentIndex in [index - 1, index + 1] where operations.indices.contains(adjacentIndex) {
+            switch operations[adjacentIndex] {
+            case .insertion, .deletion:
+                return true
+            case .match, .substitution:
+                continue
+            }
+        }
+        return false
     }
 
     static func hasSufficientSharedContext(originalText: String, editedText: String) -> Bool {
@@ -336,6 +354,10 @@ struct DictionaryCorrectionDetector {
         }) else { return nil }
 
         return tokens.joined(separator: " ")
+    }
+
+    private static func isSingleTokenCandidate(_ value: String) -> Bool {
+        value.split(whereSeparator: \.isWhitespace).count == 1
     }
 
     private static func isLikelyDictionaryCorrection(observed: String, replacement: String) -> Bool {

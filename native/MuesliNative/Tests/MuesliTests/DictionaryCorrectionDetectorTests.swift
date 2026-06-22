@@ -30,37 +30,34 @@ struct DictionaryCorrectionDetectorTests {
         #expect(suggestion?.replacement == "muesli")
     }
 
-    @Test("detects proper noun split merge corrections")
-    func detectsProperNounSplitMergeCorrection() {
+    @Test("does not suggest split merge phrase corrections")
+    func skipsSplitMergePhraseCorrection() {
         let suggestion = DictionaryCorrectionDetector.suggestion(
             originalText: "often I try to say Alvar Pet in dictation",
             editedText: "often I try to say Alwarpet in dictation"
         )
 
-        #expect(suggestion?.observed == "Alvar Pet")
-        #expect(suggestion?.replacement == "Alwarpet")
+        #expect(suggestion == nil)
     }
 
-    @Test("detects close hyphenated split merge corrections")
-    func detectsCloseHyphenatedSplitMergeCorrection() {
+    @Test("does not suggest hyphenated phrase corrections")
+    func skipsHyphenatedPhraseCorrection() {
         let suggestion = DictionaryCorrectionDetector.suggestion(
             originalText: "please route this to sc domain",
             editedText: "please route this to sc-domain"
         )
 
-        #expect(suggestion?.observed == "sc domain")
-        #expect(suggestion?.replacement == "sc-domain")
+        #expect(suggestion == nil)
     }
 
-    @Test("detects acronym replacement corrections")
-    func detectsAcronymReplacementCorrection() {
+    @Test("does not suggest acronym phrase replacements")
+    func skipsAcronymPhraseReplacement() {
         let suggestion = DictionaryCorrectionDetector.suggestion(
             originalText: "I moved to New York last year and I like it",
             editedText: "I moved to NYC last year and I like it"
         )
 
-        #expect(suggestion?.observed == "New York")
-        #expect(suggestion?.replacement == "NYC")
+        #expect(suggestion == nil)
     }
 
     @Test("detects numeric shorthand corrections")
@@ -129,6 +126,22 @@ struct DictionaryCorrectionDetectorTests {
 
         #expect(suggestions.map(\.observed) == ["Mailapur", "Trivanmir", "Teenagar"])
         #expect(suggestions.map(\.replacement) == ["Mylapore", "Thiruvanmiyur", "TNagar"])
+    }
+
+    @Test("does not emit phrase suggestions when adjacent words are edited")
+    func skipsPhraseSuggestionsForAdjacentWordEdits() {
+        let original = "Chennai area names called Mylapore, Mandavali, Dirvaniur."
+        let edited = "Chennai area names called Mylapore, Mandaiveli, Thiruvanmiyur."
+
+        let suggestions = DictionaryCorrectionDetector.suggestions(
+            originalText: original,
+            editedText: edited,
+            maxSuggestions: 3
+        )
+
+        #expect(suggestions.map(\.observed) == ["Mandavali", "Dirvaniur"])
+        #expect(suggestions.map(\.replacement) == ["Mandaiveli", "Thiruvanmiyur"])
+        #expect(suggestions.allSatisfy { !$0.observed.contains(" ") && !$0.replacement.contains(" ") })
     }
 
     @Test("detects word correction when extra text is appended afterwards")
