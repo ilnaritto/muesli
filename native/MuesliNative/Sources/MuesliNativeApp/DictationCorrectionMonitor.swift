@@ -121,7 +121,7 @@ struct DictionaryCorrectionDetector {
               let replacement = normalizedCandidate(diff.inserted)
         else { return nil }
 
-        guard isSingleTokenCandidate(observed), isSingleTokenCandidate(replacement) else {
+        guard isWordScopedSuggestion(observed: observed, replacement: replacement) else {
             return nil
         }
         guard originalText.range(of: observed, options: [.caseInsensitive, .diacriticInsensitive]) != nil else {
@@ -156,45 +156,118 @@ struct DictionaryCorrectionDetector {
         let operations = alignmentOperations(from: originalTokens, to: editedTokens)
         var suggestions: [DictionarySuggestion] = []
         var seenKeys = Set<String>()
-        for (index, operation) in operations.enumerated() {
-            guard case .substitution(let observed, let replacement) = operation else { continue }
-            guard !isAdjacentToTokenCountChange(index: index, operations: operations) else {
-                continue
-            }
-            guard let observedCandidate = normalizedCandidate(observed.text),
-                  let replacementCandidate = normalizedCandidate(replacement.text)
-            else { continue }
-            guard originalText.range(of: observedCandidate, options: [.caseInsensitive, .diacriticInsensitive]) != nil else {
-                continue
-            }
-            guard isLikelyDictionaryCorrection(observed: observedCandidate, replacement: replacementCandidate) else {
-                continue
-            }
-            let suggestion = DictionarySuggestion(
-                observed: observedCandidate,
-                replacement: replacementCandidate,
-                appContext: appContext
-            )
-            guard !seenKeys.contains(suggestion.key) else { continue }
+
+        func append(_ suggestion: DictionarySuggestion) {
+            guard suggestions.count < maxSuggestions else { return }
+            guard !seenKeys.contains(suggestion.key) else { return }
             seenKeys.insert(suggestion.key)
             suggestions.append(suggestion)
-            if suggestions.count >= maxSuggestions {
-                break
+        }
+
+        for run in tokenChangeRuns(in: operations) {
+            for suggestion in suggestionsFromTokenRun(
+                fromTokenRun: run,
+                originalText: originalText,
+                appContext: appContext,
+                maxSuggestions: maxSuggestions - suggestions.count
+            ) {
+                append(suggestion)
             }
+            if suggestions.count >= maxSuggestions { break }
         }
         return suggestions
     }
 
-    private static func isAdjacentToTokenCountChange(index: Int, operations: [AlignmentOperation]) -> Bool {
-        for adjacentIndex in [index - 1, index + 1] where operations.indices.contains(adjacentIndex) {
-            switch operations[adjacentIndex] {
-            case .insertion, .deletion:
-                return true
-            case .match, .substitution:
-                continue
+    private struct TokenChangeRun {
+        let observedTokens: [WordToken]
+        let replacementTokens: [WordToken]
+    }
+
+    private static func tokenChangeRuns(in operations: [AlignmentOperation]) -> [TokenChangeRun] {
+        var runs: [TokenChangeRun] = []
+        var observedTokens: [WordToken] = []
+        var replacementTokens: [WordToken] = []
+
+        func flush() {
+            guard !observedTokens.isEmpty, !replacementTokens.isEmpty else {
+                observedTokens.removeAll()
+                replacementTokens.removeAll()
+                return
+            }
+            runs.append(TokenChangeRun(observedTokens: observedTokens, replacementTokens: replacementTokens))
+            observedTokens.removeAll()
+            replacementTokens.removeAll()
+        }
+
+        for operation in operations {
+            switch operation {
+            case .match:
+                flush()
+            case .deletion(let token):
+                observedTokens.append(token)
+            case .insertion(let token):
+                replacementTokens.append(token)
+            case .substitution(let observed, let replacement):
+                observedTokens.append(observed)
+                replacementTokens.append(replacement)
             }
         }
-        return false
+        flush()
+        return runs
+    }
+
+    private static func suggestionsFromTokenRun(
+        fromTokenRun run: TokenChangeRun,
+        originalText: String,
+        appContext: String,
+        maxSuggestions: Int
+    ) -> [DictionarySuggestion] {
+        guard maxSuggestions > 0 else { return [] }
+        var results: [DictionarySuggestion] = []
+        var observedIndex = 0
+
+        for replacementToken in run.replacementTokens {
+            guard results.count < maxSuggestions, observedIndex < run.observedTokens.count else { break }
+
+            var bestSuggestion: DictionarySuggestion?
+            var bestObservedLength = 0
+            var bestSimilarity = 0.0
+            let maxObservedLength = min(3, run.observedTokens.count - observedIndex)
+
+            for observedLength in 1...maxObservedLength {
+                let observedText = run.observedTokens[observedIndex..<(observedIndex + observedLength)]
+                    .map(\.text)
+                    .joined(separator: " ")
+                guard let observedCandidate = normalizedCandidate(observedText),
+                      let replacementCandidate = normalizedCandidate(replacementToken.text),
+                      isWordScopedSuggestion(observed: observedCandidate, replacement: replacementCandidate),
+                      originalText.range(of: observedCandidate, options: [.caseInsensitive, .diacriticInsensitive]) != nil,
+                      isLikelyDictionaryCorrection(observed: observedCandidate, replacement: replacementCandidate)
+                else { continue }
+
+                let similarity = CustomWordMatcher.jaroWinklerSimilarity(
+                    observedCandidate.replacingOccurrences(of: " ", with: "").lowercased(),
+                    replacementCandidate.lowercased()
+                )
+                if similarity > bestSimilarity {
+                    bestSuggestion = DictionarySuggestion(
+                        observed: observedCandidate,
+                        replacement: replacementCandidate,
+                        appContext: appContext
+                    )
+                    bestObservedLength = observedLength
+                    bestSimilarity = similarity
+                }
+            }
+
+            if let bestSuggestion {
+                results.append(bestSuggestion)
+                observedIndex += bestObservedLength
+            } else {
+                observedIndex += 1
+            }
+        }
+        return results
     }
 
     static func hasSufficientSharedContext(originalText: String, editedText: String) -> Bool {
@@ -356,8 +429,34 @@ struct DictionaryCorrectionDetector {
         return tokens.joined(separator: " ")
     }
 
-    private static func isSingleTokenCandidate(_ value: String) -> Bool {
-        value.split(whereSeparator: \.isWhitespace).count == 1
+    private static func isWordScopedSuggestion(observed: String, replacement: String) -> Bool {
+        let observedTokens = observed.split(whereSeparator: \.isWhitespace)
+        let replacementTokens = replacement.split(whereSeparator: \.isWhitespace)
+        guard replacementTokens.count == 1, (1...3).contains(observedTokens.count) else {
+            return false
+        }
+        if observedTokens.count == 1 {
+            if isAcronymLike(replacement), observed.lowercased() != replacement.lowercased() {
+                return false
+            }
+            if replacement.contains("-"), !observed.contains("-") {
+                return CustomWordMatcher.jaroWinklerSimilarity(
+                    observed.lowercased(),
+                    replacement.lowercased()
+                ) >= 0.82
+            }
+            return true
+        }
+
+        guard !replacement.contains("-"),
+              !replacement.contains("_"),
+              !replacement.contains("/"),
+              !isAcronymLike(replacement)
+        else { return false }
+
+        let compactObserved = observedTokens.joined().lowercased()
+        let compactReplacement = replacement.lowercased()
+        return CustomWordMatcher.jaroWinklerSimilarity(compactObserved, compactReplacement) >= minimumCorrectionSimilarity
     }
 
     private static func isLikelyDictionaryCorrection(observed: String, replacement: String) -> Bool {
@@ -385,7 +484,13 @@ struct DictionaryCorrectionDetector {
                 compactObserved,
                 compactReplacement
             )
-            return compactSimilarity >= 0.82 || isLikelyStrongDictionaryCorrection(
+            return compactSimilarity >= 0.82
+                || isLikelySingleWordSplitCorrection(
+                    replacement: replacement,
+                    replacementTokens: replacementTokens,
+                    similarity: compactSimilarity
+                )
+                || isLikelyStrongDictionaryCorrection(
                 observed: observed,
                 replacement: replacement,
                 observedTokens: observedTokens,
@@ -445,6 +550,23 @@ struct DictionaryCorrectionDetector {
             return similarity >= 0.55
         }
         return false
+    }
+
+    private static func isLikelySingleWordSplitCorrection(
+        replacement: String,
+        replacementTokens: [String],
+        similarity: Double
+    ) -> Bool {
+        guard replacementTokens.count == 1,
+              !replacement.contains("-"),
+              !replacement.contains("_"),
+              !replacement.contains("/"),
+              !isAcronymLike(replacement),
+              !commonWords.contains(replacement.lowercased()),
+              similarity >= minimumCorrectionSimilarity
+        else { return false }
+        return replacement.contains(where: \.isUppercase)
+            || !isRecognizedEnglishWord(replacement.lowercased())
     }
 
     private static func isNumericShorthand(observed: String, replacement: String) -> Bool {

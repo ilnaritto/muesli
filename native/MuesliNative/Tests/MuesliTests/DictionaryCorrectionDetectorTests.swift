@@ -30,14 +30,15 @@ struct DictionaryCorrectionDetectorTests {
         #expect(suggestion?.replacement == "muesli")
     }
 
-    @Test("does not suggest split merge phrase corrections")
-    func skipsSplitMergePhraseCorrection() {
+    @Test("detects split ASR for a single proper noun")
+    func detectsSplitASRForSingleProperNoun() {
         let suggestion = DictionaryCorrectionDetector.suggestion(
             originalText: "often I try to say Alvar Pet in dictation",
             editedText: "often I try to say Alwarpet in dictation"
         )
 
-        #expect(suggestion == nil)
+        #expect(suggestion?.observed == "Alvar Pet")
+        #expect(suggestion?.replacement == "Alwarpet")
     }
 
     @Test("does not suggest hyphenated phrase corrections")
@@ -142,6 +143,21 @@ struct DictionaryCorrectionDetectorTests {
         #expect(suggestions.map(\.observed) == ["Mandavali", "Dirvaniur"])
         #expect(suggestions.map(\.replacement) == ["Mandaiveli", "Thiruvanmiyur"])
         #expect(suggestions.allSatisfy { !$0.observed.contains(" ") && !$0.replacement.contains(" ") })
+    }
+
+    @Test("detects multiple split ASR proper nouns from one edited snapshot")
+    func detectsMultipleSplitASRProperNouns() {
+        let original = "Okay, I am only interested in just like proper noun related corrections, so I don't want any phrasal related changes that is not part of my concern for the dictionary prompts. So let us check. can it transcribe Thoray Pakam, Kara Pakam, Nongam Bakam properly?"
+        let edited = "Okay, I am only interested in just like proper noun related corrections, so I don't want any phrasal related changes that is not part of my concern for the dictionary prompts. So let us check. can it transcribe Thoraipakkam, Karapakkam, Nungambakkam properly?"
+
+        let suggestions = DictionaryCorrectionDetector.suggestions(
+            originalText: original,
+            editedText: edited,
+            maxSuggestions: 3
+        )
+
+        #expect(suggestions.map(\.observed) == ["Thoray Pakam", "Kara Pakam", "Nongam Bakam"])
+        #expect(suggestions.map(\.replacement) == ["Thoraipakkam", "Karapakkam", "Nungambakkam"])
     }
 
     @Test("detects word correction when extra text is appended afterwards")
