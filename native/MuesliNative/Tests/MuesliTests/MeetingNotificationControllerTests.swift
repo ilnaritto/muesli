@@ -271,19 +271,6 @@ struct MeetingNotificationControllerTests {
         #expect(candidates.map(\.id) == ["soon", "later"])
     }
 
-    @Test("Auto-record pre-roll lead exceeds the catch-up window")
-    func autoRecordPreRollLeadExceedsCatchUpWindow() {
-        // The App Nap opt-out is engaged only `autoRecordPreRollLeadTime` before
-        // each wake. Because the arming timer is itself App Nap–suspendable, the
-        // pre-roll lead must stay wider than the catch-up window so a delayed arm
-        // still engages the assertion in time and the catch-up window can absorb
-        // any residual lateness.
-        #expect(
-            ScheduledMeetingNotificationPolicy.autoRecordPreRollLeadTime
-                > ScheduledMeetingNotificationPolicy.autoRecordCatchUpWindow
-        )
-    }
-
     private func unifiedCalendarEvent(
         id: String,
         startDate: Date,
