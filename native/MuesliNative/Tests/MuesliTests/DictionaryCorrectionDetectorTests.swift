@@ -247,6 +247,24 @@ struct DictionaryCorrectionDetectorTests {
         #expect(suggestion?.replacement == "muesli")
     }
 
+    @Test("detects far-apart corrections inside a large focused text snapshot")
+    func detectsFarApartCorrectionsInsideLargeFocusedTextSnapshot() {
+        let prefix = (0..<40).map { "prefix\($0)" }.joined(separator: " ")
+        let middle = (0..<140).map { "middle\($0)" }.joined(separator: " ")
+        let suffix = (0..<40).map { "suffix\($0)" }.joined(separator: " ")
+        let original = "\(prefix) I like museli today \(middle) I mentioned newsly again \(suffix)"
+        let edited = "\(prefix) I like muesli today \(middle) I mentioned muesli again \(suffix)"
+
+        let suggestions = DictionaryCorrectionDetector.suggestions(
+            originalText: original,
+            editedText: edited,
+            maxSuggestions: 3
+        )
+
+        #expect(suggestions.map(\.observed) == ["museli", "newsly"])
+        #expect(suggestions.map(\.replacement) == ["muesli", "muesli"])
+    }
+
     @Test("detects a word correction next to an inserted word")
     func detectsCorrectionNextToInsertedWord() {
         let suggestions = DictionaryCorrectionDetector.suggestions(
