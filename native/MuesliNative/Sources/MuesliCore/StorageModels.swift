@@ -221,6 +221,18 @@ public struct ComputerUseTraceEvent: Identifiable, Codable, Equatable, Sendable 
         self.timestamp = timestamp
         self.debugPayload = debugPayload
     }
+
+    public func removingDebugPayload() -> ComputerUseTraceEvent {
+        ComputerUseTraceEvent(
+            id: id,
+            kind: kind,
+            title: title,
+            body: body,
+            status: status,
+            step: step,
+            timestamp: timestamp
+        )
+    }
 }
 
 public struct MeetingRecord: Identifiable, Codable, Sendable {

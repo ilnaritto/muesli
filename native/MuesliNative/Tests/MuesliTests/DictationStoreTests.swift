@@ -1998,7 +1998,8 @@ struct DictationStoreTests {
                 body: #"{"tool":"open_app","app_name":"Google Chrome"}"#,
                 status: "planned",
                 step: 1,
-                timestamp: "2026-05-05T00:00:00Z"
+                timestamp: "2026-05-05T00:00:00Z",
+                debugPayload: #"{"command":"private document text"}"#
             ),
             ComputerUseTraceEvent(
                 id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
@@ -2022,7 +2023,8 @@ struct DictationStoreTests {
         #expect(row.id == dictationID)
         #expect(row.source == "cua")
         #expect(row.computerUseTrace?.finalStatus == "done")
-        #expect(row.computerUseTrace?.events == events)
+        #expect(row.computerUseTrace?.events == events.map { $0.removingDebugPayload() })
+        #expect(row.computerUseTrace?.events.allSatisfy { $0.debugPayload == nil } == true)
     }
 
     @Test("searchDictations matches computer use trace text")

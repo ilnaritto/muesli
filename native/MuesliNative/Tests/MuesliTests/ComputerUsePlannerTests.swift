@@ -413,8 +413,12 @@ struct ComputerUsePlannerResponseTests {
         let response = try ComputerUsePlannerResponse.decodeJSON(
             from: #"{"tool":"navigate_url","app_bundle_id":"com.google.Chrome","url":"https://www.google.com/search?q=hello&hl=en"}"#
         )
+        let semicolonResponse = try ComputerUsePlannerResponse.decodeJSON(
+            from: #"{"tool":"navigate_url","app_bundle_id":"com.google.Chrome","url":"https://example.com/path;param=value?x=1;y=2"}"#
+        )
 
         #expect(response.toolCall.url == "https://www.google.com/search?q=hello&hl=en")
+        #expect(semicolonResponse.toolCall.url == "https://example.com/path;param=value?x=1;y=2")
     }
 
     @Test("risky tool calls require confirmation")
@@ -1086,6 +1090,26 @@ struct ComputerUsePlannerRuntimeTests {
         #expect(ocrCalls == 1)
     }
 
+    @Test("runtime leaves screenshot OCR empty by default")
+    @MainActor
+    func runtimeLeavesScreenshotOCREmptyByDefault() async {
+        let runtime = ComputerUsePlannerRuntime(
+            config: AppConfig(),
+            observe: { _, _, _ in
+                Self.observation(screenshot: Self.screenshot())
+            },
+            plan: { request in
+                #expect(request.latestWindowState.screenshotOCRText == nil)
+                return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
+            },
+            execute: { _, _ in .executed("unexpected") }
+        )
+
+        let result = await runtime.run(command: "inspect sheet")
+
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+    }
+
     @Test("text action UI change without requested text blocks finish")
     @MainActor
     func textActionUIChangeWithoutRequestedTextBlocksFinish() async {
@@ -1158,7 +1182,7 @@ struct ComputerUsePlannerRuntimeTests {
             config: AppConfig(),
             observe: { _, _, _ in Self.observation() },
             plan: { _ in
-                ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "Could not complete the task."))
+                ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "Couldn’t complete the task."))
             },
             execute: { _, _ in .executed("unexpected") }
         )

@@ -665,7 +665,6 @@ struct ComputerUseToolInvocation: Codable, Equatable {
         guard !trimmed.isEmpty,
               !trimmed.contains("\n"),
               !trimmed.contains("\r"),
-              !trimmed.contains(";"),
               !trimmed.contains("|"),
               let url = URL(string: trimmed),
               let scheme = url.scheme?.lowercased(),

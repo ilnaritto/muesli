@@ -69,6 +69,30 @@ struct ComputerUseExecutorTests {
         #expect(result.message.contains("Stale or unknown element_index 9"))
     }
 
+    @Test("coordinate action rejects stale screenshot id")
+    @MainActor
+    func coordinateActionRejectsStaleScreenshotID() async {
+        let registry = ComputerUseElementRegistry()
+        registry.registerScreenshot(ComputerUseScreenshotObservation(
+            screenshotID: "latest-shot",
+            width: 100,
+            height: 80,
+            windowFrame: ComputerUseRect(x: 10, y: 20, width: 100, height: 80),
+            scaleX: 1,
+            scaleY: 1,
+            imageDataURL: nil
+        ))
+
+        let result = await ComputerUseToolExecutor.execute(
+            ComputerUseToolCall(tool: .moveCursor, screenshotID: "old-shot", x: 12, y: 24),
+            registry: registry
+        )
+
+        #expect(result.status == .failed)
+        #expect(result.message.contains("Stale screenshot_id old-shot"))
+        #expect(result.message.contains("latest screenshot is latest-shot"))
+    }
+
     @Test("parses browser tab Apple Events output")
     func parsesBrowserTabs() {
         let tabs = ComputerUseBrowserAutomation.parseTabs(

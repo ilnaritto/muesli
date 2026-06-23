@@ -5189,6 +5189,7 @@ final class MuesliController: NSObject {
     private func handleComputerUseStart() {
         guard canStartComputerUseCommand else { return }
         fputs("[cua] recording start\n", stderr)
+        computerUseCommandStartedAt = Date()
         if computerUseLatencyTraceID == nil {
             beginComputerUseLatencyTrace(reason: "hotkey")
         }
@@ -5232,6 +5233,7 @@ final class MuesliController: NSObject {
         pendingComputerUseStopStartedAt = nil
         indicator.isToggleDictation = false
         indicator.hideComputerUseCursor()
+        resetComputerUseFloatingStatus()
         setState(.idle)
         if hadInFlightCommand {
             indicator.showWarning("CUA cancelled", icon: "!")
@@ -5839,6 +5841,7 @@ final class MuesliController: NSObject {
             guard pendingComputerUseStopSessionID == eventSessionID else {
                 fputs("[cua] ignoring stale stopped event\n", stderr)
                 if let wavURL {
+                    fputs("[cua] cleaned up stale wav: \(wavURL.lastPathComponent)\n", stderr)
                     try? FileManager.default.removeItem(at: wavURL)
                 }
                 break
@@ -5846,6 +5849,7 @@ final class MuesliController: NSObject {
             guard computerUseAudioSessionManager.currentSessionID == nil else {
                 fputs("[cua] ignoring stopped event while a new CUA session is active\n", stderr)
                 if let wavURL {
+                    fputs("[cua] cleaned up stale wav: \(wavURL.lastPathComponent)\n", stderr)
                     try? FileManager.default.removeItem(at: wavURL)
                 }
                 break

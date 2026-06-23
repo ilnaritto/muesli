@@ -48,7 +48,6 @@ enum ComputerUseScreenshotTextRecognition {
                 }
                 request.recognitionLevel = .accurate
                 request.usesLanguageCorrection = true
-                request.usesCPUOnly = true
 
                 let handler = VNImageRequestHandler(cgImage: image, options: [:])
                 do {

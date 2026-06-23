@@ -38,7 +38,7 @@ final class ComputerUsePlannerRuntime {
     private let plan: PlanHandler
     private let execute: ExecuteHandler
     private let recognizeScreenshotText: ScreenshotTextRecognizer
-    private let maxPlannerRetries = 1
+    private let maxPlannerRetryCount = 1
     private let maxUnchangedObservationLoops = 4
 
     init(
@@ -57,9 +57,7 @@ final class ComputerUsePlannerRuntime {
         execute: @escaping ExecuteHandler = { toolCall, registry in
             await ComputerUseToolExecutor.execute(toolCall, registry: registry)
         },
-        recognizeScreenshotText: @escaping ScreenshotTextRecognizer = { screenshot in
-            await ComputerUseScreenshotTextRecognition.recognizedText(from: screenshot)
-        }
+        recognizeScreenshotText: @escaping ScreenshotTextRecognizer = { _ in nil }
     ) {
         self.config = config
         self.maxSteps = maxSteps
@@ -643,12 +641,14 @@ final class ComputerUsePlannerRuntime {
     }
 
     private func finishIndicatesFailure(_ reason: String) -> Bool {
-        let lowered = reason.lowercased()
+        let lowered = reason
+            .replacingOccurrences(of: "’", with: "'")
+            .lowercased()
         let failurePatterns = [
             #"^\s*(blocked|failed|unsupported|incomplete|not completed?)\s*[.!]?\s*$"#,
             #"\b(requires|needs)\s+confirmation\b"#,
             #"\b(task|request|command|workflow)\s+(is\s+)?(blocked|incomplete|not completed?|failed|unsupported)\b"#,
-            #"\b(cannot|can't|could not|unable to|was not able to)\s+(complete|finish|perform|do|continue|proceed|access|open|click|type|paste|navigate|find)\b"#,
+            #"\b(cannot|can't|could not|couldn't|unable to|was not able to)\s+(complete|finish|perform|do|continue|proceed|access|open|click|type|paste|navigate|find)\b"#,
             #"\b(did not|didn't)\s+(complete|finish|perform|send|post|open|click|type|paste|navigate|find)\b"#,
             #"\b(permission|permissions)\s+(required|needed|denied|missing|not granted)\b"#,
             #"\b(not authorized|not allowed|access denied)\b"#,
@@ -834,7 +834,7 @@ final class ComputerUsePlannerRuntime {
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                guard attempt < maxPlannerRetries, isRecoverablePlannerError(error) else {
+                guard attempt < maxPlannerRetryCount, isRecoverablePlannerError(error) else {
                     throw error
                 }
                 attempt += 1

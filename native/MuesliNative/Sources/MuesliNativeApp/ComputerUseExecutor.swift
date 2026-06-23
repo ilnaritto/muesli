@@ -836,8 +836,12 @@ enum ComputerUseToolExecutor {
         _ toolCall: ComputerUseToolCall,
         registry: ComputerUseElementRegistry?
     ) -> ComputerUseExecutionResult {
-        guard let point = screenPoint(for: toolCall, registry: registry) else {
-            return .failed("No current screenshot for point click")
+        let point: CGPoint
+        switch screenPoint(for: toolCall, registry: registry) {
+        case .success(let resolvedPoint):
+            point = resolvedPoint
+        case .failure(let message):
+            return .failed(message)
         }
         guard let source = CGEventSource(stateID: .combinedSessionState) else {
             return .failed("Could not create mouse event")
@@ -877,8 +881,12 @@ enum ComputerUseToolExecutor {
         _ toolCall: ComputerUseToolCall,
         registry: ComputerUseElementRegistry?
     ) -> ComputerUseExecutionResult {
-        guard let point = screenPoint(for: toolCall, registry: registry) else {
-            return .failed("No current screenshot for cursor move")
+        let point: CGPoint
+        switch screenPoint(for: toolCall, registry: registry) {
+        case .success(let resolvedPoint):
+            point = resolvedPoint
+        case .failure(let message):
+            return .failed(message)
         }
         CGWarpMouseCursorPosition(point)
         ComputerUseCursorOverlay.shared.show(at: point, label: toolCall.label)
@@ -889,15 +897,24 @@ enum ComputerUseToolExecutor {
         _ toolCall: ComputerUseToolCall,
         registry: ComputerUseElementRegistry?
     ) -> ComputerUseExecutionResult {
-        guard let start = screenPoint(for: toolCall, registry: registry),
-              let end = screenPoint(
-                x: toolCall.toX,
-                y: toolCall.toY,
-                screenshotID: toolCall.screenshotID,
-                registry: registry
-              )
-        else {
-            return .failed("No current screenshot for drag")
+        let start: CGPoint
+        let end: CGPoint
+        switch screenPoint(for: toolCall, registry: registry) {
+        case .success(let resolvedStart):
+            start = resolvedStart
+        case .failure(let message):
+            return .failed(message)
+        }
+        switch screenPoint(
+            x: toolCall.toX,
+            y: toolCall.toY,
+            screenshotID: toolCall.screenshotID,
+            registry: registry
+        ) {
+        case .success(let resolvedEnd):
+            end = resolvedEnd
+        case .failure(let message):
+            return .failed(message)
         }
         guard let source = CGEventSource(stateID: .combinedSessionState),
               let mouseDown = CGEvent(
@@ -1314,27 +1331,42 @@ enum ComputerUseToolExecutor {
         ] {
             let trimmed = candidate?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !trimmed.isEmpty {
-                return trimmed
+                return boundedActionLabel(trimmed)
             }
         }
         return "element"
     }
 
+    private static func boundedActionLabel(_ label: String) -> String {
+        let compact = label
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        guard compact.count > 120 else { return compact }
+        return "\(compact.prefix(117))..."
+    }
+
     private static func isRiskyActionLabel(_ text: String) -> Bool {
         let riskyWords: Set<String> = [
             "archive",
+            "allow",
+            "approve",
             "buy",
             "cancel",
             "checkout",
             "confirm",
             "delete",
             "discard",
+            "erase",
+            "ok",
             "pay",
             "purchase",
             "remove",
+            "reset",
             "send",
             "submit",
+            "transfer",
             "unsubscribe",
+            "yes",
         ]
         let words = Set(canonicalLabel(text).split(separator: " ").map(String.init))
         return !riskyWords.isDisjoint(with: words)
@@ -1383,7 +1415,7 @@ enum ComputerUseToolExecutor {
     private static func screenPoint(
         for toolCall: ComputerUseToolCall,
         registry: ComputerUseElementRegistry?
-    ) -> CGPoint? {
+    ) -> ScreenPointResolution {
         screenPoint(
             x: toolCall.x,
             y: toolCall.y,
@@ -1397,16 +1429,26 @@ enum ComputerUseToolExecutor {
         y: Double?,
         screenshotID: String?,
         registry: ComputerUseElementRegistry?
-    ) -> CGPoint? {
-        guard let x, let y, let screenshot = registry?.currentScreenshot() else { return nil }
+    ) -> ScreenPointResolution {
+        guard let x, let y else {
+            return .failure("Screenshot coordinate action requires x and y from the latest screenshot")
+        }
+        guard let screenshot = registry?.currentScreenshot() else {
+            return .failure("No current screenshot for coordinate action")
+        }
         if let screenshotID, screenshotID != screenshot.screenshotID {
-            return nil
+            return .failure("Stale screenshot_id \(screenshotID); latest screenshot is \(screenshot.screenshotID). Use coordinates from the latest state.")
         }
         let window = screenshot.windowFrame
-        return CGPoint(
+        return .success(CGPoint(
             x: window.x + (x / max(screenshot.scaleX, 0.0001)),
             y: window.y + (y / max(screenshot.scaleY, 0.0001))
-        )
+        ))
+    }
+
+    private enum ScreenPointResolution {
+        case success(CGPoint)
+        case failure(String)
     }
 
     private static func mouseButton(from rawValue: String?) -> CGMouseButton {
