@@ -2081,6 +2081,8 @@ final class MuesliController: NSObject {
     private func presentNextDictionarySuggestionPromptIfPossible() {
         guard config.enableDictionaryCorrectionPrompts else { return }
         guard activeDictionarySuggestionPromptKey == nil else { return }
+        // While the advance task is sleeping, it owns the next drain attempt.
+        // Newly queued suggestions remain in queuedDictionarySuggestionPromptKeys.
         guard dictionarySuggestionPromptAdvanceTask == nil else { return }
         guard !dictionarySuggestionPrompt.isShowing else {
             scheduleNextDictionarySuggestionPrompt()

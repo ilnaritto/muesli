@@ -17,8 +17,8 @@ final class DictionarySuggestionPromptController: NSObject {
         super.init()
     }
 
-    static func firesAutoDismissCallbackAfterFade(wasDismissPaused: Bool) -> Bool {
-        !wasDismissPaused
+    static func shouldAutoDismissFromTimer(isPausedWhenTimerFires: Bool) -> Bool {
+        !isPausedWhenTimerFires
     }
 
     var isShowing: Bool {
@@ -162,12 +162,9 @@ final class DictionarySuggestionPromptController: NSObject {
     }
 
     private func autoDismissNow() {
-        guard !isDismissPaused else { return }
+        guard Self.shouldAutoDismissFromTimer(isPausedWhenTimerFires: isDismissPaused) else { return }
         animateOut { [weak self] in
-            guard let self else { return }
-            let wasPaused = self.isDismissPaused
-            let shouldNotify = Self.firesAutoDismissCallbackAfterFade(wasDismissPaused: wasPaused)
-            self.dismiss(notify: shouldNotify)
+            self?.dismiss(notify: true)
         }
     }
 

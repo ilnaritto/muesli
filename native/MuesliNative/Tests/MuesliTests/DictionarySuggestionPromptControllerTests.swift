@@ -3,10 +3,10 @@ import Testing
 
 @Suite("DictionarySuggestionPromptController")
 struct DictionarySuggestionPromptControllerTests {
-    @Test("Auto-dismiss callback is skipped when hover pauses during fade-out")
+    @Test("Auto-dismiss decision is made when timer fires")
     @MainActor
-    func autoDismissCallbackSkippedWhenPausedDuringFadeOut() {
-        #expect(DictionarySuggestionPromptController.firesAutoDismissCallbackAfterFade(wasDismissPaused: false))
-        #expect(!DictionarySuggestionPromptController.firesAutoDismissCallbackAfterFade(wasDismissPaused: true))
+    func autoDismissDecisionIsMadeWhenTimerFires() {
+        #expect(DictionarySuggestionPromptController.shouldAutoDismissFromTimer(isPausedWhenTimerFires: false))
+        #expect(!DictionarySuggestionPromptController.shouldAutoDismissFromTimer(isPausedWhenTimerFires: true))
     }
 }
