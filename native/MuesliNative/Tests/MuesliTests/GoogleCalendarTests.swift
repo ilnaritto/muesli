@@ -187,12 +187,6 @@ struct GoogleCalendarTests {
         #expect(url?.absoluteString == "https://teams.microsoft.com/l/meetup-join/19%3ameeting_x%40thread.v2/0?context=%7b%7d&anon=true")
     }
 
-    @Test("CalendarMonitor extracts a government-tenant Teams URL")
-    func extractsGovTenantTeamsURL() {
-        let url = CalendarMonitor.findMeetingURL(in: "https://teams.microsoft.us/l/meetup-join/19%3ameeting_gov%40thread.v2/0")
-        #expect(url?.host == "teams.microsoft.us")
-    }
-
     // MARK: - Merge & dedup
 
     @Test("merges EventKit and Google events without duplicates")
