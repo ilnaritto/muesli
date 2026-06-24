@@ -6,6 +6,7 @@ enum ComputerUseToolName: String, Codable, Equatable, CaseIterable {
     case listWindows = "list_windows"
     case getAppState = "get_app_state"
     case getWindowState = "get_window_state"
+    case recognizeScreenshotText = "recognize_screenshot_text"
     case moveCursor = "move_cursor"
     case click
     case clickElement = "click_element"
@@ -448,6 +449,8 @@ struct ComputerUseToolInvocation: Codable, Equatable {
         switch tool {
         case .listApps, .listWindows, .getAppState, .getWindowState, .finish:
             return nil
+        case .recognizeScreenshotText:
+            return trimmed(screenshotID).isEmpty ? "recognize_screenshot_text requires screenshot_id" : nil
         case .launchApp:
             return trimmed(appName).isEmpty && canonicalBundleID.isEmpty ? "launch_app requires app_name or app_bundle_id" : nil
         case .moveCursor:
@@ -580,7 +583,7 @@ struct ComputerUseToolInvocation: Codable, Equatable {
         switch tool {
         case .launchApp, .moveCursor, .click, .clickElement, .clickPoint, .focusElement, .activateFocused, .performSecondaryAction, .setValue, .typeText, .pasteText, .pressKey, .hotkey, .scroll, .drag, .activateBrowserTab, .openNewBrowserTab, .navigateURL, .navigateActiveBrowserTab:
             return true
-        case .listApps, .listWindows, .getAppState, .getWindowState, .listBrowserTabs, .pageGetText, .pageQueryDOM, .finish, .fail:
+        case .listApps, .listWindows, .getAppState, .getWindowState, .recognizeScreenshotText, .listBrowserTabs, .pageGetText, .pageQueryDOM, .finish, .fail:
             return false
         }
     }
@@ -597,6 +600,8 @@ struct ComputerUseToolInvocation: Codable, Equatable {
             return "get app state"
         case .getWindowState:
             return "get window state"
+        case .recognizeScreenshotText:
+            return "recognize screenshot text"
         case .moveCursor:
             return "move cursor to \(coordinateSummary(x, y))"
         case .click:

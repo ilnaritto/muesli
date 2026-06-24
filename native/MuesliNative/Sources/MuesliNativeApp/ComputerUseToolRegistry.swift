@@ -81,15 +81,19 @@ enum ComputerUseToolRegistry {
         definition(.listWindows, "List visible windows, optionally scoped by app_bundle_id.", required: [], properties: [
             "app_bundle_id": .string("Optional bundle identifier to scope windows."),
         ], risk: "safe read-only"),
-        definition(.getAppState, "Capture fresh app/window state: state_id, process_id, window_id, screenshot metadata/image for the planner, OCR-backed visual text, AX candidates as optional hints, focused element, selected text, cursor, and app hints. Prefer get_window_state once a target process_id/window_id is known.", required: [], properties: [
+        definition(.getAppState, "Capture fresh app/window state: state_id, process_id, window_id, screenshot metadata/image for the planner, AX candidates as optional hints, focused element, selected text, cursor, and app hints. Prefer get_window_state once a target process_id/window_id is known; call recognize_screenshot_text only when OCR would help.", required: [], properties: [
             "app_bundle_id": .string("Optional app bundle to activate before capture."),
             "window_id": .integer("Optional window id hint."),
         ], risk: "safe read-only"),
-        definition(.getWindowState, "Capture or refresh a specific target window. Prefer this when you already know process_id/window_id from latest_window_state or list_windows.", required: [], properties: [
+        definition(.getWindowState, "Capture or refresh a specific target window. Prefer this when you already know process_id/window_id from latest_window_state or list_windows; Muesli uses these IDs to keep the refreshed snapshot on the requested process/window when possible.", required: [], properties: [
             "app_bundle_id": .string("Optional app bundle to activate before capture."),
             "process_id": .integer("Optional process id from latest_window_state or list_windows."),
             "window_id": .integer("Optional window id hint."),
         ], risk: "safe read-only"),
+        definition(.recognizeScreenshotText, "Run OCR on the latest screenshot when visible text would help interpret the screen. This is optional and model-directed; use it when the screenshot alone is visually ambiguous or text is too small to inspect.", required: ["screenshot_id"], properties: [
+            "screenshot_id": .string("Current screenshot id from latest_window_state."),
+            "label": .string("Optional reason or visible region label for trace."),
+        ], risk: "safe read-only; may be slow on large screenshots"),
         definition(.moveCursor, "Move the visible Muesli CUA cursor to a screenshot coordinate without clicking. Use this before uncertain coordinate clicks to show intent.", required: ["screenshot_id", "x", "y"], properties: [
             "screenshot_id": .string("Current screenshot id."),
             "x": .number("Screenshot pixel x coordinate."),

@@ -88,6 +88,8 @@ enum ComputerUseToolExecutor {
         }
 
         switch toolCall.tool {
+        case .recognizeScreenshotText:
+            return .unsupported("recognize_screenshot_text is handled by the planner runtime")
         case .listApps:
             return listApps()
         case .launchApp:

@@ -251,12 +251,32 @@ struct ComputerUseObservation: Codable, Equatable {
 struct ComputerUseObservationTarget: Codable, Equatable {
     let appName: String?
     let bundleID: String?
+    let processID: Int?
+    let windowID: Int?
+
+    init(
+        appName: String? = nil,
+        bundleID: String? = nil,
+        processID: Int? = nil,
+        windowID: Int? = nil
+    ) {
+        self.appName = appName
+        self.bundleID = bundleID
+        self.processID = processID
+        self.windowID = windowID
+    }
 
     var displayName: String {
         if let appName, !appName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return appName
         }
-        return bundleID ?? ""
+        if let bundleID, !bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return bundleID
+        }
+        if let processID {
+            return "pid \(processID)"
+        }
+        return ""
     }
 }
 
@@ -395,12 +415,13 @@ enum ComputerUseObservationCapture {
         }
 
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
-        let window = focusedWindow(in: axApp)
+        let targetWindowFrame = targetWindowFrame(for: target, app: app)
+        let window = targetWindow(in: axApp, targetFrame: targetWindowFrame) ?? focusedWindow(in: axApp)
         let root = window ?? axApp
         let windowTitle = window.map { axString($0, kAXTitleAttribute) } ?? ""
-        let windowFrame = window.flatMap(rect)
-        let windowID = matchedWindowID(for: app, frame: windowFrame)
-        let screenshot = includeScreenshot ? captureScreenshot(for: app, fallbackFrame: windowFrame) : nil
+        let windowFrame = window.flatMap(rect) ?? targetWindowFrame
+        let windowID = target?.windowID ?? matchedWindowID(for: app, frame: windowFrame)
+        let screenshot = includeScreenshot ? captureScreenshot(for: app, targetWindowID: target?.windowID, fallbackFrame: windowFrame) : nil
         registry.registerScreenshot(screenshot)
         let focusedElementSnapshot = focusedElementSnapshot(requiredPID: app.processIdentifier)
         let focusedElement = focusedElementSnapshot?.observation
@@ -541,8 +562,29 @@ enum ComputerUseObservationCapture {
         return (element as! AXUIElement)
     }
 
+    private static func targetWindow(in axApp: AXUIElement, targetFrame: CGRect?) -> AXUIElement? {
+        guard let targetFrame, targetFrame.width > 0, targetFrame.height > 0 else { return nil }
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &value) == .success,
+              let windows = value as? [AXUIElement]
+        else { return nil }
+        return windows
+            .compactMap { window -> (AXUIElement, CGRect)? in
+                guard let frame = rect(window) else { return nil }
+                return (window, frame)
+            }
+            .max { lhs, rhs in
+                lhs.1.intersection(targetFrame).area < rhs.1.intersection(targetFrame).area
+            }?
+            .0
+    }
+
     private static func runningApplication(for target: ComputerUseObservationTarget?) -> NSRunningApplication? {
         guard let target else { return nil }
+        if let processID = target.processID, processID > 0,
+           let app = NSWorkspace.shared.runningApplications.first(where: { $0.processIdentifier == pid_t(processID) }) {
+            return app
+        }
         if let bundleID = target.bundleID?.trimmingCharacters(in: .whitespacesAndNewlines), !bundleID.isEmpty {
             return NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == bundleID }
         }
@@ -658,6 +700,7 @@ enum ComputerUseObservationCapture {
 
     private static func captureScreenshot(
         for app: NSRunningApplication,
+        targetWindowID: Int?,
         fallbackFrame: CGRect?
     ) -> ComputerUseScreenshotObservation? {
         guard CGPreflightScreenCaptureAccess() else { return nil }
@@ -668,7 +711,13 @@ enum ComputerUseObservationCapture {
             guard let bounds = cgWindowBounds(dict), bounds.width > 0, bounds.height > 0 else { return false }
             return true
         }
-        let appWindow = preferredScreenshotWindow(from: appWindows, fallbackFrame: fallbackFrame)
+        let appWindow: [CFString: Any]?
+        if let targetWindowID {
+            appWindow = appWindows.first { ($0[kCGWindowNumber] as? Int) == targetWindowID }
+                ?? preferredScreenshotWindow(from: appWindows, fallbackFrame: fallbackFrame)
+        } else {
+            appWindow = preferredScreenshotWindow(from: appWindows, fallbackFrame: fallbackFrame)
+        }
 
         if let appWindow,
            let windowID = appWindow[kCGWindowNumber] as? CGWindowID,
@@ -693,6 +742,21 @@ enum ComputerUseObservationCapture {
                   [.bestResolution]
               ) else { return nil }
         return screenshotObservation(image: image, frame: displayFrame)
+    }
+
+    private static func targetWindowFrame(for target: ComputerUseObservationTarget?, app: NSRunningApplication) -> CGRect? {
+        guard let target, let windowID = target.windowID else { return nil }
+        let windowList = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[CFString: Any]] ?? []
+        return windowList.compactMap { dict -> CGRect? in
+            guard (dict[kCGWindowNumber] as? Int) == windowID else { return nil }
+            if let processID = target.processID, let ownerPID = dict[kCGWindowOwnerPID] as? Int32, ownerPID != pid_t(processID) {
+                return nil
+            }
+            if let ownerPID = dict[kCGWindowOwnerPID] as? Int32, ownerPID != app.processIdentifier {
+                return nil
+            }
+            return cgWindowBounds(dict)
+        }.first
     }
 
     private static func matchedWindowID(for app: NSRunningApplication, frame: CGRect?) -> Int? {

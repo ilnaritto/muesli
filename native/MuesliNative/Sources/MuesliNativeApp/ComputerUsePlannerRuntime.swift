@@ -57,7 +57,9 @@ final class ComputerUsePlannerRuntime {
         execute: @escaping ExecuteHandler = { toolCall, registry in
             await ComputerUseToolExecutor.execute(toolCall, registry: registry)
         },
-        recognizeScreenshotText: @escaping ScreenshotTextRecognizer = { _ in nil }
+        recognizeScreenshotText: @escaping ScreenshotTextRecognizer = { screenshot in
+            await ComputerUseScreenshotTextRecognition.recognizedText(from: screenshot)
+        }
     ) {
         self.config = config
         self.maxSteps = maxSteps
@@ -212,6 +214,36 @@ final class ComputerUsePlannerRuntime {
                 let message = toolCall.reason?.isEmpty == false ? toolCall.reason! : "Failed"
                 traceEvents.append(traceEvent(kind: "failed", title: "Final output", body: message, status: "failed", step: step))
                 return .init(status: .failed, message: message, traceEvents: traceEvents)
+            case .recognizeScreenshotText:
+                onStatus("Reading")
+                let result = await recognizeScreenshotTextTool(
+                    toolCall,
+                    observation: observation,
+                    screenshotOCRTextByID: &screenshotOCRTextByID
+                )
+                if Task.isCancelled || result.status == .cancelled {
+                    return cancelledResult(traceEvents: traceEvents, step: step)
+                }
+                priorResults.append(outcome(
+                    step: step,
+                    toolCall: toolCall,
+                    result: result,
+                    message: result.message,
+                    observation: observation,
+                    delta: nil
+                ))
+                traceEvents.append(traceEvent(
+                    kind: "tool_result",
+                    title: resultStatusTitle(for: toolCall, result: result) ?? "Tool result",
+                    body: result.message,
+                    status: "\(result.status)",
+                    step: step,
+                    debugPayload: encodedDebugPayload(TraceToolResultPayload(result))
+                ))
+                if result.status == .failed || result.status == .unsupported {
+                    return .init(status: .failed, message: result.message, traceEvents: traceEvents)
+                }
+                continue
             case .getAppState, .getWindowState:
                 onStatus("Observing screen")
                 let beforeObservation = observation
@@ -385,15 +417,30 @@ final class ComputerUsePlannerRuntime {
         if let cached = screenshotOCRTextByID[screenshot.screenshotID] {
             return ComputerUseWindowState(observation: observation, screenshotOCRText: cached)
         }
+        return ComputerUseWindowState(observation: observation)
+    }
+
+    private func recognizeScreenshotTextTool(
+        _ toolCall: ComputerUseToolCall,
+        observation: ComputerUseObservation,
+        screenshotOCRTextByID: inout [String: String]
+    ) async -> ComputerUseExecutionResult {
+        guard let screenshot = observation.screenshot else {
+            return .failed("No current screenshot for OCR. Call get_window_state with screenshot first.")
+        }
+        guard toolCall.screenshotID == screenshot.screenshotID else {
+            let requested = toolCall.screenshotID ?? ""
+            return .failed("Stale screenshot_id \(requested); latest screenshot is \(screenshot.screenshotID). Call recognize_screenshot_text with the latest screenshot_id.")
+        }
+        if let cached = screenshotOCRTextByID[screenshot.screenshotID] {
+            return .executed(cached.isEmpty ? "OCR found no text." : "OCR text:\n\(cached)")
+        }
         guard let recognized = await recognizeScreenshotText(screenshot) else {
-            return ComputerUseWindowState(observation: observation)
+            return .executed("OCR found no text.")
         }
         let bounded = Self.boundedScreenshotOCRText(recognized)
-        guard !bounded.isEmpty else {
-            return ComputerUseWindowState(observation: observation)
-        }
         screenshotOCRTextByID[screenshot.screenshotID] = bounded
-        return ComputerUseWindowState(observation: observation, screenshotOCRText: bounded)
+        return .executed(bounded.isEmpty ? "OCR found no text." : "OCR text:\n\(bounded)")
     }
 
     private static func boundedScreenshotOCRText(_ text: String) -> String {
@@ -663,17 +710,35 @@ final class ComputerUsePlannerRuntime {
         switch tool {
         case .moveCursor, .click, .clickElement, .clickPoint, .focusElement, .activateFocused, .performSecondaryAction, .drag, .pressKey, .hotkey, .typeText, .pasteText, .setValue, .scroll, .navigateURL, .navigateActiveBrowserTab, .openNewBrowserTab, .activateBrowserTab:
             return true
-        case .listApps, .launchApp, .listWindows, .getAppState, .getWindowState, .listBrowserTabs, .pageGetText, .pageQueryDOM, .finish, .fail:
+        case .listApps, .launchApp, .listWindows, .getAppState, .getWindowState, .recognizeScreenshotText, .listBrowserTabs, .pageGetText, .pageQueryDOM, .finish, .fail:
             return false
         }
     }
 
     private func target(from toolCall: ComputerUseToolCall, fallback: ComputerUseObservationTarget?) -> ComputerUseObservationTarget? {
         if !toolCall.canonicalBundleID.isEmpty {
-            return ComputerUseObservationTarget(appName: toolCall.appName, bundleID: toolCall.canonicalBundleID)
+            return ComputerUseObservationTarget(
+                appName: toolCall.appName,
+                bundleID: toolCall.canonicalBundleID,
+                processID: toolCall.processID,
+                windowID: toolCall.windowID
+            )
         }
         if let appName = toolCall.appName?.trimmingCharacters(in: .whitespacesAndNewlines), !appName.isEmpty {
-            return ComputerUseObservationTarget(appName: appName, bundleID: nil)
+            return ComputerUseObservationTarget(
+                appName: appName,
+                bundleID: nil,
+                processID: toolCall.processID,
+                windowID: toolCall.windowID
+            )
+        }
+        if toolCall.processID != nil || toolCall.windowID != nil {
+            return ComputerUseObservationTarget(
+                appName: fallback?.appName,
+                bundleID: fallback?.bundleID,
+                processID: toolCall.processID ?? fallback?.processID,
+                windowID: toolCall.windowID ?? fallback?.windowID
+            )
         }
         switch toolCall.tool {
         case .moveCursor, .click, .clickElement, .clickPoint, .focusElement, .activateFocused, .performSecondaryAction, .setValue, .typeText, .pasteText, .pressKey, .hotkey, .scroll, .drag:
@@ -803,7 +868,7 @@ final class ComputerUsePlannerRuntime {
             return "Navigating"
         case .activateBrowserTab:
             return "Switching tab"
-        case .listApps, .listWindows, .listBrowserTabs, .pageGetText, .pageQueryDOM:
+        case .listApps, .listWindows, .listBrowserTabs, .pageGetText, .pageQueryDOM, .recognizeScreenshotText:
             return "Reading"
         case .getAppState, .getWindowState:
             return "Observing"

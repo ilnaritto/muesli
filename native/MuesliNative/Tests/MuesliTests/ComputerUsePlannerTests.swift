@@ -20,6 +20,7 @@ struct ComputerUseToolRegistryTests {
         let docs = ComputerUseToolRegistry.promptDocumentation()
         #expect(docs.contains("Tool: get_app_state"))
         #expect(docs.contains("Tool: get_window_state"))
+        #expect(docs.contains("Tool: recognize_screenshot_text"))
         #expect(docs.contains("Tool: click_element"))
         #expect(docs.contains("Tool: click_point"))
         #expect(docs.contains("primary pointer action for rich browser/web/canvas UIs"))
@@ -65,6 +66,8 @@ struct ComputerUseToolRegistryTests {
         #expect(instructions.contains("The screenshot is the source of truth"))
         #expect(instructions.contains("Prefer visual pointer/keyboard primitives for rich web UIs"))
         #expect(instructions.contains("AX candidates, focused_element, DOM text, and OCR are hints"))
+        #expect(instructions.contains("Use recognize_screenshot_text"))
+        #expect(instructions.contains("OCR is optional and model-directed"))
         #expect(instructions.contains("Do not use fail only because a browser DOM/page tool failed"))
         #expect(instructions.contains("latest_window_state.process_id"))
         #expect(instructions.contains("process_id/window_id"))
@@ -861,6 +864,45 @@ struct ComputerUsePlannerRuntimeTests {
         #expect(observedTargets[1]?.appName == "Notes")
     }
 
+    @Test("get window state preserves process and window target")
+    @MainActor
+    func getWindowStatePreservesProcessAndWindowTarget() async {
+        var observedTargets: [ComputerUseObservationTarget?] = []
+        let runtime = ComputerUsePlannerRuntime(
+            config: AppConfig(),
+            observe: { _, _, target in
+                observedTargets.append(target)
+                return Self.observation(
+                    appName: "Google Chrome",
+                    bundleID: "com.google.Chrome",
+                    windowTitle: target?.windowID == 88 ? "Target" : "Initial",
+                    screenshot: Self.screenshot()
+                )
+            },
+            plan: { request in
+                if request.step == 1 {
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(
+                        tool: .getWindowState,
+                        appBundleID: "com.google.Chrome",
+                        processID: 1234,
+                        windowID: 88
+                    ))
+                }
+                #expect(request.latestWindowState.windowTitle == "Target")
+                return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
+            },
+            execute: { _, _ in .executed("Got window state") }
+        )
+
+        let result = await runtime.run(command: "inspect target window")
+
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(observedTargets.count == 2)
+        #expect(observedTargets[1]?.bundleID == "com.google.Chrome")
+        #expect(observedTargets[1]?.processID == 1234)
+        #expect(observedTargets[1]?.windowID == 88)
+    }
+
     @Test("fails when planner mode is disabled")
     @MainActor
     func failsWhenPlannerModeDisabled() async {
@@ -1064,9 +1106,9 @@ struct ComputerUsePlannerRuntimeTests {
         #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
     }
 
-    @Test("runtime passes screenshot OCR text to planner as context")
+    @Test("runtime exposes screenshot OCR text after OCR tool")
     @MainActor
-    func runtimePassesScreenshotOCRTextToPlannerAsContext() async {
+    func runtimeExposesScreenshotOCRTextAfterOCRTool() async {
         var ocrCalls = 0
         let runtime = ComputerUsePlannerRuntime(
             config: AppConfig(),
@@ -1074,7 +1116,12 @@ struct ComputerUsePlannerRuntimeTests {
                 Self.observation(screenshot: Self.screenshot())
             },
             plan: { request in
+                if request.step == 1 {
+                    #expect(request.latestWindowState.screenshotOCRText == nil)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .recognizeScreenshotText, screenshotID: "s1"))
+                }
                 #expect(request.latestWindowState.screenshotOCRText == "Sheet contains pasted task text")
+                #expect(request.priorOutcomes.last?.message.contains("Sheet contains pasted task text") == true)
                 return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
             },
             execute: { _, _ in .executed("unexpected") },
@@ -1265,6 +1312,7 @@ struct ComputerUsePlannerRuntimeTests {
     @Test("runtime trace stores compact debug payloads")
     @MainActor
     func runtimeTraceStoresCompactDebugPayloads() async {
+        var ocrCalls = 0
         let runtime = ComputerUsePlannerRuntime(
             config: AppConfig(),
             observe: { _, _, _ in
@@ -1280,7 +1328,10 @@ struct ComputerUsePlannerRuntimeTests {
                 ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
             },
             execute: { _, _ in .executed("unexpected") },
-            recognizeScreenshotText: { _ in "Video result OCR" }
+            recognizeScreenshotText: { _ in
+                ocrCalls += 1
+                return "Video result OCR"
+            }
         )
 
         let result = await runtime.run(command: "play a video")
@@ -1289,7 +1340,8 @@ struct ComputerUsePlannerRuntimeTests {
 
         #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
         #expect(planningPayload?.contains(#""latest_window_state""#) == true)
-        #expect(planningPayload?.contains("Video result OCR") == true)
+        #expect(planningPayload?.contains("Video result OCR") == false)
+        #expect(ocrCalls == 0)
         #expect(observationPayload?.contains(#""elements""#) == true)
         #expect(observationPayload?.contains("Video result") == true)
     }

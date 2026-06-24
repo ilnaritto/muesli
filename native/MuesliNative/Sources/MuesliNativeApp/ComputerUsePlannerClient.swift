@@ -33,12 +33,13 @@ enum ComputerUsePlannerClient {
 
     Rules:
     - Only use element_index or element_id values present in latest_window_state. Element references expire after each new get_app_state/get_window_state or refreshed state. They are snapshot addresses, not persistent focus handles.
-    - Treat latest_window_state.process_id as the executable target process when a tool accepts it. Treat latest_window_state.window_id as observation/trace context only unless you are calling get_window_state/get_app_state. If the active window may have changed, get a fresh state before acting.
+    - Treat latest_window_state.process_id as the executable target process when a tool accepts it. Use latest_window_state.window_id with get_window_state to refresh that specific window when possible. For mutating tools, window_id is trace context unless the tool says otherwise.
     - Never invent AppleScript, shell commands, code, URLs, or tools.
     - For app launch/navigation, use launch_app with the requested app name or app bundle id. Do not substitute another app because it is frontmost, visible, or present in examples.
     - After launch_app, Muesli will refresh the requested app's state automatically. If the next state is not the requested app, call get_window_state or get_app_state for that app before using fail.
-    - Use get_window_state as the canonical observe step once you have process_id/window_id for the target. Use get_app_state only when the current state is insufficient, appears to be for the wrong app, or you do not yet know the target window.
+    - Use get_window_state as the canonical observe step once you have process_id/window_id for the target. Include those IDs so Muesli can keep the refreshed snapshot on the intended process/window. Use get_app_state only when the current state is insufficient, appears to be for the wrong app, or you do not yet know the target window.
     - The screenshot is the source of truth for visual web and canvas UIs. AX candidates, focused_element, DOM text, and OCR are hints that help you choose actions, not proof that a semantic task succeeded.
+    - Use recognize_screenshot_text when visible text in the latest screenshot would materially help interpret the UI. OCR is optional and model-directed; do not call it on every step by default.
     - Prefer visual pointer/keyboard primitives for rich web UIs such as YouTube, Google Docs, Google Sheets, X/Twitter, and other browser apps: click_point, move_cursor, scroll, press_key, type_text, paste_text, and hotkey. Use click_point with screenshot_id for visible video results, buttons, menus, canvas editors, and visually obvious targets.
     - Use click_element/set_value/focus_element/activate_focused mainly for native macOS controls, dialogs, menus, standard text fields, or clearly exposed AX elements. Do not tab through or AX-activate generic web areas, action menus, or ambiguous links when the visible target can be clicked by screenshot coordinate.
     - Keyboard focus is state. latest_window_state.focused_element describes the control that currently receives keyboard input. press_key always sends a key to current focus and never accepts element_index or element_id.
@@ -46,7 +47,7 @@ enum ComputerUsePlannerClient {
     - Do not simulate focus by passing stale element fields to press_key. That schema is invalid. After Tab, Shift-Tab, arrow-key navigation, or a click that moves focus, use press_key directly to preserve the current focus.
     - For coordinate click/drag, use screenshot pixel coordinates from the current screenshot, not global screen coordinates.
     - Include screenshot_id from latest_window_state when using screenshot-coordinate tools.
-    - latest_window_state.screenshot_ocr_text may contain OCR extracted from the same screenshot. Treat it as imperfect visual evidence to help interpret the screenshot, not as a deterministic validation result. You still decide whether the visible UI satisfies the task.
+    - latest_window_state.screenshot_ocr_text appears only after you explicitly call recognize_screenshot_text for the current screenshot_id. Treat it as imperfect visual evidence to help interpret the screenshot, not as a deterministic validation result. You still decide whether the visible UI satisfies the task.
     - Use click_point for screenshot coordinates and click_element only for reliable AX candidates. Never use legacy click unless it appears in an old prior trace.
     - For new or separate browser tasks, prefer open_new_browser_tab and then navigate_active_browser_tab. Use list_browser_tabs and activate_browser_tab only when the user asks to continue, find, or reuse an existing tab.
     - Browser DOM/page tools are optional accelerators. Use page_get_text/page_query_dom when useful, but do not depend on them as the control path.
