@@ -296,10 +296,17 @@ enum ComputerUseToolExecutor {
             return .unsupported("Unsupported key \(command.key)")
         }
 
-        let processID: pid_t?
         switch targetProcessID(toolCall: toolCall, app: targetApp.app, element: nil) {
-        case .success(let resolvedProcessID):
-            processID = resolvedProcessID
+        case .success:
+            if let suppliedProcessID = toolCall.processID, suppliedProcessID > 0 {
+                let expectedProcessID = pid_t(suppliedProcessID)
+                guard let focusedProcessID = currentFocusedProcessID() else {
+                    return .failed("Could not validate process_id \(suppliedProcessID) against current keyboard focus. Refresh state before pressing keys.")
+                }
+                guard focusedProcessID == expectedProcessID else {
+                    return .failed("Stale process_id \(suppliedProcessID); focused element pid is \(focusedProcessID). Refresh state before pressing keys.")
+                }
+            }
         case .failure(let message):
             return .failed(message)
         }
@@ -308,8 +315,8 @@ enum ComputerUseToolExecutor {
         let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
         keyDown?.flags = flags
         keyUp?.flags = flags
-        postKeyEvent(keyDown, processID: processID)
-        postKeyEvent(keyUp, processID: processID)
+        postKeyEvent(keyDown, processID: nil)
+        postKeyEvent(keyUp, processID: nil)
         return .executed("Pressed key")
     }
 

@@ -5257,13 +5257,19 @@ final class MuesliController: NSObject {
         computerUseAudioSessionManager.stop()
     }
 
-    private func finishComputerUseAudioStop(wavURL stoppedWavURL: URL?, startedAt: Date) {
+    private func finishComputerUseAudioStop(
+        wavURL stoppedWavURL: URL?,
+        startedAt: Date,
+        preserveActiveSessionState: Bool = false
+    ) {
         markComputerUseLatency("stop_finished")
         guard let wavURL = stoppedWavURL else {
             fputs("[cua] stop without wav\n", stderr)
             finishComputerUseLatencyTrace("stop_without_wav")
-            setState(.idle)
-            meetingMonitor.resumeAfterCooldown()
+            if !preserveActiveSessionState {
+                setState(.idle)
+                meetingMonitor.resumeAfterCooldown()
+            }
             return
         }
         let duration = max(Date().timeIntervalSince(startedAt), 0)
@@ -5271,13 +5277,17 @@ final class MuesliController: NSObject {
             fputs("[cua] discarded short recording\n", stderr)
             try? FileManager.default.removeItem(at: wavURL)
             finishComputerUseLatencyTrace("short_recording")
-            setState(.idle)
-            meetingMonitor.resumeAfterCooldown()
+            if !preserveActiveSessionState {
+                setState(.idle)
+                meetingMonitor.resumeAfterCooldown()
+            }
             return
         }
 
-        indicator.setTranscribingTitle("Parsing command", config: config)
-        setState(.transcribing)
+        if !preserveActiveSessionState {
+            indicator.setTranscribingTitle("Parsing command", config: config)
+            setState(.transcribing)
+        }
         finishComputerUseLatencyTrace("ready_for_transcription")
         let task = Task { [weak self] in
             guard let self else { return }
@@ -5305,8 +5315,10 @@ final class MuesliController: NSObject {
                     fputs("[cua] empty transcript, skipping planner\n", stderr)
                     await MainActor.run {
                         self.computerUseCommandTask = nil
-                        self.setState(.idle)
-                        self.meetingMonitor.resumeAfterCooldown()
+                        if !preserveActiveSessionState {
+                            self.setState(.idle)
+                            self.meetingMonitor.resumeAfterCooldown()
+                        }
                     }
                     return
                 }
@@ -5326,16 +5338,20 @@ final class MuesliController: NSObject {
                 fputs("[cua] command parsing cancelled\n", stderr)
                 await MainActor.run {
                     self.computerUseCommandTask = nil
-                    self.setState(.idle)
-                    self.meetingMonitor.resumeAfterCooldown()
+                    if !preserveActiveSessionState {
+                        self.setState(.idle)
+                        self.meetingMonitor.resumeAfterCooldown()
+                    }
                 }
             } catch {
                 fputs("[cua] transcription failed: \(error)\n", stderr)
                 await MainActor.run {
                     self.computerUseCommandTask = nil
-                    self.setState(.idle)
-                    self.indicator.showWarning("CUA command failed", icon: "!")
-                    self.meetingMonitor.resumeAfterCooldown()
+                    if !preserveActiveSessionState {
+                        self.setState(.idle)
+                        self.indicator.showWarning("CUA command failed", icon: "!")
+                        self.meetingMonitor.resumeAfterCooldown()
+                    }
                 }
             }
         }
@@ -5855,19 +5871,19 @@ final class MuesliController: NSObject {
                 }
                 break
             }
-            guard computerUseAudioSessionManager.currentSessionID == nil else {
-                fputs("[cua] ignoring stopped event while a new CUA session is active\n", stderr)
-                if let wavURL {
-                    fputs("[cua] cleaned up stale wav: \(wavURL.lastPathComponent)\n", stderr)
-                    try? FileManager.default.removeItem(at: wavURL)
-                }
-                break
+            let preserveActiveSessionState = computerUseAudioSessionManager.currentSessionID != nil
+            if preserveActiveSessionState {
+                fputs("[cua] processing stopped wav while a new CUA session is active\n", stderr)
             }
             let startedAt = pendingComputerUseStopStartedAt ?? computerUseCommandStartedAt ?? Date()
             pendingComputerUseStopSessionID = nil
             pendingComputerUseStopStartedAt = nil
             computerUseCommandPreparedAt = nil
-            finishComputerUseAudioStop(wavURL: wavURL, startedAt: startedAt)
+            finishComputerUseAudioStop(
+                wavURL: wavURL,
+                startedAt: startedAt,
+                preserveActiveSessionState: preserveActiveSessionState
+            )
         case .audioRestored:
             break
         case .cancelled:

@@ -85,8 +85,8 @@ struct ComputerUseToolRegistryTests {
         #expect(instructions.contains("Use finish only when the user's command is complete and successful"))
     }
 
-    @Test("text and key tool schemas expose target identity")
-    func textAndKeyToolSchemasExposeTargetIdentity() {
+    @Test("mutating tool schemas expose process identity without window guard")
+    func mutatingToolSchemasExposeProcessIdentityWithoutWindowGuard() {
         let tools = ComputerUseToolRegistry.nativeToolDefinitions()
 
         for name in ["type_text", "paste_text", "press_key", "focus_element", "activate_focused"] {
@@ -95,13 +95,20 @@ struct ComputerUseToolRegistryTests {
             let properties = parameters?["properties"] as? [String: Any]
 
             #expect(properties?["process_id"] != nil)
-            #expect(properties?["window_id"] != nil)
+            #expect(properties?["window_id"] == nil)
         }
+
+        let getWindowState = tools.first { ($0["name"] as? String) == "get_window_state" }
+        let getWindowStateParameters = getWindowState?["parameters"] as? [String: Any]
+        let getWindowStateProperties = getWindowStateParameters?["properties"] as? [String: Any]
+        #expect(getWindowStateProperties?["process_id"] != nil)
+        #expect(getWindowStateProperties?["window_id"] != nil)
 
         let pressKey = tools.first { ($0["name"] as? String) == "press_key" }
         let pressKeyParameters = pressKey?["parameters"] as? [String: Any]
         let pressKeyProperties = pressKeyParameters?["properties"] as? [String: Any]
-        #expect((pressKey?["description"] as? String)?.contains("never accepts element_index or element_id") == true)
+        #expect((pressKey?["description"] as? String)?.contains("never accepts element_index, element_id, or window_id") == true)
+        #expect((pressKey?["description"] as? String)?.contains("refuses stale process_id") == true)
         #expect(pressKeyProperties?["element_index"] == nil)
         #expect(pressKeyProperties?["element_id"] == nil)
     }
@@ -1078,6 +1085,52 @@ struct ComputerUsePlannerRuntimeTests {
         #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
     }
 
+    @Test("pre-existing visible text does not verify a text action")
+    @MainActor
+    func preExistingVisibleTextDoesNotVerifyTextAction() async {
+        let requestedText = "hello from computer use"
+        let runtime = ComputerUsePlannerRuntime(
+            config: AppConfig(),
+            observe: { _, _, _ in
+                Self.observation(
+                    screenshot: Self.screenshot(),
+                    elementValue: requestedText
+                )
+            },
+            plan: { request in
+                switch request.step {
+                case 1:
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(
+                        tool: .pasteText,
+                        text: requestedText
+                    ))
+                case 2:
+                    let outcome = request.priorOutcomes.last
+                    #expect(outcome?.verificationStatus == .unchanged)
+                    #expect(outcome?.message.contains("AX did not expose newly confirmed requested text") == true)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
+                case 3:
+                    #expect(request.priorOutcomes.last?.status == "unverified_text")
+                    #expect(request.priorOutcomes.last?.message.contains("Cannot finish yet") == true)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .recognizeScreenshotText, screenshotID: "s1"))
+                case 4:
+                    #expect(request.latestWindowState.screenshotOCRText == requestedText)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
+                default:
+                    #expect(request.priorOutcomes.last?.status == "unverified_text")
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Text insertion was not confirmed."))
+                }
+            },
+            execute: { _, _ in .executed("Pasted text") },
+            recognizeScreenshotText: { _ in requestedText }
+        )
+
+        let result = await runtime.run(command: "write hello")
+
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.failed)
+        #expect(result.message == "Text insertion was not confirmed.")
+    }
+
     @Test("text action leaves screenshot completion decision to planner")
     @MainActor
     func textActionLeavesScreenshotCompletionDecisionToPlanner() async {
@@ -1103,7 +1156,7 @@ struct ComputerUsePlannerRuntimeTests {
                 case 2:
                     let outcome = request.priorOutcomes.last
                     #expect(outcome?.verificationStatus == .unchanged)
-                    #expect(outcome?.message.contains("AX did not expose the requested text") == true)
+                    #expect(outcome?.message.contains("AX did not expose newly confirmed requested text") == true)
                     #expect(outcome?.message.contains("Inspect the latest screenshot") == true)
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
                 case 3:
@@ -1196,7 +1249,7 @@ struct ComputerUsePlannerRuntimeTests {
                 case 2:
                     let outcome = request.priorOutcomes.last
                     #expect(outcome?.verificationStatus == .unknown)
-                    #expect(outcome?.message.contains("AX did not expose the requested text") == true)
+                    #expect(outcome?.message.contains("AX did not expose newly confirmed requested text") == true)
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
                 default:
                     #expect(request.priorOutcomes.last?.status == "unverified_text")
@@ -1426,7 +1479,8 @@ struct ComputerUsePlannerRuntimeTests {
                 }
                 #expect(request.priorOutcomes.last?.tool == .typeText)
                 #expect(request.priorOutcomes.last?.status == "failed")
-                #expect(request.priorOutcomes.last?.message.contains("process_id/window_id plus element_index") == true)
+                #expect(request.priorOutcomes.last?.message.contains("process_id plus element_index") == true)
+                #expect(request.priorOutcomes.last?.message.contains("Use get_window_state with window_id only to refresh") == true)
                 #expect(request.priorOutcomes.last?.message.contains("Prefer type_text for browser editors") == true)
                 return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "focused fallback available"))
             },
@@ -1468,7 +1522,8 @@ struct ComputerUsePlannerRuntimeTests {
                 }
                 #expect(request.priorOutcomes.last?.tool == .pasteText)
                 #expect(request.priorOutcomes.last?.status == "failed")
-                #expect(request.priorOutcomes.last?.message.contains("process_id/window_id plus element_index") == true)
+                #expect(request.priorOutcomes.last?.message.contains("process_id plus element_index") == true)
+                #expect(request.priorOutcomes.last?.message.contains("Use get_window_state with window_id only to refresh") == true)
                 #expect(request.priorOutcomes.last?.message.contains("paste_text for Apple Notes") == true)
                 return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "focused fallback available"))
             },

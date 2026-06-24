@@ -428,7 +428,20 @@ enum ComputerUseObservationCapture {
         let focusedElementSnapshot = focusedElementSnapshot(requiredPID: app.processIdentifier)
         let focusedElement = focusedElementSnapshot?.observation
         let selectedText = selectedTextObservation(from: focusedElementSnapshot?.element)
-        let appInstructions = ComputerUseAppInstructionProvider.instructions(for: bundleID, appName: appName)
+        let baseAppInstructions = ComputerUseAppInstructionProvider.instructions(for: bundleID, appName: appName)
+        let requestedWindowFallbackNote: String? = if let requestedWindowID = target?.windowID, matchedTargetWindow == nil {
+            if let windowID {
+                "Requested window_id \(requestedWindowID) could not be matched; this state fell back to focused window_id \(windowID). Re-query list_windows or get_window_state before mutating if the target window is ambiguous."
+            } else {
+                "Requested window_id \(requestedWindowID) could not be matched; this state fell back to the focused window without a stable window_id. Re-query list_windows or get_window_state before mutating if the target window is ambiguous."
+            }
+        } else {
+            nil
+        }
+        let appInstructions = [baseAppInstructions, requestedWindowFallbackNote]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
 
         var candidates: [ComputerUseElementCandidate] = []
         var visited = Set<AXUIElement>()

@@ -45,6 +45,7 @@ final class ComputerUsePlannerRuntime {
         let sample: String
         let toolSummary: String
         let step: Int
+        let sampleWasVisibleBefore: Bool
     }
 
     init(
@@ -389,6 +390,7 @@ final class ComputerUsePlannerRuntime {
                         &pendingUnverifiedTextWrite,
                         toolCall: toolCall,
                         delta: delta,
+                        before: beforeObservation,
                         step: step
                     )
                 case .needsConfirmation:
@@ -575,7 +577,7 @@ final class ComputerUsePlannerRuntime {
         }
 
         if isTextEntryTool(toolCall.tool), let text = toolCall.text {
-            if let source = requestedTextObservationSource(after, text: text) {
+            if let source = requestedTextObservationSource(before: before, after: after, text: text) {
                 return ComputerUseStateDelta(
                     status: .changed,
                     summary: "Observed requested text in \(source) after \(toolCall.summary).",
@@ -586,9 +588,9 @@ final class ComputerUsePlannerRuntime {
             let status: ComputerUseVerificationStatus = observationSignature(before) == observationSignature(after) ? .unchanged : .unknown
             let summary: String
             if status == .unchanged {
-                summary = "\(toolCall.summary) executed but AX did not expose the requested text and no AX state change was observed. Inspect the latest screenshot: finish if the text is visibly present, otherwise refocus the editable target or use a different insertion primitive."
+                summary = "\(toolCall.summary) executed but AX did not expose newly confirmed requested text and no AX state change was observed. Inspect the latest screenshot: finish if the text is visibly present, otherwise refocus the editable target or use a different insertion primitive."
             } else {
-                summary = "\(toolCall.summary) changed UI state, but AX did not expose the requested text. Inspect the latest screenshot: finish if the text is visibly present, otherwise refocus or use another insertion primitive."
+                summary = "\(toolCall.summary) changed UI state, but AX did not expose newly confirmed requested text. Inspect the latest screenshot: finish if the text is visibly present, otherwise refocus or use another insertion primitive."
             }
             return ComputerUseStateDelta(
                 status: status,
@@ -621,9 +623,14 @@ final class ComputerUsePlannerRuntime {
         tool == .typeText || tool == .pasteText
     }
 
-    private func requestedTextObservationSource(_ observation: ComputerUseObservation, text: String) -> String? {
+    private func requestedTextObservationSource(
+        before: ComputerUseObservation,
+        after: ComputerUseObservation,
+        text: String
+    ) -> String? {
         guard let sample = textVerificationSample(text) else { return nil }
-        if observationTextCorpus(observation).contains(sample) {
+        if !observationTextCorpus(before).contains(sample),
+           observationTextCorpus(after).contains(sample) {
             return "focused/visible AX text"
         }
         return nil
@@ -633,6 +640,7 @@ final class ComputerUsePlannerRuntime {
         _ pending: inout PendingUnverifiedTextWrite?,
         toolCall: ComputerUseToolCall,
         delta: ComputerUseStateDelta?,
+        before: ComputerUseObservation,
         step: Int
     ) {
         guard isTextEntryTool(toolCall.tool), let text = toolCall.text else { return }
@@ -647,7 +655,8 @@ final class ComputerUsePlannerRuntime {
         pending = PendingUnverifiedTextWrite(
             sample: sample,
             toolSummary: toolCall.summary,
-            step: step
+            step: step,
+            sampleWasVisibleBefore: observationTextCorpus(before).contains(sample)
         )
     }
 
@@ -656,6 +665,9 @@ final class ComputerUsePlannerRuntime {
         observation: ComputerUseObservation,
         screenshotOCRTextByID: [String: String]
     ) -> String? {
+        if pending.sampleWasVisibleBefore {
+            return nil
+        }
         if observationTextCorpus(observation).contains(pending.sample) {
             return "focused/visible AX text"
         }
@@ -1024,7 +1036,7 @@ final class ComputerUsePlannerRuntime {
             return "\(message). Continue with get_window_state and visual screenshot actions. For browser pages, prefer click_point on visible targets, plus press_key/hotkey, type_text/paste_text, and scroll. Treat AX candidates as optional hints; avoid repeated focus_element/activate_focused cycles on generic web areas, action menus, or search results. Do not retry browser page tools unless the user grants Chrome Apple Events JavaScript permission."
         }
         if (toolCall.tool == .typeText || toolCall.tool == .pasteText), isTextFocusFailure(message) {
-            return "\(message). Continue with get_window_state/get_app_state, then retry text entry with process_id/window_id plus element_index or element_id for the editable field, web editor, note body, or document editing area. Prefer type_text for browser editors and paste_text for Apple Notes/native rich text. Do not repeat text entry until the target changes."
+            return "\(message). Continue with get_window_state/get_app_state, then retry text entry with process_id plus element_index or element_id for the editable field, web editor, note body, or document editing area. Use get_window_state with window_id only to refresh the intended target before mutating. Prefer type_text for browser editors and paste_text for Apple Notes/native rich text. Do not repeat text entry until the target changes."
         }
         return nil
     }
