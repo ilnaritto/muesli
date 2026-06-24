@@ -881,8 +881,7 @@ struct DictationCorrectionSnapshotStabilizer {
     }
 }
 
-@MainActor
-private final class EnglishWordRecognizer {
+private actor EnglishWordRecognizer {
     private let maxEntries: Int
     private let spellChecker = NSSpellChecker()
     private var cache: [String: Bool] = [:]
@@ -892,6 +891,9 @@ private final class EnglishWordRecognizer {
         self.maxEntries = maxEntries
     }
 
+    // NSSpellChecker.checkSpelling is synchronous and can do noticeable first-run
+    // work on cache misses. Keep it off the MainActor, but serialize access here
+    // so the checker instance and LRU cache are not touched concurrently.
     func recognizedWords(from candidates: Set<String>) -> Set<String> {
         guard !candidates.isEmpty else { return [] }
 
@@ -947,7 +949,7 @@ final class DictationCorrectionMonitor {
     nonisolated private static let maxCandidateCharacters = 2_000
     nonisolated private static let maxEnglishWordRecognitionCandidates = 128
     nonisolated private static let maxEnglishWordRecognitionCacheEntries = 5_000
-    private static let englishWordRecognizer = EnglishWordRecognizer(maxEntries: maxEnglishWordRecognitionCacheEntries)
+    nonisolated private static let englishWordRecognizer = EnglishWordRecognizer(maxEntries: maxEnglishWordRecognitionCacheEntries)
 
     private var task: Task<Void, Never>?
 
@@ -1003,7 +1005,7 @@ final class DictationCorrectionMonitor {
                     Self.log("poll=\(pollCount) stableSnapshots=\(stableSnapshots.count)")
                 }
                 for stableSnapshot in stableSnapshots {
-                    let recognizedEnglishWords = Self.englishWordRecognizer.recognizedWords(
+                    let recognizedEnglishWords = await Self.englishWordRecognizer.recognizedWords(
                         from: Self.englishWordCandidates(originalText: originalText, editedText: stableSnapshot)
                     )
                     if Task.isCancelled { return }
