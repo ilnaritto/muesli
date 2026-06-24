@@ -2230,14 +2230,11 @@ final class MuesliController: NSObject {
 
     @discardableResult
     func requestScreenContextEnable() -> Bool {
-        guard CGPreflightScreenCaptureAccess() else {
+        guard AXIsProcessTrusted() else {
             updateConfig { $0.enableScreenContext = false }
-            let granted = CGRequestScreenCaptureAccess()
-            let hasAccess = granted || CGPreflightScreenCaptureAccess()
-            if hasAccess {
-                updateConfig { $0.enableScreenContext = true }
-            }
-            return hasAccess
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+            AXIsProcessTrustedWithOptions(options)
+            return false
         }
 
         updateConfig { $0.enableScreenContext = true }
@@ -5959,7 +5956,7 @@ final class MuesliController: NSObject {
         let traceID = dictationLatencyTraceID
         markDictationLatency("context_capture_enqueue")
         DispatchQueue.global(qos: .utility).async { [weak self, traceID] in
-            guard CGPreflightScreenCaptureAccess() else { return }
+            guard AXIsProcessTrusted() else { return }
             let context = DictationContextCapture.capture()
             DispatchQueue.main.async { [weak self, traceID] in
                 guard let self,

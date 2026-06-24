@@ -270,10 +270,13 @@ struct SettingsView: View {
     ]
 
     private var screenContextDescription: String {
-        if screenRecordingGranted {
-            return "Adds nearby app text and meeting OCR context. Processed on-device."
+        if !accessibilityGranted {
+            return "Requires Accessibility. Adds nearby app text for post-processing."
         }
-        return "Requires Screen Recording. Adds nearby app text and meeting OCR context."
+        if !screenRecordingGranted {
+            return "Adds nearby app text for post-processing. Screen Recording enables OCR context."
+        }
+        return "Adds nearby app text and OCR context. Processed on-device."
     }
 
     @ViewBuilder
@@ -1432,7 +1435,7 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func screenContextControl(width: CGFloat? = nil) -> some View {
-        if screenRecordingGranted {
+        if accessibilityGranted {
             settingsSwitch(isOn: appState.config.enableScreenContext) { newValue in
                 handleScreenContextToggle(newValue)
             }
@@ -1461,18 +1464,17 @@ struct SettingsView: View {
             return false
         }
 
-        guard CGPreflightScreenCaptureAccess() else {
+        guard accessibilityGranted else {
             pendingScreenContextEnable = true
             pendingScreenContextRequestedAt = Date().timeIntervalSince1970
             let granted = controller.requestScreenContextEnable()
-            screenRecordingGranted = CGPreflightScreenCaptureAccess()
-            if granted || screenRecordingGranted {
+            accessibilityGranted = AXIsProcessTrusted()
+            if granted || accessibilityGranted {
                 clearPendingScreenContextEnable()
             }
-            return granted || screenRecordingGranted
+            return granted || accessibilityGranted
         }
 
-        screenRecordingGranted = true
         clearPendingScreenContextEnable()
         return controller.requestScreenContextEnable()
     }
@@ -1507,14 +1509,14 @@ struct SettingsView: View {
         if refreshLaunchAtLogin {
             controller.refreshLaunchAtLoginState()
         }
-        if screenRecordingGranted && pendingScreenContextEnable {
+        if accessibilityGranted && pendingScreenContextEnable {
             clearPendingScreenContextEnable()
             controller.updateConfig { $0.enableScreenContext = true }
         }
-        if !screenRecordingGranted && isPendingScreenContextGrantExpired {
+        if !accessibilityGranted && isPendingScreenContextGrantExpired {
             clearPendingScreenContextEnable()
         }
-        if !screenRecordingGranted && appState.config.enableScreenContext {
+        if !accessibilityGranted && appState.config.enableScreenContext {
             clearPendingScreenContextEnable()
             controller.updateConfig { $0.enableScreenContext = false }
         }
