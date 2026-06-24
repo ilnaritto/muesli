@@ -812,6 +812,7 @@ enum ComputerUseToolExecutor {
     }
 
     private static func focusElement(_ element: AXUIElement, label: String?) async -> ElementFocusResult {
+        let targetProcessID = processID(of: element)
         _ = AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, true as CFTypeRef)
         if let rect = rect(of: element) {
             ComputerUseCursorOverlay.shared.show(at: CGPoint(x: rect.midX, y: rect.midY), label: label)
@@ -823,6 +824,16 @@ enum ComputerUseToolExecutor {
             return .cancelled
         } catch {
             return .failure(error.localizedDescription)
+        }
+        guard let targetProcessID else {
+            return .failure("Could not validate focused element process after focus attempt.")
+        }
+        guard let focusedElement = focusedUIElement(requiredApp: nil),
+              let focusedProcessID = processID(of: focusedElement) else {
+            return .failure("Focus did not move to an accessible element after focus attempt.")
+        }
+        guard focusedProcessID == targetProcessID else {
+            return .failure("Focus moved to process \(focusedProcessID), not intended process \(targetProcessID). Refresh state before typing.")
         }
         return .success
     }

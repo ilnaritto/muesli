@@ -279,6 +279,7 @@ final class MuesliController: NSObject {
     private var pendingComputerUseStopStartedAt: Date?
     private var pendingComputerUseStopSessionID: UUID?
     private var computerUseCommandTask: Task<Void, Never>?
+    private var computerUseCommandTaskID: UUID?
     private var computerUseLatencyTraceID: UUID?
     private var computerUseLatencyTraceStartedAt: Date?
     private var computerUseFloatingStatusWorkItem: DispatchWorkItem?
@@ -662,6 +663,7 @@ final class MuesliController: NSObject {
         meetingRecordingHotkeyMonitor.stop()
         computerUseCommandTask?.cancel()
         computerUseCommandTask = nil
+        computerUseCommandTaskID = nil
         calendarMonitor.stop()
         calendarCheckTimer?.invalidate()
         calendarCheckTimer = nil
@@ -5231,6 +5233,7 @@ final class MuesliController: NSObject {
         }
         computerUseCommandTask?.cancel()
         computerUseCommandTask = nil
+        computerUseCommandTaskID = nil
         computerUseAudioSessionManager.cancel(reason: "cua-user-cancel")
         computerUseCommandStartedAt = nil
         computerUseCommandPreparedAt = nil
@@ -5289,6 +5292,8 @@ final class MuesliController: NSObject {
             setState(.transcribing)
         }
         finishComputerUseLatencyTrace("ready_for_transcription")
+        let commandTaskID = UUID()
+        let allowSharedStateUpdates = !preserveActiveSessionState
         let task = Task { [weak self] in
             guard let self else { return }
             defer {
@@ -5314,8 +5319,8 @@ final class MuesliController: NSObject {
                 guard !text.isEmpty else {
                     fputs("[cua] empty transcript, skipping planner\n", stderr)
                     await MainActor.run {
-                        self.computerUseCommandTask = nil
-                        if !preserveActiveSessionState {
+                        self.clearComputerUseCommandTask(id: commandTaskID)
+                        if allowSharedStateUpdates {
                             self.setState(.idle)
                             self.meetingMonitor.resumeAfterCooldown()
                         }
@@ -5333,12 +5338,25 @@ final class MuesliController: NSObject {
                 await MainActor.run {
                     self.scheduleICloudSyncAfterLocalChange()
                 }
-                await self.handleComputerUseCommand(transcript: text, dictationID: dictationID)
+                guard allowSharedStateUpdates else {
+                    await MainActor.run {
+                        TelemetryDeck.signal("computer_use.command_superseded", parameters: [
+                            "planner_enabled": self.config.enableComputerUsePlanner ? "true" : "false",
+                        ])
+                    }
+                    return
+                }
+                await self.handleComputerUseCommand(
+                    transcript: text,
+                    dictationID: dictationID,
+                    commandTaskID: commandTaskID,
+                    allowSharedStateUpdates: allowSharedStateUpdates
+                )
             } catch is CancellationError {
                 fputs("[cua] command parsing cancelled\n", stderr)
                 await MainActor.run {
-                    self.computerUseCommandTask = nil
-                    if !preserveActiveSessionState {
+                    self.clearComputerUseCommandTask(id: commandTaskID)
+                    if allowSharedStateUpdates {
                         self.setState(.idle)
                         self.meetingMonitor.resumeAfterCooldown()
                     }
@@ -5346,8 +5364,8 @@ final class MuesliController: NSObject {
             } catch {
                 fputs("[cua] transcription failed: \(error)\n", stderr)
                 await MainActor.run {
-                    self.computerUseCommandTask = nil
-                    if !preserveActiveSessionState {
+                    self.clearComputerUseCommandTask(id: commandTaskID)
+                    if allowSharedStateUpdates {
                         self.setState(.idle)
                         self.indicator.showWarning("CUA command failed", icon: "!")
                         self.meetingMonitor.resumeAfterCooldown()
@@ -5355,8 +5373,11 @@ final class MuesliController: NSObject {
                 }
             }
         }
-        computerUseCommandTask?.cancel()
-        computerUseCommandTask = task
+        if allowSharedStateUpdates {
+            computerUseCommandTask?.cancel()
+            computerUseCommandTask = task
+            computerUseCommandTaskID = commandTaskID
+        }
     }
 
     private var canPrepareComputerUseCommand: Bool {
@@ -5378,35 +5399,56 @@ final class MuesliController: NSObject {
     }
 
     @MainActor
-    private func handleComputerUseCommand(transcript: String, dictationID: Int64?) async {
-        resetComputerUseFloatingStatus()
-        presentComputerUseTranscript(transcript)
-        setState(.transcribing)
+    private func handleComputerUseCommand(
+        transcript: String,
+        dictationID: Int64?,
+        commandTaskID: UUID,
+        allowSharedStateUpdates: Bool
+    ) async {
+        if allowSharedStateUpdates {
+            resetComputerUseFloatingStatus()
+            presentComputerUseTranscript(transcript)
+            setState(.transcribing)
+        }
         let runtime = ComputerUsePlannerRuntime(config: config) { [weak self] status in
             guard let self else { return }
+            guard allowSharedStateUpdates else { return }
             self.presentComputerUseFloatingStatus(status)
         }
 
         let result = await runtime.run(command: transcript)
-        indicator.hideComputerUseCursor()
+        if allowSharedStateUpdates {
+            indicator.hideComputerUseCursor()
+        }
         if result.status == .cancelled {
             persistComputerUseTrace(result, dictationID: dictationID)
-            computerUseCommandTask = nil
-            setState(.idle)
-            meetingMonitor.resumeAfterCooldown()
+            clearComputerUseCommandTask(id: commandTaskID)
+            if allowSharedStateUpdates {
+                setState(.idle)
+                meetingMonitor.resumeAfterCooldown()
+            }
             TelemetryDeck.signal("computer_use.command_finished", parameters: [
                 "status": "\(result.status)",
             ])
             return
         }
         persistComputerUseTrace(result, dictationID: dictationID)
-        computerUseCommandTask = nil
-        await waitForComputerUseFloatingStatusDwell()
-        presentComputerUseRuntimeResult(result)
-        meetingMonitor.resumeAfterCooldown()
+        clearComputerUseCommandTask(id: commandTaskID)
+        if allowSharedStateUpdates {
+            await waitForComputerUseFloatingStatusDwell()
+            presentComputerUseRuntimeResult(result)
+            meetingMonitor.resumeAfterCooldown()
+        }
         TelemetryDeck.signal("computer_use.command_finished", parameters: [
             "status": "\(result.status)",
         ])
+    }
+
+    @MainActor
+    private func clearComputerUseCommandTask(id commandTaskID: UUID) {
+        guard self.computerUseCommandTaskID == commandTaskID else { return }
+        computerUseCommandTask = nil
+        self.computerUseCommandTaskID = nil
     }
 
     @MainActor
@@ -5843,7 +5885,15 @@ final class MuesliController: NSObject {
         case .acquiringAudio:
             markComputerUseLatency("acquiring_audio")
             setState(.preparing)
-        case .streamActive(_, let capturedAt):
+        case .streamActive(let eventSessionID, let capturedAt):
+            guard computerUseAudioSessionManager.currentSessionID == eventSessionID else {
+                fputs("[cua] ignoring stale streamActive event\n", stderr)
+                break
+            }
+            guard dictationState == .preparing || dictationState == .recording else {
+                fputs("[cua] ignoring streamActive while state is \(dictationState)\n", stderr)
+                break
+            }
             markComputerUseLatency("ui_stream_active_received", at: capturedAt)
             if computerUseCommandStartedAt == nil {
                 computerUseCommandStartedAt = capturedAt
@@ -5879,6 +5929,9 @@ final class MuesliController: NSObject {
             pendingComputerUseStopSessionID = nil
             pendingComputerUseStopStartedAt = nil
             computerUseCommandPreparedAt = nil
+            if !preserveActiveSessionState {
+                computerUseCommandStartedAt = nil
+            }
             finishComputerUseAudioStop(
                 wavURL: wavURL,
                 startedAt: startedAt,
