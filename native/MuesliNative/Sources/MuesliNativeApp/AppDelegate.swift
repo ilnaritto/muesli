@@ -1,6 +1,7 @@
 import AppKit
 import CloudKit
 import Foundation
+import Security
 import Sparkle
 import TelemetryDeck
 import MuesliCore
@@ -37,7 +38,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             self.controller = controller
             controller.start()
-            NSApplication.shared.registerForRemoteNotifications()
+            if Self.hasRemoteNotificationEntitlement {
+                NSApplication.shared.registerForRemoteNotifications()
+            }
         } catch {
             let alert = NSAlert()
             alert.messageText = "\(AppIdentity.displayName) failed to start"
@@ -81,6 +84,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return false
         }
         return !feedURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private static var hasRemoteNotificationEntitlement: Bool {
+        guard let task = SecTaskCreateFromSelf(nil) else {
+            return false
+        }
+        return SecTaskCopyValueForEntitlement(task, "aps-environment" as CFString, nil) != nil
+            || SecTaskCopyValueForEntitlement(task, "com.apple.developer.aps-environment" as CFString, nil) != nil
     }
 
     @objc func openPreferences(_ sender: Any?) {
