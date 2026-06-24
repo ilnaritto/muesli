@@ -191,6 +191,7 @@ struct ComputerUseObservation: Codable, Equatable {
     let focusedElement: ComputerUseFocusedElement?
     let selectedText: String?
     let appInstructions: String?
+    let targetMismatch: ComputerUseTargetMismatch?
     let elements: [ComputerUseElementCandidate]
     let capturedAt: Date
 
@@ -207,6 +208,7 @@ struct ComputerUseObservation: Codable, Equatable {
         case focusedElement = "focused_element"
         case selectedText = "selected_text"
         case appInstructions = "app_instructions"
+        case targetMismatch = "target_mismatch"
         case elements
         case capturedAt = "captured_at"
     }
@@ -224,6 +226,7 @@ struct ComputerUseObservation: Codable, Equatable {
         focusedElement: ComputerUseFocusedElement? = nil,
         selectedText: String? = nil,
         appInstructions: String? = nil,
+        targetMismatch: ComputerUseTargetMismatch? = nil,
         elements: [ComputerUseElementCandidate],
         capturedAt: Date
     ) {
@@ -239,12 +242,25 @@ struct ComputerUseObservation: Codable, Equatable {
         self.focusedElement = focusedElement
         self.selectedText = selectedText
         self.appInstructions = appInstructions
+        self.targetMismatch = targetMismatch
         self.elements = elements
         self.capturedAt = capturedAt
     }
 
     static func newStateID() -> String {
         "state-\(Int(Date().timeIntervalSince1970 * 1000))-\(UUID().uuidString.prefix(8))"
+    }
+}
+
+struct ComputerUseTargetMismatch: Codable, Equatable {
+    let requestedWindowID: Int?
+    let actualWindowID: Int?
+    let message: String
+
+    enum CodingKeys: String, CodingKey {
+        case requestedWindowID = "requested_window_id"
+        case actualWindowID = "actual_window_id"
+        case message
     }
 }
 
@@ -429,19 +445,27 @@ enum ComputerUseObservationCapture {
         let focusedElement = focusedElementSnapshot?.observation
         let selectedText = selectedTextObservation(from: focusedElementSnapshot?.element)
         let baseAppInstructions = ComputerUseAppInstructionProvider.instructions(for: bundleID, appName: appName)
-        let requestedWindowFallbackNote: String? = if let requestedWindowID = target?.windowID, matchedTargetWindow == nil {
+        let targetMismatch: ComputerUseTargetMismatch? = if let requestedWindowID = target?.windowID, matchedTargetWindow == nil {
             if let windowID {
-                "Requested window_id \(requestedWindowID) could not be matched; this state fell back to focused window_id \(windowID). Re-query list_windows or get_window_state before mutating if the target window is ambiguous."
+                ComputerUseTargetMismatch(
+                    requestedWindowID: requestedWindowID,
+                    actualWindowID: windowID,
+                    message: "Requested window_id \(requestedWindowID) could not be matched; this state fell back to focused window_id \(windowID). Re-query list_windows or get_window_state before mutating if the target window is ambiguous."
+                )
             } else {
-                "Requested window_id \(requestedWindowID) could not be matched; this state fell back to the focused window without a stable window_id. Re-query list_windows or get_window_state before mutating if the target window is ambiguous."
+                ComputerUseTargetMismatch(
+                    requestedWindowID: requestedWindowID,
+                    actualWindowID: nil,
+                    message: "Requested window_id \(requestedWindowID) could not be matched; this state fell back to the focused window without a stable window_id. Re-query list_windows or get_window_state before mutating if the target window is ambiguous."
+                )
             }
         } else {
             nil
         }
-        let appInstructions = [baseAppInstructions, requestedWindowFallbackNote]
-            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n")
+        let appInstructions = combinedAppInstructions([
+            baseAppInstructions,
+            targetMismatch?.message,
+        ])
 
         var candidates: [ComputerUseElementCandidate] = []
         var visited = Set<AXUIElement>()
@@ -468,9 +492,18 @@ enum ComputerUseObservationCapture {
             focusedElement: focusedElement,
             selectedText: selectedText,
             appInstructions: appInstructions,
+            targetMismatch: targetMismatch,
             elements: candidates,
             capturedAt: capturedAt
         )
+    }
+
+    private static func combinedAppInstructions(_ parts: [String?]) -> String? {
+        let combined = parts
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        return combined.isEmpty ? nil : combined
     }
 
     nonisolated static func candidateForTests(

@@ -1142,9 +1142,9 @@ struct ComputerUsePlannerRuntimeTests {
         #expect(result.message == "Text insertion was not confirmed.")
     }
 
-    @Test("post-action OCR without pre-action OCR does not verify a text action")
+    @Test("post-action OCR verifies when text was not previously visible")
     @MainActor
-    func postActionOCRWithoutPreActionOCRDoesNotVerifyTextAction() async {
+    func postActionOCRVerifiesWhenTextWasNotPreviouslyVisible() async {
         let requestedText = "hello from computer use"
         var observeCount = 0
         let runtime = ComputerUsePlannerRuntime(
@@ -1169,8 +1169,8 @@ struct ComputerUsePlannerRuntimeTests {
                     #expect(request.latestWindowState.screenshotOCRText == requestedText)
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
                 default:
-                    #expect(request.priorOutcomes.last?.status == "unverified_text")
-                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Text insertion was not confirmed."))
+                    Issue.record("unexpected planner step \(request.step)")
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Unexpected step."))
                 }
             },
             execute: { _, _ in .executed("Pasted text") },
@@ -1179,8 +1179,55 @@ struct ComputerUsePlannerRuntimeTests {
 
         let result = await runtime.run(command: "write hello")
 
-        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.failed)
-        #expect(result.message == "Text insertion was not confirmed.")
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(result.message == "done")
+    }
+
+    @Test("OCR delta can verify text even when unrelated AX text existed before")
+    @MainActor
+    func ocrDeltaCanVerifyTextWhenUnrelatedAXTextExistedBefore() async {
+        let requestedText = "hello from computer use"
+        var observeCount = 0
+        let runtime = ComputerUsePlannerRuntime(
+            config: AppConfig(),
+            observe: { _, _, _ in
+                observeCount += 1
+                if observeCount == 1 {
+                    return Self.observation(
+                        screenshot: Self.screenshot(id: "before"),
+                        elementValue: requestedText
+                    )
+                }
+                return Self.observation(
+                    screenshot: Self.screenshot(id: "after"),
+                    elementValue: requestedText
+                )
+            },
+            plan: { request in
+                switch request.step {
+                case 1:
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .recognizeScreenshotText, screenshotID: "before"))
+                case 2:
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(
+                        tool: .pasteText,
+                        text: requestedText
+                    ))
+                case 3:
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .recognizeScreenshotText, screenshotID: "after"))
+                default:
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
+                }
+            },
+            execute: { _, _ in .executed("Pasted text") },
+            recognizeScreenshotText: { screenshot in
+                screenshot?.screenshotID == "before" ? "" : requestedText
+            }
+        )
+
+        let result = await runtime.run(command: "write hello")
+
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(result.message == "done")
     }
 
     @Test("unrelated element text does not verify a text action")
@@ -1277,6 +1324,55 @@ struct ComputerUsePlannerRuntimeTests {
 
         #expect(result.status == ComputerUsePlannerRuntimeResult.Status.failed)
         #expect(result.message == "First write was not confirmed.")
+    }
+
+    @Test("target mismatch blocks current-window mutation")
+    @MainActor
+    func targetMismatchBlocksCurrentWindowMutation() async {
+        var executeCalls = 0
+        let runtime = ComputerUsePlannerRuntime(
+            config: AppConfig(),
+            observe: { _, _, _ in
+                Self.observation(
+                    windowTitle: "Fallback",
+                    screenshot: Self.screenshot(),
+                    targetMismatch: ComputerUseTargetMismatch(
+                        requestedWindowID: 111,
+                        actualWindowID: 222,
+                        message: "Requested window_id 111 could not be matched; this state fell back to focused window_id 222."
+                    )
+                )
+            },
+            plan: { request in
+                switch request.step {
+                case 1:
+                    #expect(request.latestWindowState.targetMismatch?.requestedWindowID == 111)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(
+                        tool: .clickPoint,
+                        screenshotID: "s1",
+                        x: 10,
+                        y: 10
+                    ))
+                case 2:
+                    #expect(request.priorOutcomes.last?.status == "target_mismatch")
+                    #expect(request.priorOutcomes.last?.message.contains("Cannot run click_point") == true)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Need matched window."))
+                default:
+                    Issue.record("unexpected planner step \(request.step)")
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Unexpected step."))
+                }
+            },
+            execute: { _, _ in
+                executeCalls += 1
+                return .executed("Clicked")
+            }
+        )
+
+        let result = await runtime.run(command: "click target")
+
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.failed)
+        #expect(result.message == "Need matched window.")
+        #expect(executeCalls == 0)
     }
 
     @Test("text action leaves screenshot completion decision to planner")
@@ -1777,7 +1873,8 @@ struct ComputerUsePlannerRuntimeTests {
         windowTitle: String = "Window",
         screenshot: ComputerUseScreenshotObservation? = nil,
         focusedValue: String = "",
-        elementValue: String = ""
+        elementValue: String = "",
+        targetMismatch: ComputerUseTargetMismatch? = nil
     ) -> ComputerUseObservation {
         ComputerUseObservation(
             stateID: stateID,
@@ -1795,6 +1892,7 @@ struct ComputerUsePlannerRuntimeTests {
                 frame: nil,
                 processID: nil
             ),
+            targetMismatch: targetMismatch,
             elements: [
                 ComputerUseObservationCapture.candidateForTests(
                     elementID: "e1",

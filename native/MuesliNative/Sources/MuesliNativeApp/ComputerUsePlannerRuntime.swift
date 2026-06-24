@@ -207,6 +207,20 @@ final class ComputerUsePlannerRuntime {
                 traceEvents.append(traceEvent(kind: "failed", title: "Schema rejected", body: validationFailure, status: "failed", step: step))
                 return .init(status: .failed, message: validationFailure, traceEvents: traceEvents)
             }
+            if let blockedMessage = targetMismatchMutationMessage(observation: observation, toolCall: toolCall) {
+                priorResults.append(ComputerUseToolOutcome(
+                    step: step,
+                    tool: toolCall.tool,
+                    status: "target_mismatch",
+                    message: blockedMessage,
+                    appName: observation.appName,
+                    bundleID: observation.bundleID,
+                    windowTitle: observation.windowTitle,
+                    snapshotID: observation.screenshot?.screenshotID
+                ))
+                traceEvents.append(traceEvent(kind: "planner_repair", title: "Target mismatch", body: blockedMessage, status: "repair", step: step))
+                continue
+            }
             if toolCall.requiresConfirmation {
                 onStatus("Confirm")
                 let message = "Confirm: \(toolCall.summary)"
@@ -224,7 +238,7 @@ final class ComputerUsePlannerRuntime {
                         screenshotOCRTextByID: screenshotOCRTextByID
                     ) == nil
                 }) {
-                    let blockedMessage = "Cannot finish yet: \(pending.toolSummary) from step \(pending.step) has not been confirmed in focused/selected text or before/after OCR text. Inspect the visible screenshot; if the requested text is not visibly complete, refocus or retry. For ambiguous text writes, use OCR before and after the write so stale visible text is not treated as new."
+                    let blockedMessage = "Cannot finish yet: \(pending.toolSummary) from step \(pending.step) has not been confirmed in focused/selected text, OCR delta, or post-action OCR with a clean pre-action state. Inspect the visible screenshot; if the requested text is not visibly complete, refocus or retry."
                     priorResults.append(ComputerUseToolOutcome(
                         step: step,
                         tool: .finish,
@@ -668,10 +682,8 @@ final class ComputerUsePlannerRuntime {
         observation: ComputerUseObservation,
         screenshotOCRTextByID: [String: String]
     ) -> String? {
-        if pending.sampleWasVisibleBefore {
-            return nil
-        }
-        if textWriteEvidenceCorpus(observation).contains(pending.sample) {
+        if !pending.sampleWasVisibleBefore,
+           textWriteEvidenceCorpus(observation).contains(pending.sample) {
             return "focused text or selected text"
         }
         guard let screenshotID = observation.screenshot?.screenshotID,
@@ -688,6 +700,9 @@ final class ComputerUsePlannerRuntime {
                 return nil
             }
             return "new screenshot OCR text"
+        }
+        if !pending.sampleWasVisibleBefore {
+            return "screenshot OCR text not present in pre-action state"
         }
         return nil
     }
@@ -826,6 +841,27 @@ final class ComputerUsePlannerRuntime {
         case .moveCursor, .click, .clickElement, .clickPoint, .focusElement, .activateFocused, .performSecondaryAction, .drag, .pressKey, .hotkey, .typeText, .pasteText, .setValue, .scroll, .navigateURL, .navigateActiveBrowserTab, .openNewBrowserTab, .activateBrowserTab:
             return true
         case .listApps, .launchApp, .listWindows, .getAppState, .getWindowState, .recognizeScreenshotText, .listBrowserTabs, .pageGetText, .pageQueryDOM, .finish, .fail:
+            return false
+        }
+    }
+
+    private func targetMismatchMutationMessage(
+        observation: ComputerUseObservation,
+        toolCall: ComputerUseToolCall
+    ) -> String? {
+        guard let mismatch = observation.targetMismatch,
+              requiresMatchedWindow(for: toolCall.tool) else {
+            return nil
+        }
+        let actual = mismatch.actualWindowID.map { "focused window_id \($0)" } ?? "the focused window without a stable window_id"
+        return "Cannot run \(toolCall.tool.rawValue): latest_window_state.target_mismatch says requested window_id \(mismatch.requestedWindowID.map(String.init) ?? "unknown") was not matched and state fell back to \(actual). Re-orient with list_windows/get_window_state for the intended or actual visible window before mutating."
+    }
+
+    private func requiresMatchedWindow(for tool: ComputerUseToolName) -> Bool {
+        switch tool {
+        case .moveCursor, .click, .clickElement, .clickPoint, .focusElement, .activateFocused, .performSecondaryAction, .setValue, .typeText, .pasteText, .pressKey, .hotkey, .scroll, .drag:
+            return true
+        case .launchApp, .listApps, .listWindows, .getAppState, .getWindowState, .recognizeScreenshotText, .listBrowserTabs, .activateBrowserTab, .openNewBrowserTab, .navigateURL, .navigateActiveBrowserTab, .pageGetText, .pageQueryDOM, .finish, .fail:
             return false
         }
     }

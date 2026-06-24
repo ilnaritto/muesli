@@ -170,6 +170,7 @@ struct ComputerUseWindowState: Codable, Equatable {
     let focusedElement: ComputerUseFocusedElement?
     let selectedText: String?
     let appInstructions: String?
+    let targetMismatch: ComputerUseTargetMismatch?
     let elements: [ComputerUseElementCandidate]
     let capturedAt: Date
 
@@ -187,6 +188,7 @@ struct ComputerUseWindowState: Codable, Equatable {
         case focusedElement = "focused_element"
         case selectedText = "selected_text"
         case appInstructions = "app_instructions"
+        case targetMismatch = "target_mismatch"
         case elements
         case capturedAt = "captured_at"
     }
@@ -205,6 +207,7 @@ struct ComputerUseWindowState: Codable, Equatable {
         focusedElement = observation.focusedElement
         selectedText = observation.selectedText
         appInstructions = observation.appInstructions
+        targetMismatch = observation.targetMismatch
         elements = observation.elements
         capturedAt = observation.capturedAt
     }
@@ -223,6 +226,7 @@ struct ComputerUseWindowState: Codable, Equatable {
         focusedElement: ComputerUseFocusedElement? = nil,
         selectedText: String? = nil,
         appInstructions: String? = nil,
+        targetMismatch: ComputerUseTargetMismatch? = nil,
         elements: [ComputerUseElementCandidate],
         capturedAt: Date
     ) {
@@ -239,6 +243,7 @@ struct ComputerUseWindowState: Codable, Equatable {
         self.focusedElement = focusedElement
         self.selectedText = selectedText
         self.appInstructions = appInstructions
+        self.targetMismatch = targetMismatch
         self.elements = elements
         self.capturedAt = capturedAt
     }
@@ -257,6 +262,7 @@ struct ComputerUseWindowState: Codable, Equatable {
             focusedElement: focusedElement,
             selectedText: selectedText,
             appInstructions: appInstructions,
+            targetMismatch: targetMismatch,
             elements: elements,
             capturedAt: capturedAt
         )
