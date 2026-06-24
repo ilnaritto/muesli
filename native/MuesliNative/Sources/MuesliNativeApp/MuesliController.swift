@@ -3155,7 +3155,12 @@ final class MuesliController: NSObject {
     // MARK: - Folder Management
 
     nonisolated static func treeOrderedFolders(_ folders: [MeetingFolder], order: [Int64]) -> [MeetingFolder] {
-        let byID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
+        let orderedFolders = folders.sorted { a, b in
+            let ai = order.firstIndex(of: a.id) ?? Int.max
+            let bi = order.firstIndex(of: b.id) ?? Int.max
+            if ai != bi { return ai < bi }
+            return a.id < b.id
+        }
         var childrenMap: [Int64?: [MeetingFolder]] = [:]
         for folder in folders {
             childrenMap[folder.parentID, default: []].append(folder)
@@ -3170,20 +3175,20 @@ final class MuesliController: NSObject {
             }
         }
         var result: [MeetingFolder] = []
+        var visited: Set<Int64> = []
         func visit(_ parentID: Int64?) {
             for folder in childrenMap[parentID] ?? [] {
+                guard visited.insert(folder.id).inserted else { continue }
                 result.append(folder)
                 visit(folder.id)
             }
         }
         visit(nil)
-        // Include any orphaned folders whose parent was deleted.
-        let visited = Set(result.map(\.id))
-        for folder in folders where !visited.contains(folder.id) {
-            if let pid = folder.parentID, byID[pid] == nil {
-                result.append(folder)
-                visit(folder.id)
-            }
+        // Include orphaned folders and closed cycles so corrupt hierarchy data never hides folders.
+        for folder in orderedFolders where !visited.contains(folder.id) {
+            visited.insert(folder.id)
+            result.append(folder)
+            visit(folder.id)
         }
         return result
     }

@@ -2275,6 +2275,20 @@ struct DictationStoreTests {
         #expect(childIdx > orphanIdx)
     }
 
+    @Test("treeOrderedFolders includes closed cycles once")
+    func treeOrderedFoldersIncludesClosedCyclesOnce() {
+        let folders = [
+            MeetingFolder(id: 1, name: "A", parentID: 2, createdAt: ""),
+            MeetingFolder(id: 2, name: "B", parentID: 1, createdAt: ""),
+            MeetingFolder(id: 3, name: "Root", parentID: nil, createdAt: ""),
+            MeetingFolder(id: 4, name: "Child", parentID: 3, createdAt: ""),
+        ]
+        let ordered = MuesliController.treeOrderedFolders(folders, order: [3, 4, 1, 2])
+        let ids = ordered.map(\.id)
+        #expect(ids == [3, 4, 1, 2])
+        #expect(Set(ids).count == folders.count)
+    }
+
     // MARK: - Search Tests
 
     @Test("searchDictations returns matching records by raw_text")

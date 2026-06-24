@@ -5,6 +5,8 @@ struct MeetingListItemView: View {
     let record: MeetingRecord
     let isSelected: Bool
     let folders: [MeetingFolder]
+    private let folderByID: [Int64: MeetingFolder]
+    private let folderIDsWithChildren: Set<Int64>
     let onSelect: () -> Void
     let onMove: (Int64?) -> Void
     let onCreateFolderAndMove: ((String) -> Void)?
@@ -15,14 +17,34 @@ struct MeetingListItemView: View {
     @State private var showNewFolderPrompt = false
     @State private var newFolderName = ""
 
+    init(
+        record: MeetingRecord,
+        isSelected: Bool,
+        folders: [MeetingFolder],
+        onSelect: @escaping () -> Void,
+        onMove: @escaping (Int64?) -> Void,
+        onCreateFolderAndMove: ((String) -> Void)?,
+        onDelete: (() -> Void)?
+    ) {
+        self.record = record
+        self.isSelected = isSelected
+        self.folders = folders
+        self.folderByID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
+        self.folderIDsWithChildren = Set(folders.compactMap(\.parentID))
+        self.onSelect = onSelect
+        self.onMove = onMove
+        self.onCreateFolderAndMove = onCreateFolderAndMove
+        self.onDelete = onDelete
+    }
+
     private var currentFolderName: String? {
         guard let fid = record.folderID else { return nil }
-        let byID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
-        guard let folder = byID[fid] else { return nil }
+        guard let folder = folderByID[fid] else { return nil }
         // Build breadcrumb path: "Grandparent / Parent / Folder"
         var parts: [String] = [folder.name]
         var current = folder.parentID
-        while let pid = current, let parent = byID[pid] {
+        var seen: Set<Int64> = [folder.id]
+        while let pid = current, let parent = folderByID[pid], seen.insert(pid).inserted {
             parts.insert(parent.name, at: 0)
             current = parent.parentID
         }
@@ -109,12 +131,12 @@ struct MeetingListItemView: View {
     // MARK: - Folder menu button
 
     private func folderDepth(_ folder: MeetingFolder) -> Int {
-        let byID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
         var depth = 0
         var current = folder.parentID
-        while let pid = current {
+        var seen: Set<Int64> = [folder.id]
+        while let pid = current, seen.insert(pid).inserted {
             depth += 1
-            current = byID[pid]?.parentID
+            current = folderByID[pid]?.parentID
         }
         return depth
     }
@@ -145,7 +167,7 @@ struct MeetingListItemView: View {
                 Divider().padding(.vertical, 4)
                 ForEach(folders) { folder in
                     let depth = folderDepth(folder)
-                    let hasChildren = folders.contains { $0.parentID == folder.id }
+                    let hasChildren = folderIDsWithChildren.contains(folder.id)
                     folderPopoverRow(
                         icon: hasChildren ? "folder.fill" : "folder",
                         label: folder.name,
