@@ -429,10 +429,12 @@ struct ComputerUsePlannerResponseTests {
         let click = try ComputerUsePlannerResponse.decodeJSON(from: #"{"tool":"click","element_id":"e2","label":"Send"}"#)
         let unlabeledPoint = try ComputerUsePlannerResponse.decodeJSON(from: #"{"tool":"click","screenshot_id":"s1","x":120,"y":240}"#)
         let key = try ComputerUsePlannerResponse.decodeJSON(from: #"{"tool":"hotkey","modifiers":["command"],"key":"q"}"#)
+        let activation = try ComputerUsePlannerResponse.decodeJSON(from: #"{"tool":"activate_focused","label":"Continue"}"#)
 
         #expect(click.toolCall.requiresConfirmation)
         #expect(unlabeledPoint.toolCall.requiresConfirmation)
         #expect(key.toolCall.requiresConfirmation)
+        #expect(activation.toolCall.requiresConfirmation)
     }
 }
 

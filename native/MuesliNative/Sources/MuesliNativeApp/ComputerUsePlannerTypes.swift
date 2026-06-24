@@ -702,14 +702,22 @@ struct ComputerUseToolInvocation: Codable, Equatable {
 
     private func containsRiskyWord(_ text: String) -> Bool {
         let riskyWords = [
+            "accept",
             "archive",
+            "authorize",
             "buy",
             "cancel",
             "checkout",
             "confirm",
+            "continue",
             "delete",
             "discard",
+            "enable",
+            "grant",
+            "install",
+            "overwrite",
             "pay",
+            "proceed",
             "purchase",
             "remove",
             "send",

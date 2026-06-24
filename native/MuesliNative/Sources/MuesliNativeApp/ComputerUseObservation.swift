@@ -420,8 +420,9 @@ enum ComputerUseObservationCapture {
         let root = window ?? axApp
         let windowTitle = window.map { axString($0, kAXTitleAttribute) } ?? ""
         let windowFrame = window.flatMap(rect) ?? targetWindowFrame
-        let windowID = target?.windowID ?? matchedWindowID(for: app, frame: windowFrame)
-        let screenshot = includeScreenshot ? captureScreenshot(for: app, targetWindowID: target?.windowID, fallbackFrame: windowFrame) : nil
+        let resolvedTargetWindowID = targetWindowFrame == nil ? nil : target?.windowID
+        let windowID = resolvedTargetWindowID ?? matchedWindowID(for: app, frame: windowFrame)
+        let screenshot = includeScreenshot ? captureScreenshot(for: app, targetWindowID: resolvedTargetWindowID, fallbackFrame: windowFrame) : nil
         registry.registerScreenshot(screenshot)
         let focusedElementSnapshot = focusedElementSnapshot(requiredPID: app.processIdentifier)
         let focusedElement = focusedElementSnapshot?.observation
