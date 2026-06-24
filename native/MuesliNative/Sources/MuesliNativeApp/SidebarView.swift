@@ -300,7 +300,10 @@ struct SidebarView: View {
                         let hasChildren = folderTree.hasChildren(folder.id)
                         let isCollapsed = collapsedFolderIDs.contains(folder.id)
                         if renamingFolderID == folder.id {
-                            folderRenameField(folder: folder)
+                            HStack(spacing: 0) {
+                                Spacer().frame(width: sidebarIconColumnWidth)
+                                folderRenameField(folder: folder)
+                            }
                                 .padding(.leading, CGFloat(depth) * 16)
                         } else {
                             HStack(spacing: 0) {

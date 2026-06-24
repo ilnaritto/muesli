@@ -426,8 +426,8 @@ public final class DictationStore {
         }
         defer { sqlite3_finalize(statement) }
         var bindIndex: Int32 = 1
-        if folderID != nil {
-            sqlite3_bind_int64(statement, bindIndex, folderID!)
+        if let folderID {
+            sqlite3_bind_int64(statement, bindIndex, folderID)
             bindIndex += 1
         }
         if let limit {
