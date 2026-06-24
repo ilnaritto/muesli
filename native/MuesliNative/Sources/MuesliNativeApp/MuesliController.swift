@@ -275,6 +275,7 @@ final class MuesliController: NSObject {
     private var pendingReleaseSoundSessionID: UUID?
     private var pendingPreparingIndicatorWorkItem: DispatchWorkItem?
     private var computerUseCommandStartedAt: Date?
+    private var computerUseCommandPreparedAt: Date?
     private var pendingComputerUseStopStartedAt: Date?
     private var pendingComputerUseStopSessionID: UUID?
     private var computerUseCommandTask: Task<Void, Never>?
@@ -5176,6 +5177,7 @@ final class MuesliController: NSObject {
     private func handleComputerUsePrepare() {
         guard canPrepareComputerUseCommand else { return }
         fputs("[cua] prepare\n", stderr)
+        computerUseCommandPreparedAt = Date()
         if computerUseLatencyTraceID == nil {
             beginComputerUseLatencyTrace(reason: "prepare")
         }
@@ -5189,7 +5191,9 @@ final class MuesliController: NSObject {
     private func handleComputerUseStart() {
         guard canStartComputerUseCommand else { return }
         fputs("[cua] recording start\n", stderr)
-        computerUseCommandStartedAt = Date()
+        let now = Date()
+        computerUseCommandPreparedAt = computerUseCommandPreparedAt ?? now
+        computerUseCommandStartedAt = now
         if computerUseLatencyTraceID == nil {
             beginComputerUseLatencyTrace(reason: "hotkey")
         }
@@ -5229,6 +5233,7 @@ final class MuesliController: NSObject {
         computerUseCommandTask = nil
         computerUseAudioSessionManager.cancel(reason: "cua-user-cancel")
         computerUseCommandStartedAt = nil
+        computerUseCommandPreparedAt = nil
         pendingComputerUseStopSessionID = nil
         pendingComputerUseStopStartedAt = nil
         indicator.isToggleDictation = false
@@ -5246,8 +5251,9 @@ final class MuesliController: NSObject {
         indicator.isToggleDictation = false
         markComputerUseLatency("stop_requested")
         pendingComputerUseStopSessionID = computerUseAudioSessionManager.currentSessionID
-        pendingComputerUseStopStartedAt = computerUseCommandStartedAt ?? Date()
+        pendingComputerUseStopStartedAt = computerUseCommandStartedAt ?? computerUseCommandPreparedAt ?? Date()
         computerUseCommandStartedAt = nil
+        computerUseCommandPreparedAt = nil
         computerUseAudioSessionManager.stop()
     }
 
@@ -5826,6 +5832,9 @@ final class MuesliController: NSObject {
             if computerUseCommandStartedAt == nil {
                 computerUseCommandStartedAt = capturedAt
             }
+            if computerUseCommandPreparedAt == nil {
+                computerUseCommandPreparedAt = capturedAt
+            }
             indicator.powerProvider = { [weak self] in
                 self?.computerUseAudioSessionManager.currentPower() ?? -160
             }
@@ -5857,6 +5866,7 @@ final class MuesliController: NSObject {
             let startedAt = pendingComputerUseStopStartedAt ?? computerUseCommandStartedAt ?? Date()
             pendingComputerUseStopSessionID = nil
             pendingComputerUseStopStartedAt = nil
+            computerUseCommandPreparedAt = nil
             finishComputerUseAudioStop(wavURL: wavURL, startedAt: startedAt)
         case .audioRestored:
             break
@@ -5865,6 +5875,7 @@ final class MuesliController: NSObject {
         case .failed(_, let error):
             fputs("[cua] recorder session failed: \(error)\n", stderr)
             computerUseCommandStartedAt = nil
+            computerUseCommandPreparedAt = nil
             pendingComputerUseStopSessionID = nil
             pendingComputerUseStopStartedAt = nil
             setState(.idle)

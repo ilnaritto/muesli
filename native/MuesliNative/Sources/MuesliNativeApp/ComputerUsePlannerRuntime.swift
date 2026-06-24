@@ -41,6 +41,12 @@ final class ComputerUsePlannerRuntime {
     private let maxPlannerRetryCount = 1
     private let maxUnchangedObservationLoops = 4
 
+    private struct PendingUnverifiedTextWrite {
+        let sample: String
+        let toolSummary: String
+        let step: Int
+    }
+
     init(
         config: AppConfig,
         maxSteps: Int? = 100,
@@ -96,6 +102,7 @@ final class ComputerUsePlannerRuntime {
         var unchangedObservationCounts: [String: Int] = [:]
         var invalidToolCallRepairCount = 0
         var screenshotOCRTextByID: [String: String] = [:]
+        var pendingUnverifiedTextWrite: PendingUnverifiedTextWrite?
         let maxInvalidToolCallRepairs = 2
         // V1 keeps foreground activation, but state is scoped to a target app.
         // Later Codex-style work should replace this with background key-window tracking,
@@ -125,6 +132,14 @@ final class ComputerUsePlannerRuntime {
                 for: observation,
                 screenshotOCRTextByID: &screenshotOCRTextByID
             )
+            if let pending = pendingUnverifiedTextWrite,
+               unverifiedTextWriteEvidenceSource(
+                   pending,
+                   observation: observation,
+                   screenshotOCRTextByID: screenshotOCRTextByID
+               ) != nil {
+                pendingUnverifiedTextWrite = nil
+            }
             let request = ComputerUsePlannerRequest(
                 command: command,
                 step: step,
@@ -200,8 +215,28 @@ final class ComputerUsePlannerRuntime {
 
             switch toolCall.tool {
             case .finish:
-                onStatus("Done")
                 let message = toolCall.reason?.isEmpty == false ? toolCall.reason! : "Done"
+                if let pending = pendingUnverifiedTextWrite,
+                   unverifiedTextWriteEvidenceSource(
+                       pending,
+                       observation: observation,
+                       screenshotOCRTextByID: screenshotOCRTextByID
+                   ) == nil {
+                    let blockedMessage = "Cannot finish yet: \(pending.toolSummary) from step \(pending.step) has not been confirmed in AX or OCR text. Call recognize_screenshot_text for the latest screenshot or inspect the visible screenshot; finish only after the requested text is visible, otherwise refocus or retry."
+                    priorResults.append(ComputerUseToolOutcome(
+                        step: step,
+                        tool: .finish,
+                        status: "unverified_text",
+                        message: blockedMessage,
+                        appName: observation.appName,
+                        bundleID: observation.bundleID,
+                        windowTitle: observation.windowTitle,
+                        snapshotID: observation.screenshot?.screenshotID
+                    ))
+                    traceEvents.append(traceEvent(kind: "planner_repair", title: "Finish blocked", body: blockedMessage, status: "repair", step: step))
+                    continue
+                }
+                onStatus("Done")
                 if finishIndicatesFailure(message) {
                     let blockedMessage = "Planner attempted to finish with an incomplete or blocked result: \(message)"
                     traceEvents.append(traceEvent(kind: "failed", title: "Final output blocked", body: blockedMessage, status: "failed", step: step))
@@ -350,6 +385,12 @@ final class ComputerUsePlannerRuntime {
                         traceEvents.append(traceEvent(kind: "failed", title: "Repeated action stopped", body: blocked, status: "failed", step: step))
                         return .init(status: .failed, message: blocked, traceEvents: traceEvents)
                     }
+                    updatePendingUnverifiedTextWrite(
+                        &pendingUnverifiedTextWrite,
+                        toolCall: toolCall,
+                        delta: delta,
+                        step: step
+                    )
                 case .needsConfirmation:
                     priorResults.append(outcome(
                         step: step,
@@ -586,6 +627,44 @@ final class ComputerUsePlannerRuntime {
             return "focused/visible AX text"
         }
         return nil
+    }
+
+    private func updatePendingUnverifiedTextWrite(
+        _ pending: inout PendingUnverifiedTextWrite?,
+        toolCall: ComputerUseToolCall,
+        delta: ComputerUseStateDelta?,
+        step: Int
+    ) {
+        guard isTextEntryTool(toolCall.tool), let text = toolCall.text else { return }
+        if delta?.status == .changed {
+            pending = nil
+            return
+        }
+        guard let sample = textVerificationSample(text) else {
+            pending = nil
+            return
+        }
+        pending = PendingUnverifiedTextWrite(
+            sample: sample,
+            toolSummary: toolCall.summary,
+            step: step
+        )
+    }
+
+    private func unverifiedTextWriteEvidenceSource(
+        _ pending: PendingUnverifiedTextWrite,
+        observation: ComputerUseObservation,
+        screenshotOCRTextByID: [String: String]
+    ) -> String? {
+        if observationTextCorpus(observation).contains(pending.sample) {
+            return "focused/visible AX text"
+        }
+        guard let screenshotID = observation.screenshot?.screenshotID,
+              let ocrText = screenshotOCRTextByID[screenshotID] else {
+            return nil
+        }
+        let normalizedOCR = ComputerUseElementCandidate.normalizedText(ocrText)
+        return normalizedOCR.contains(pending.sample) ? "screenshot OCR text" : nil
     }
 
     private func textVerificationSample(_ text: String) -> String? {

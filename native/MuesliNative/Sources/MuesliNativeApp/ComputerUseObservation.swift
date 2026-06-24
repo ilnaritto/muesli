@@ -416,11 +416,12 @@ enum ComputerUseObservationCapture {
 
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
         let targetWindowFrame = targetWindowFrame(for: target, app: app)
-        let window = targetWindow(in: axApp, targetFrame: targetWindowFrame) ?? focusedWindow(in: axApp)
+        let matchedTargetWindow = targetWindow(in: axApp, targetFrame: targetWindowFrame)
+        let window = matchedTargetWindow ?? focusedWindow(in: axApp)
         let root = window ?? axApp
         let windowTitle = window.map { axString($0, kAXTitleAttribute) } ?? ""
         let windowFrame = window.flatMap(rect) ?? targetWindowFrame
-        let resolvedTargetWindowID = targetWindowFrame == nil ? nil : target?.windowID
+        let resolvedTargetWindowID = matchedTargetWindow == nil ? nil : target?.windowID
         let windowID = resolvedTargetWindowID ?? matchedWindowID(for: app, frame: windowFrame)
         let screenshot = includeScreenshot ? captureScreenshot(for: app, targetWindowID: resolvedTargetWindowID, fallbackFrame: windowFrame) : nil
         registry.registerScreenshot(screenshot)
@@ -569,13 +570,16 @@ enum ComputerUseObservationCapture {
         guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &value) == .success,
               let windows = value as? [AXUIElement]
         else { return nil }
+        let targetArea = targetFrame.area
         return windows
-            .compactMap { window -> (AXUIElement, CGRect)? in
+            .compactMap { window -> (AXUIElement, CGFloat)? in
                 guard let frame = rect(window) else { return nil }
-                return (window, frame)
+                let overlapRatio = frame.intersection(targetFrame).area / targetArea
+                guard overlapRatio > 0.5 else { return nil }
+                return (window, overlapRatio)
             }
             .max { lhs, rhs in
-                lhs.1.intersection(targetFrame).area < rhs.1.intersection(targetFrame).area
+                lhs.1 < rhs.1
             }?
             .0
     }

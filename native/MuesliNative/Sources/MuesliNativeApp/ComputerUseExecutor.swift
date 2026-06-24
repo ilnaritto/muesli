@@ -1411,7 +1411,6 @@ enum ComputerUseToolExecutor {
             fallback,
             axString(element, kAXTitleAttribute),
             axString(element, kAXDescriptionAttribute),
-            axString(element, kAXValueAttribute),
             axString(element, kAXHelpAttribute),
             axString(element, kAXRoleAttribute),
         ] {

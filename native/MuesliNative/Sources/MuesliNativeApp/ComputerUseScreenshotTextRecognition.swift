@@ -35,16 +35,29 @@ enum ComputerUseScreenshotTextRecognition {
     private static func recognizeText(in image: CGImage) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
+                var hasResumed = false
+                let resumeLock = NSLock()
+                func resumeOnce(_ body: () -> Void) {
+                    resumeLock.lock()
+                    let shouldResume = !hasResumed
+                    if shouldResume {
+                        hasResumed = true
+                    }
+                    resumeLock.unlock()
+                    guard shouldResume else { return }
+                    body()
+                }
+
                 let request = VNRecognizeTextRequest { request, error in
                     if let error {
-                        continuation.resume(throwing: error)
+                        resumeOnce { continuation.resume(throwing: error) }
                         return
                     }
                     let observations = request.results as? [VNRecognizedTextObservation] ?? []
                     let text = observations
                         .compactMap { $0.topCandidates(1).first?.string }
                         .joined(separator: "\n")
-                    continuation.resume(returning: text)
+                    resumeOnce { continuation.resume(returning: text) }
                 }
                 request.recognitionLevel = .accurate
                 request.usesLanguageCorrection = true
@@ -53,7 +66,7 @@ enum ComputerUseScreenshotTextRecognition {
                 do {
                     try handler.perform([request])
                 } catch {
-                    continuation.resume(throwing: error)
+                    resumeOnce { continuation.resume(throwing: error) }
                 }
             }
         }

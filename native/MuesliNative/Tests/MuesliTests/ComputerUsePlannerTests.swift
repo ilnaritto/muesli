@@ -1023,15 +1023,21 @@ struct ComputerUsePlannerRuntimeTests {
             config: AppConfig(),
             observe: { _, _, _ in Self.observation(screenshot: Self.screenshot()) },
             plan: { request in
-                if request.step == 1 {
+                switch request.step {
+                case 1:
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .pasteText, text: "hello"))
+                case 2:
+                    let outcome = request.priorOutcomes.last
+                    #expect(outcome?.verificationStatus == .unchanged)
+                    #expect(outcome?.message.contains("Inspect the latest screenshot") == true)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .recognizeScreenshotText, screenshotID: "s1"))
+                default:
+                    #expect(request.latestWindowState.screenshotOCRText == "hello")
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
                 }
-                let outcome = request.priorOutcomes.last
-                #expect(outcome?.verificationStatus == .unchanged)
-                #expect(outcome?.message.contains("Inspect the latest screenshot") == true)
-                return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
             },
-            execute: { _, _ in .executed("Pasted text") }
+            execute: { _, _ in .executed("Pasted text") },
+            recognizeScreenshotText: { _ in "hello" }
         )
 
         let result = await runtime.run(command: "write hello")
@@ -1091,16 +1097,27 @@ struct ComputerUsePlannerRuntimeTests {
                 return Self.observation(stateID: "state-after", windowTitle: "Untitled", screenshot: Self.screenshot())
             },
             plan: { request in
-                if request.step == 1 {
+                switch request.step {
+                case 1:
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .pasteText, text: requestedText))
+                case 2:
+                    let outcome = request.priorOutcomes.last
+                    #expect(outcome?.verificationStatus == .unchanged)
+                    #expect(outcome?.message.contains("AX did not expose the requested text") == true)
+                    #expect(outcome?.message.contains("Inspect the latest screenshot") == true)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
+                case 3:
+                    #expect(request.priorOutcomes.last?.status == "unverified_text")
+                    #expect(request.priorOutcomes.last?.message.contains("Cannot finish yet") == true)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .recognizeScreenshotText, screenshotID: "s1"))
+                default:
+                    #expect(request.latestWindowState.screenshotOCRText?.contains("Computer Use as the Future") == true)
+                    #expect(request.latestWindowState.screenshotOCRText?.contains("Computer use is becoming") == true)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
                 }
-                let outcome = request.priorOutcomes.last
-                #expect(outcome?.verificationStatus == .unchanged)
-                #expect(outcome?.message.contains("AX did not expose the requested text") == true)
-                #expect(outcome?.message.contains("Inspect the latest screenshot") == true)
-                return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
             },
-            execute: { _, _ in .executed("Pasted text") }
+            execute: { _, _ in .executed("Pasted text") },
+            recognizeScreenshotText: { _ in requestedText }
         )
 
         let result = await runtime.run(command: "write about computer use")
@@ -1173,20 +1190,27 @@ struct ComputerUsePlannerRuntimeTests {
                 return Self.observation(stateID: "state-after", windowTitle: "After", screenshot: Self.screenshot())
             },
             plan: { request in
-                if request.step == 1 {
+                switch request.step {
+                case 1:
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .typeText, text: "hello from computer use"))
+                case 2:
+                    let outcome = request.priorOutcomes.last
+                    #expect(outcome?.verificationStatus == .unknown)
+                    #expect(outcome?.message.contains("AX did not expose the requested text") == true)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
+                default:
+                    #expect(request.priorOutcomes.last?.status == "unverified_text")
+                    #expect(request.priorOutcomes.last?.message.contains("Cannot finish yet") == true)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Text was not confirmed."))
                 }
-                let outcome = request.priorOutcomes.last
-                #expect(outcome?.verificationStatus == .unknown)
-                #expect(outcome?.message.contains("AX did not expose the requested text") == true)
-                return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
             },
             execute: { _, _ in .executed("Typed text") }
         )
 
         let result = await runtime.run(command: "write hello")
 
-        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.failed)
+        #expect(result.message == "Text was not confirmed.")
     }
 
     @Test("changed action clears previous unchanged action counts")
