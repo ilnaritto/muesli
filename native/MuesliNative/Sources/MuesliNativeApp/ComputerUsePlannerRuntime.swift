@@ -45,7 +45,6 @@ final class ComputerUsePlannerRuntime {
         let sample: String
         let toolSummary: String
         let step: Int
-        let sampleWasVisibleBefore: Bool
         let sampleWasInTextEvidenceBefore: Bool
         let preActionOCRText: String?
     }
@@ -106,6 +105,7 @@ final class ComputerUsePlannerRuntime {
         var invalidToolCallRepairCount = 0
         var screenshotOCRTextByID: [String: String] = [:]
         var pendingUnverifiedTextWrites: [PendingUnverifiedTextWrite] = []
+        var acknowledgedUnverifiedTextWriteSteps: Set<Int> = []
         let maxInvalidToolCallRepairs = 2
         // V1 keeps foreground activation, but state is scoped to a target app.
         // Later Codex-style work should replace this with background key-window tracking,
@@ -238,8 +238,10 @@ final class ComputerUsePlannerRuntime {
                         observation: observation,
                         screenshotOCRTextByID: screenshotOCRTextByID
                     ) == nil
+                        && !acknowledgedUnverifiedTextWriteSteps.contains(pending.step)
                 }) {
-                    let blockedMessage = "Cannot finish yet: \(pending.toolSummary) from step \(pending.step) has not been confirmed in focused/selected text, OCR delta, or post-action OCR with a clean pre-action state. Inspect the visible screenshot; if the requested text is not visibly complete, refocus or retry."
+                    acknowledgedUnverifiedTextWriteSteps.insert(pending.step)
+                    let blockedMessage = "Text write is unverified: \(pending.toolSummary) from step \(pending.step) was not confirmed in focused/selected text or a clean model-requested OCR delta. Inspect the visible screenshot, call recognize_screenshot_text with a fresh before/after baseline if useful, refocus/retry if the text is incomplete, or finish again only if the visible screen clearly satisfies the user's request."
                     priorResults.append(ComputerUseToolOutcome(
                         step: step,
                         tool: .finish,
@@ -293,7 +295,7 @@ final class ComputerUsePlannerRuntime {
                     debugPayload: encodedDebugPayload(TraceToolResultPayload(result))
                 ))
                 if result.status == .failed || result.status == .unsupported {
-                    return .init(status: .failed, message: result.message, traceEvents: traceEvents)
+                    traceEvents.append(traceEvent(kind: "planner_repair", title: "OCR failed", body: "\(result.message). Refresh window state and retry OCR with the latest screenshot_id if visual text is needed.", status: "repair", step: step))
                 }
                 continue
             case .getAppState, .getWindowState:
@@ -673,7 +675,6 @@ final class ComputerUsePlannerRuntime {
             sample: sample,
             toolSummary: toolCall.summary,
             step: step,
-            sampleWasVisibleBefore: observationTextCorpus(before).contains(sample),
             sampleWasInTextEvidenceBefore: textWriteEvidenceCorpus(before).contains(sample),
             preActionOCRText: preActionOCRText
         ))
@@ -702,10 +703,6 @@ final class ComputerUsePlannerRuntime {
                 return nil
             }
             return "new screenshot OCR text"
-        }
-        if !pending.sampleWasInTextEvidenceBefore {
-            let source = pending.sampleWasVisibleBefore ? "screenshot OCR text not present in focused/selected pre-action evidence" : "screenshot OCR text not present in pre-action state"
-            return source
         }
         return nil
     }

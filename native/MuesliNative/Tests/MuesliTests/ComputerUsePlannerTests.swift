@@ -1122,14 +1122,14 @@ struct ComputerUsePlannerRuntimeTests {
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
                 case 3:
                     #expect(request.priorOutcomes.last?.status == "unverified_text")
-                    #expect(request.priorOutcomes.last?.message.contains("Cannot finish yet") == true)
+                    #expect(request.priorOutcomes.last?.message.contains("Text write is unverified") == true)
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .recognizeScreenshotText, screenshotID: "s1"))
                 case 4:
                     #expect(request.latestWindowState.screenshotOCRText == requestedText)
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
                 default:
-                    #expect(request.priorOutcomes.last?.status == "unverified_text")
-                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Text insertion was not confirmed."))
+                    Issue.record("unexpected planner step \(request.step)")
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Unexpected step."))
                 }
             },
             execute: { _, _ in .executed("Pasted text") },
@@ -1138,13 +1138,13 @@ struct ComputerUsePlannerRuntimeTests {
 
         let result = await runtime.run(command: "write hello")
 
-        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.failed)
-        #expect(result.message == "Text insertion was not confirmed.")
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(result.message == "done")
     }
 
-    @Test("post-action OCR verifies when text was not previously visible")
+    @Test("post-only OCR is model evidence but does not verify text")
     @MainActor
-    func postActionOCRVerifiesWhenTextWasNotPreviouslyVisible() async {
+    func postOnlyOCRIsModelEvidenceButDoesNotVerifyText() async {
         let requestedText = "hello from computer use"
         var observeCount = 0
         let runtime = ComputerUsePlannerRuntime(
@@ -1167,6 +1167,10 @@ struct ComputerUsePlannerRuntimeTests {
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .recognizeScreenshotText, screenshotID: "after"))
                 case 3:
                     #expect(request.latestWindowState.screenshotOCRText == requestedText)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
+                case 4:
+                    #expect(request.priorOutcomes.last?.status == "unverified_text")
+                    #expect(request.priorOutcomes.last?.message.contains("Text write is unverified") == true)
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
                 default:
                     Issue.record("unexpected planner step \(request.step)")
@@ -1230,9 +1234,9 @@ struct ComputerUsePlannerRuntimeTests {
         #expect(result.message == "done")
     }
 
-    @Test("post-action OCR can verify text that existed only in unrelated AX text")
+    @Test("post-only OCR does not verify text that existed only in unrelated AX text")
     @MainActor
-    func postActionOCRCanVerifyTextThatExistedOnlyInUnrelatedAXText() async {
+    func postOnlyOCRDoesNotVerifyTextThatExistedOnlyInUnrelatedAXText() async {
         let requestedText = "hello from computer use"
         let runtime = ComputerUsePlannerRuntime(
             config: AppConfig(),
@@ -1255,6 +1259,10 @@ struct ComputerUsePlannerRuntimeTests {
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .recognizeScreenshotText, screenshotID: "after"))
                 case 3:
                     #expect(request.latestWindowState.screenshotOCRText == requestedText)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
+                case 4:
+                    #expect(request.priorOutcomes.last?.status == "unverified_text")
+                    #expect(request.priorOutcomes.last?.message.contains("Text write is unverified") == true)
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
                 default:
                     Issue.record("unexpected planner step \(request.step)")
@@ -1498,7 +1506,7 @@ struct ComputerUsePlannerRuntimeTests {
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
                 case 4:
                     #expect(request.priorOutcomes.last?.status == "unverified_text")
-                    #expect(request.priorOutcomes.last?.message.contains("Cannot finish yet") == true)
+                    #expect(request.priorOutcomes.last?.message.contains("Text write is unverified") == true)
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .recognizeScreenshotText, screenshotID: "after"))
                 default:
                     #expect(request.latestWindowState.screenshotOCRText?.contains("Computer Use as the Future") == true)
@@ -1548,6 +1556,36 @@ struct ComputerUsePlannerRuntimeTests {
         #expect(ocrCalls == 1)
     }
 
+    @Test("OCR tool failures are recoverable planner feedback")
+    @MainActor
+    func ocrToolFailuresAreRecoverablePlannerFeedback() async {
+        let runtime = ComputerUsePlannerRuntime(
+            config: AppConfig(),
+            observe: { _, _, _ in
+                Self.observation(screenshot: Self.screenshot(id: "fresh"))
+            },
+            plan: { request in
+                switch request.step {
+                case 1:
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .recognizeScreenshotText, screenshotID: "stale"))
+                case 2:
+                    #expect(request.priorOutcomes.last?.tool == .recognizeScreenshotText)
+                    #expect(request.priorOutcomes.last?.status == "failed")
+                    #expect(request.priorOutcomes.last?.message.contains("Stale screenshot_id stale") == true)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .getWindowState))
+                default:
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "recovered"))
+                }
+            },
+            execute: { _, _ in .executed("Captured window state") }
+        )
+
+        let result = await runtime.run(command: "read screen")
+
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(result.message == "recovered")
+    }
+
     @Test("runtime leaves screenshot OCR empty by default")
     @MainActor
     func runtimeLeavesScreenshotOCREmptyByDefault() async {
@@ -1592,8 +1630,8 @@ struct ComputerUsePlannerRuntimeTests {
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
                 default:
                     #expect(request.priorOutcomes.last?.status == "unverified_text")
-                    #expect(request.priorOutcomes.last?.message.contains("Cannot finish yet") == true)
-                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Text was not confirmed."))
+                    #expect(request.priorOutcomes.last?.message.contains("Text write is unverified") == true)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done despite unverified text"))
                 }
             },
             execute: { _, _ in .executed("Typed text") }
@@ -1601,8 +1639,8 @@ struct ComputerUsePlannerRuntimeTests {
 
         let result = await runtime.run(command: "write hello")
 
-        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.failed)
-        #expect(result.message == "Text was not confirmed.")
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(result.message == "done despite unverified text")
     }
 
     @Test("changed action clears previous unchanged action counts")
