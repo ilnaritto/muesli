@@ -66,6 +66,16 @@ final class GoogleCalendarClient {
     private struct EventWindowScope: Equatable {
         let dayCount: Int
         let startOfDay: Date
+
+        func covers(_ scope: EventWindowScope, calendar: Calendar = .current) -> Bool {
+            guard
+                let end = calendar.date(byAdding: .day, value: dayCount, to: startOfDay),
+                let scopeEnd = calendar.date(byAdding: .day, value: scope.dayCount, to: scope.startOfDay)
+            else {
+                return false
+            }
+            return startOfDay <= scope.startOfDay && end >= scopeEnd
+        }
     }
 
     /// Stored sync token per calendar from last full fetch — subsequent requests
@@ -162,9 +172,12 @@ final class GoogleCalendarClient {
         }
 
         let merged = cachedEventsByCalendar
-            .filter {
-                cachedEventScopesByCalendar[$0.key] == windowScope ||
-                    failedCalendarIDs.contains($0.key)
+            .filter { calendarID, _ in
+                guard let cachedScope = cachedEventScopesByCalendar[calendarID] else {
+                    return false
+                }
+                return cachedScope == windowScope ||
+                    (failedCalendarIDs.contains(calendarID) && cachedScope.covers(windowScope))
             }
             .values
             .flatMap { $0.values }
