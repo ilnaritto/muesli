@@ -417,6 +417,141 @@ struct MeetingCandidateResolverTests {
         #expect(candidate?.appName == "Zoom")
     }
 
+    @Test("background Zoom plus global mic activity does not resolve")
+    func backgroundZoomPlusGlobalMicDoesNotResolve() {
+        let candidate = resolver().resolve(snapshot(
+            micActive: true,
+            cameraActive: false,
+            runningApps: [
+                RunningAppInfo(bundleID: "us.zoom.xos", isActive: false),
+            ],
+            foregroundBundleID: "com.apple.finder"
+        ))
+
+        #expect(candidate == nil)
+    }
+
+    @Test("background Zoom plus global camera activity does not resolve")
+    func backgroundZoomPlusGlobalCameraDoesNotResolve() {
+        let candidate = resolver().resolve(snapshot(
+            micActive: false,
+            cameraActive: true,
+            runningApps: [
+                RunningAppInfo(bundleID: "us.zoom.xos", isActive: false),
+            ],
+            foregroundBundleID: "com.apple.finder"
+        ))
+
+        #expect(candidate == nil)
+    }
+
+    @Test("Zoom input-only process does not resolve without stronger evidence")
+    func zoomInputOnlyProcessDoesNotResolveWithoutStrongerEvidence() {
+        let candidate = resolver().resolve(snapshot(
+            micActive: false,
+            cameraActive: false,
+            audioInputProcesses: [
+                AudioProcessActivity(
+                    pid: 4321,
+                    bundleID: "us.zoom.xos",
+                    appName: "Zoom",
+                    isRunningInput: true,
+                    isRunningOutput: false
+                ),
+            ],
+            foregroundBundleID: "com.apple.finder"
+        ))
+
+        #expect(candidate == nil)
+    }
+
+    @Test("Zoom full-duplex process resolves to Zoom")
+    func zoomFullDuplexProcessResolvesToZoom() {
+        let candidate = resolver().resolve(snapshot(
+            micActive: false,
+            cameraActive: false,
+            audioInputProcesses: [
+                AudioProcessActivity(
+                    pid: 4321,
+                    bundleID: "us.zoom.xos",
+                    appName: "Zoom",
+                    isRunningInput: true,
+                    isRunningOutput: true
+                ),
+            ],
+            foregroundBundleID: "com.apple.finder"
+        ))
+
+        #expect(candidate?.id == "app:us.zoom.xos:session:1800000000")
+        #expect(candidate?.suppressionID == candidate?.id)
+        #expect(candidate?.platform == .zoom)
+        #expect(candidate?.appName == "Zoom")
+        #expect(candidate?.sourcePID == 4321)
+    }
+
+    @Test("foreground Zoom with mic and camera resolves without audio attribution")
+    func foregroundZoomWithMicAndCameraResolvesWithoutAudioAttribution() {
+        let candidate = resolver().resolve(snapshot(
+            micActive: true,
+            cameraActive: true,
+            runningApps: [
+                RunningAppInfo(bundleID: "us.zoom.xos", isActive: true),
+            ],
+            foregroundBundleID: "us.zoom.xos"
+        ))
+
+        #expect(candidate?.id == "app:us.zoom.xos")
+        #expect(candidate?.platform == .zoom)
+        #expect(candidate?.appName == "Zoom")
+        #expect(candidate?.evidence.contains(.foregroundApp) == true)
+    }
+
+    @Test("all dedicated apps reject input-only audio attribution")
+    func allDedicatedAppsRejectInputOnlyAudioAttribution() {
+        for (bundleID, app) in MeetingCandidateResolver.dedicatedApps {
+            let candidate = resolver().resolve(snapshot(
+                micActive: false,
+                cameraActive: false,
+                audioInputProcesses: [
+                    AudioProcessActivity(
+                        pid: 4321,
+                        bundleID: bundleID,
+                        appName: app.name,
+                        isRunningInput: true,
+                        isRunningOutput: false
+                    ),
+                ],
+                foregroundBundleID: "com.apple.finder"
+            ))
+
+            #expect(candidate == nil)
+        }
+    }
+
+    @Test("all dedicated apps accept full-duplex audio attribution")
+    func allDedicatedAppsAcceptFullDuplexAudioAttribution() {
+        for (bundleID, app) in MeetingCandidateResolver.dedicatedApps {
+            let candidate = resolver().resolve(snapshot(
+                micActive: false,
+                cameraActive: false,
+                audioInputProcesses: [
+                    AudioProcessActivity(
+                        pid: 4321,
+                        bundleID: bundleID,
+                        appName: app.name,
+                        isRunningInput: true,
+                        isRunningOutput: true
+                    ),
+                ],
+                foregroundBundleID: "com.apple.finder"
+            ))
+
+            #expect(candidate?.sourceBundleID == bundleID)
+            #expect(candidate?.appName == app.name)
+            #expect(candidate?.evidence.contains(.audioInputProcess) == true)
+        }
+    }
+
     @Test("focused Meet URL is eligible before mic flips")
     func focusedMeetURLIsEligibleBeforeMicFlips() {
         let candidate = resolver().resolve(snapshot(
@@ -441,8 +576,8 @@ struct MeetingCandidateResolverTests {
         #expect(candidate?.sourceBundleID == "com.google.Chrome")
     }
 
-    @Test("Teams active audio input resolves to Teams")
-    func teamsActiveAudioInputResolvesToTeams() {
+    @Test("Teams input-only process does not resolve")
+    func teamsInputOnlyProcessDoesNotResolve() {
         let candidate = resolver().resolve(snapshot(
             micActive: false,
             cameraActive: false,
@@ -453,6 +588,25 @@ struct MeetingCandidateResolverTests {
                     appName: "Microsoft Teams",
                     isRunningInput: true,
                     isRunningOutput: false
+                ),
+            ]
+        ))
+
+        #expect(candidate == nil)
+    }
+
+    @Test("Teams full-duplex process resolves to Teams")
+    func teamsFullDuplexProcessResolvesToTeams() {
+        let candidate = resolver().resolve(snapshot(
+            micActive: false,
+            cameraActive: false,
+            audioInputProcesses: [
+                AudioProcessActivity(
+                    pid: 4321,
+                    bundleID: "com.microsoft.teams2",
+                    appName: "Microsoft Teams",
+                    isRunningInput: true,
+                    isRunningOutput: true
                 ),
             ]
         ))
@@ -601,8 +755,8 @@ struct MeetingCandidateResolverTests {
         #expect(first?.id != second?.id)
     }
 
-    @Test("WhatsApp input-only process remains eligible")
-    func whatsAppInputOnlyProcessRemainsEligible() {
+    @Test("WhatsApp input-only process does not resolve")
+    func whatsAppInputOnlyProcessDoesNotResolve() {
         let candidate = resolver().resolve(snapshot(
             micActive: false,
             cameraActive: false,
@@ -613,6 +767,26 @@ struct MeetingCandidateResolverTests {
                     appName: "WhatsApp",
                     isRunningInput: true,
                     isRunningOutput: false
+                ),
+            ],
+            foregroundBundleID: "net.whatsapp.WhatsApp"
+        ))
+
+        #expect(candidate == nil)
+    }
+
+    @Test("WhatsApp full-duplex process resolves")
+    func whatsAppFullDuplexProcessResolves() {
+        let candidate = resolver().resolve(snapshot(
+            micActive: false,
+            cameraActive: false,
+            audioInputProcesses: [
+                AudioProcessActivity(
+                    pid: 2468,
+                    bundleID: "net.whatsapp.WhatsApp",
+                    appName: "WhatsApp",
+                    isRunningInput: true,
+                    isRunningOutput: true
                 ),
             ],
             foregroundBundleID: "net.whatsapp.WhatsApp"

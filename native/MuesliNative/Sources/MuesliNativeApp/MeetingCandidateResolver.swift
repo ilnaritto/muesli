@@ -250,18 +250,13 @@ final class MeetingCandidateResolver {
         "net.whatsapp.WhatsApp": ("WhatsApp", .whatsApp),
     ]
 
-    /// Apps that are call-capable but too noisy for generic "running + mic"
-    /// detection. Electron chat apps can keep audio sessions warm while the
-    /// user is only messaging, so they need attributed full-duplex audio or a
-    /// stronger signal such as a calendar/browser meeting.
-    static let weakDedicatedAppBundleIDs: Set<String> = [
-        "com.tinyspeck.slackmacgap",
-        "net.whatsapp.WhatsApp",
-    ]
+    /// Dedicated meeting apps are too noisy for generic "running + mic"
+    /// detection. Some apps keep helper or audio sessions warm while no call is
+    /// active, so they need attributed full-duplex audio or a stronger signal
+    /// such as foreground mic+camera, calendar, or browser meeting context.
+    static let weakDedicatedAppBundleIDs: Set<String> = Set(dedicatedApps.keys)
 
-    private static let fullDuplexAudioRequiredBundleIDs: Set<String> = [
-        "com.tinyspeck.slackmacgap",
-    ]
+    private static let fullDuplexAudioRequiredBundleIDs: Set<String> = Set(dedicatedApps.keys)
 
     static let browserApps: [String: String] = [
         "com.google.Chrome": "Chrome",
@@ -433,6 +428,20 @@ final class MeetingCandidateResolver {
             )
         }
 
+        if let foregroundCameraApp = bestForegroundCameraApp(from: snapshot) {
+            return candidate(
+                id: "app:\(foregroundCameraApp.bundleID)",
+                platform: foregroundCameraApp.platform,
+                appName: foregroundCameraApp.name,
+                url: nil,
+                title: nil,
+                evidence: mediaEvidence(from: snapshot).union([.dedicatedApp, .foregroundApp]),
+                sourceBundleID: foregroundCameraApp.bundleID,
+                sourcePID: nil,
+                now: snapshot.now
+            )
+        }
+
         if let app = bestApp(from: snapshot.runningApps, includeWeakApps: false) {
             return candidate(
                 id: "app:\(app.bundleID)",
@@ -448,6 +457,22 @@ final class MeetingCandidateResolver {
         }
 
         return nil
+    }
+
+    private func bestForegroundCameraApp(
+        from snapshot: MeetingSignalSnapshot
+    ) -> (bundleID: String, name: String, platform: MeetingCandidate.Platform)? {
+        guard snapshot.micActive, snapshot.cameraActive else { return nil }
+        return snapshot.runningApps
+            .filter { $0.bundleID != selfBundleID && $0.bundleID == snapshot.foregroundBundleID && $0.isActive }
+            .compactMap { app -> (bundleID: String, name: String, platform: MeetingCandidate.Platform)? in
+                guard let match = Self.dedicatedApps[app.bundleID],
+                      Self.fullDuplexAudioRequiredBundleIDs.contains(app.bundleID) else {
+                    return nil
+                }
+                return (app.bundleID, match.name, match.platform)
+            }
+            .first
     }
 
     private func bestBrowserMeeting(from snapshot: MeetingSignalSnapshot) -> BrowserMeetingContext? {
