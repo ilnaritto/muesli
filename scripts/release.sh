@@ -198,7 +198,7 @@ RELEASE_BUILD_ENV=(
 echo "  Bundle ID: com.muesli.app"
 echo "  Profile:   $PROVISIONING_PROFILE"
 echo "  Identity:  $SIGN_IDENTITY"
-echo "y" | env "${RELEASE_BUILD_ENV[@]}" "$ROOT/scripts/build_native_app.sh" > /dev/null 2>&1
+echo "y" | env "${RELEASE_BUILD_ENV[@]}" "$ROOT/scripts/build_native_app.sh" > /dev/null
 echo "  Installed to $APP_DIR"
 if [[ ! -x "$GENERATE_APPCAST" ]]; then
   echo "ERROR: generate_appcast not found at $GENERATE_APPCAST" >&2

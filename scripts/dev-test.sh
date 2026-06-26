@@ -145,16 +145,20 @@ if [[ -n "$LANE" ]]; then
   BUILD_ENV+=(MUESLI_EXECUTABLE_NAME="$DEV_APP_NAME")
 fi
 
+use_local_only_entitlements() {
+  RESOLVED_PROVISIONING_PROFILE=""
+  RESOLVED_SIGN_IDENTITY=""
+  RESOLVED_CODESIGN_TIMESTAMP=""
+  BUILD_ENV+=(
+    MUESLI_ENTITLEMENTS="$ROOT/scripts/MuesliLocalOnly.entitlements"
+    MUESLI_PROVISIONING_PROFILE=""
+    MUESLI_APS_ENVIRONMENT=""
+  )
+}
+
 case "$ENTITLEMENTS_MODE" in
   local-only)
-    RESOLVED_PROVISIONING_PROFILE=""
-    RESOLVED_SIGN_IDENTITY=""
-    RESOLVED_CODESIGN_TIMESTAMP=""
-    BUILD_ENV+=(
-      MUESLI_ENTITLEMENTS="$ROOT/scripts/MuesliLocalOnly.entitlements"
-      MUESLI_PROVISIONING_PROFILE=""
-      MUESLI_APS_ENVIRONMENT=""
-    )
+    use_local_only_entitlements
     ;;
   cloud)
     if [[ -z "$RESOLVED_PROVISIONING_PROFILE" && "$DEV_BUNDLE_ID" == "com.muesli.dev" && -f "$DEFAULT_DEV_CLOUD_PROFILE" ]]; then
@@ -175,14 +179,7 @@ case "$ENTITLEMENTS_MODE" in
       fi
       echo "No local CloudKit profile found for $DEV_BUNDLE_ID; building local-only dev app."
       ENTITLEMENTS_MODE="local-only"
-      RESOLVED_PROVISIONING_PROFILE=""
-      RESOLVED_SIGN_IDENTITY=""
-      RESOLVED_CODESIGN_TIMESTAMP=""
-      BUILD_ENV+=(
-        MUESLI_ENTITLEMENTS="$ROOT/scripts/MuesliLocalOnly.entitlements"
-        MUESLI_PROVISIONING_PROFILE=""
-        MUESLI_APS_ENVIRONMENT=""
-      )
+      use_local_only_entitlements
     else
       if [[ -z "$RESOLVED_SIGN_IDENTITY" ]]; then
         echo "Error: cloud-entitled dev builds require MUESLI_SIGN_IDENTITY." >&2
