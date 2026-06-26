@@ -6,9 +6,9 @@ set -euo pipefail
 # - Separate bundle ID (com.muesli.dev*) — won't interfere with production Muesli
 # - Separate data directory (~/Library/Application Support/MuesliDev*/)
 # - Preserves existing dev config and database by default
-# - Plain MuesliDev uses the maintainer dev CloudKit provisioning profile when
-#   it is available locally; otherwise it falls back to local-only entitlements
-# - Named lanes default to local-only signing unless --cloud-entitlements is used
+# - Dev builds default to local-only entitlements to preserve existing TCC
+#   permissions and avoid requiring Apple Developer profiles
+# - CloudKit/APNs dev signing is opt-in with --cloud-entitlements
 # - External contributors can set MUESLI_SKIP_SIGN=1 to build without the
 #   maintainer signing certificate
 # - Uses a shared, worktree-isolated SwiftPM scratch path by default; set
@@ -41,16 +41,14 @@ Options:
 
 Default behavior without --lane is unchanged for the app identity: MuesliDev,
 com.muesli.dev, ~/Library/Application Support/MuesliDev, and
-/Applications/MuesliDev.app. It uses cloud entitlements only when a matching
-profile is available locally; otherwise it falls back to local-only entitlements.
-Named lanes default to --local-only unless --cloud-entitlements is provided.
+/Applications/MuesliDev.app. Dev builds use local-only entitlements unless
+--cloud-entitlements is provided.
 
 Cloud-entitled dev builds require a provisioning profile whose app identifier
 matches the selected bundle ID and a signing identity included by that profile.
 For the maintainer's plain MuesliDev lane, this script auto-selects the local
-com.muesli.dev CloudKit profile from ../muesli-ios/secrets when it exists.
-If --cloud-entitlements is passed explicitly, missing profile configuration is
-treated as an error.
+com.muesli.dev CloudKit profile from ../muesli-ios/secrets when
+--cloud-entitlements is provided and the profile exists.
 EOF
 }
 
@@ -119,11 +117,7 @@ case "$LANE" in
 esac
 
 if [[ -z "$ENTITLEMENTS_MODE" ]]; then
-  if [[ -n "$LANE" ]]; then
-    ENTITLEMENTS_MODE="local-only"
-  else
-    ENTITLEMENTS_MODE="cloud"
-  fi
+  ENTITLEMENTS_MODE="local-only"
 fi
 
 DEV_SUPPORT_DIR="$HOME/Library/Application Support/$DEV_APP_NAME"

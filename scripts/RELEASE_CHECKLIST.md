@@ -25,7 +25,7 @@ Muesli's default entitlements include CloudKit (`iCloud.com.mueslihq.muesli`). A
   - Use profile: `../muesli-ios/secrets/mueslimacosdevcloudkitcommueslidev.provisionprofile`
   - Use identity: `Apple Development: Pranav Hari Guruvayurappan (59WTZW55XG)`
   - Use `MUESLI_CODESIGN_TIMESTAMP=none`
-  - `scripts/dev-test.sh` auto-selects these values when that local profile exists
+  - `scripts/dev-test.sh --cloud-entitlements` auto-selects these values when that local profile exists
 
 - [ ] Named dev lanes `com.muesli.dev.a/b/c`
   - Default to local-only entitlements and do not need a CloudKit profile

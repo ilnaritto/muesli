@@ -24,12 +24,11 @@ That installs `/Applications/MuesliDev.app` with bundle ID `com.muesli.dev`
 and stores data under `~/Library/Application Support/MuesliDev/`, so it does
 not touch your production Muesli install or data.
 
-By default, `scripts/dev-test.sh` uses CloudKit/iCloud entitlements only when a
-matching local provisioning profile exists. Maintainer machines keep those
-profiles outside this repository under a sibling `muesli-ios/secrets/`
-directory. If the profile is missing, the script falls back to local-only
-entitlements. External contributors should not need Apple Developer account
-access for ordinary local development.
+By default, `scripts/dev-test.sh` uses local-only entitlements. Maintainer
+machines keep CloudKit profiles outside this repository under a sibling
+`muesli-ios/secrets/` directory, but those profiles are used only when
+`--cloud-entitlements` is passed. External contributors should not need Apple
+Developer account access for ordinary local development.
 
 Useful dev commands:
 
@@ -59,6 +58,10 @@ MUESLI_CODESIGN_TIMESTAMP=none \
 If `--cloud-entitlements` is passed explicitly and no matching profile is
 available, the script fails before building. That is expected; use
 `--local-only` for contributor builds that do not exercise iCloud sync.
+Maintainers switching an existing dev app from Developer ID/local-only signing
+to Apple Development/CloudKit signing may need to regrant macOS privacy
+permissions once because macOS tracks permissions against the app's signing
+requirement.
 
 ## Release Signing
 

@@ -258,6 +258,7 @@ if [[ "$SKIP_SIGN" != "1" ]]; then
     fi
     if [[ -n "$PROFILE_APP_IDENTIFIER" ]]; then
       PROFILE_BUNDLE_ID="${PROFILE_APP_IDENTIFIER#*.}"
+      # shellcheck disable=SC2053 # Intentionally glob-match wildcard App IDs such as com.muesli.*.
       if [[ "$BUNDLE_ID" != $PROFILE_BUNDLE_ID ]]; then
         echo "ERROR: provisioning profile app identifier '$PROFILE_APP_IDENTIFIER' does not match bundle ID '$BUNDLE_ID'." >&2
         exit 1
