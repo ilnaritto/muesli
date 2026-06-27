@@ -972,6 +972,24 @@ public final class DictationStore {
         try deleteLiveTranscriptCheckpoints(meetingID: id, db: db)
     }
 
+    /// Returns the stored raw transcript for a meeting, or `nil` if the meeting does not exist.
+    /// Used by the resume-recording flow to append new transcript onto the prior one.
+    public func meetingRawTranscript(id: Int64) throws -> String? {
+        let db = try openDatabase()
+        defer { sqlite3_close(db) }
+        let sql = "SELECT raw_transcript FROM meetings WHERE id = ? LIMIT 1"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw lastError(db)
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int64(statement, 1, id)
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            return nil
+        }
+        return stringColumn(statement, index: 0)
+    }
+
     public func appendLiveTranscriptCheckpoints(meetingID: Int64, entries: [LiveTranscriptCheckpointEntry]) throws {
         let trimmedEntries = entries.compactMap { entry -> LiveTranscriptCheckpointEntry? in
             let text = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)

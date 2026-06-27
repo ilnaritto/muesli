@@ -417,6 +417,7 @@ struct MeetingDetailView: View {
     private func headerActions(for meeting: MeetingRecord, appliedTemplate: MeetingTemplateSnapshot) -> some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: MuesliTheme.spacing8) {
+                resumeChooserIfAvailable(for: meeting)
                 templateMenu(for: meeting, appliedTemplate: appliedTemplate)
                 exportMenu(for: meeting)
                 summaryAction(for: meeting)
@@ -426,6 +427,7 @@ struct MeetingDetailView: View {
 
             VStack(alignment: .trailing, spacing: MuesliTheme.spacing8) {
                 HStack(spacing: MuesliTheme.spacing8) {
+                    resumeChooserIfAvailable(for: meeting)
                     templateMenu(for: meeting, appliedTemplate: appliedTemplate)
                     exportMenu(for: meeting)
                     summaryAction(for: meeting)
@@ -744,6 +746,15 @@ struct MeetingDetailView: View {
         }
     }
 
+    /// The resume control only makes sense on a finished meeting within the window
+    /// and when no other recording is active.
+    @ViewBuilder
+    private func resumeChooserIfAvailable(for meeting: MeetingRecord) -> some View {
+        if controller.canResumeFinishedMeeting(meeting) && !appState.isMeetingRecording {
+            resumeFollowUpChooser(for: meeting)
+        }
+    }
+
     @ViewBuilder
     private func meetingPreparationControlGroup(for meeting: MeetingRecord) -> some View {
         ViewThatFits(in: .horizontal) {
@@ -955,6 +966,45 @@ struct MeetingDetailView: View {
         .buttonStyle(.plain)
         .disabled(!appState.isMeetingRecording)
         .help(isPaused ? "Resume recording" : "Pause recording")
+    }
+
+    /// Chooser shown on a finished meeting (within the resume window, no active
+    /// recording): "Resume recording" appends to this meeting; "Start a follow-up"
+    /// is scaffolded for a later PR.
+    @ViewBuilder
+    private func resumeFollowUpChooser(for meeting: MeetingRecord) -> some View {
+        Menu {
+            Button {
+                controller.resumeFinishedMeeting(meetingID: meeting.id)
+            } label: {
+                Label("Resume recording", systemImage: "record.circle")
+            }
+            Button {
+            } label: {
+                Label("Start a follow-up (coming soon)", systemImage: "arrow.turn.down.right")
+            }
+            .disabled(true)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "record.circle")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("Resume")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundStyle(MuesliTheme.backgroundBase)
+            .padding(.horizontal, MuesliTheme.spacing12)
+            .padding(.vertical, 7)
+            .background(MuesliTheme.accent)
+            .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+            .overlay(
+                RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                    .strokeBorder(MuesliTheme.accent.opacity(0.35), lineWidth: 1)
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Resume recording or start a follow-up")
     }
 
     private var stopRecordingButton: some View {

@@ -94,6 +94,41 @@ struct MeetingSessionResult {
     let templateSnapshot: MeetingTemplateSnapshot
 }
 
+extension MeetingSessionResult {
+    /// Returns a copy with the transcript and notes replaced, optionally
+    /// preserving an earlier start time. Used by the resume-recording flow to
+    /// persist the merged (prior + new) transcript and its regenerated summary.
+    ///
+    /// When `startTime` is supplied (the original meeting's start), the duration
+    /// is recomputed as the span from that start to this session's end, so the
+    /// persisted `start_time + duration` still equals the real end and the
+    /// meeting keeps its original date instead of jumping to the resume moment.
+    func overriding(
+        startTime newStartTime: Date? = nil,
+        rawTranscript: String,
+        formattedNotes: String
+    ) -> MeetingSessionResult {
+        let resolvedStart = newStartTime ?? startTime
+        let resolvedDuration = newStartTime == nil
+            ? durationSeconds
+            : endTime.timeIntervalSince(resolvedStart)
+        return MeetingSessionResult(
+            title: title,
+            originalTitle: originalTitle,
+            calendarEventID: calendarEventID,
+            startTime: resolvedStart,
+            endTime: endTime,
+            durationSeconds: resolvedDuration,
+            rawTranscript: rawTranscript,
+            formattedNotes: formattedNotes,
+            retainedRecordingURL: retainedRecordingURL,
+            retainedRecordingError: retainedRecordingError,
+            systemRecordingURL: systemRecordingURL,
+            templateSnapshot: templateSnapshot
+        )
+    }
+}
+
 enum MeetingProcessingStage {
     case transcribingAudio
     case cleaningAudio

@@ -331,6 +331,10 @@ final class MuesliController: NSObject {
     private var importTask: Task<Void, Never>?
     private var importSessionID: UUID?
     private var canceledMeetingStartIDs = Set<Int64>()
+    /// Prior transcript captured when resuming a finished meeting, keyed by meeting id.
+    /// Present only while a resume is in flight; consumed at stop to merge old + new
+    /// transcript, and cleared on success or restored-on-failure.
+    private var pendingResumePriorTranscript: [Int64: String] = [:]
     private var iCloudSyncTask: Task<Void, Never>?
     private var iCloudSyncGeneration = 0
     private var iCloudSyncDebounceTask: Task<Void, Never>?
@@ -4013,6 +4017,102 @@ final class MuesliController: NSObject {
         startForegroundMeetingRecording(title: "Meeting")
     }
 
+    /// The moment a meeting finished recording (`start_time + duration_seconds`),
+    /// used to gate the resume window. Returns nil if the stored start time can't be parsed.
+    static func meetingEndDate(startTime: String, durationSeconds: Double) -> Date? {
+        guard let start = ISO8601DateFormatter().date(from: startTime) else { return nil }
+        return start.addingTimeInterval(durationSeconds)
+    }
+
+    /// Whether a finished meeting can be resumed right now (used to gate the UI control too).
+    func canResumeFinishedMeeting(_ meeting: MeetingRecord) -> Bool {
+        guard let endedAt = Self.meetingEndDate(
+            startTime: meeting.startTime,
+            durationSeconds: meeting.durationSeconds
+        ) else { return false }
+        return MeetingResumePolicy.canResume(status: meeting.status, endedAt: endedAt)
+    }
+
+    /// Reopens a finished meeting and appends more recording onto the *same* row
+    /// (vs. `startMeetingRecording`, which creates a new row). Mirrors the start
+    /// scaffolding but skips `createLiveMeeting` and reuses the existing meeting id.
+    /// Named distinctly from `MeetingSession.resume()` (the in-session un-pause).
+    func resumeFinishedMeeting(meetingID: Int64) {
+        guard !isMeetingRecording(), !isStartingMeetingRecording else { return }
+        guard let meeting = meeting(id: meetingID), canResumeFinishedMeeting(meeting) else { return }
+        guard let meetingBackend = normalizeMeetingTranscriptionSelectionForAvailability() else {
+            presentErrorAlert(
+                title: "Resume failed",
+                message: "Download a transcription model before recording."
+            )
+            return
+        }
+
+        // Capture the prior transcript now; merged with the new recording at stop.
+        pendingResumePriorTranscript[meetingID] = (try? dictationStore.meetingRawTranscript(id: meetingID)) ?? meeting.rawTranscript
+
+        // REUSE the existing row — do NOT call createLiveMeeting.
+        activeMeetingID = meetingID
+        activeMeetingAudioWarning = nil
+        updateMeetingStatusAndScheduleSync(id: meetingID, status: .recording)
+        syncAppState()
+
+        armMeetingAutoStop(source: recentMeetingAutoStopSource())
+        isStartingMeetingRecording = true
+        cancelDictationAudioSessionForMeetingRecordingIfNeeded()
+        syncDictationRecorderWarmup(intent: .idlePrewarm(.meetingStateChanged))
+        meetingStartMeetingID = meetingID
+        updateMeetingStartStatus("Resuming meeting recording…")
+        indicator.setState(.preparing, config: config)
+        beginMeetingActivity(reason: "Recording and transcribing a meeting")
+        meetingMonitor.suppressWhileActive()
+        meetingMonitor.refreshState()
+        updateMeetingNotificationVisibility()
+
+        meetingStartTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try Task.checkCancellation()
+                try await self.startMeetingRecordingWithSystemAudioRecovery(
+                    title: meeting.title,
+                    calendarEventID: meeting.calendarEventID,
+                    meetingID: meetingID,
+                    backend: meetingBackend,
+                    endDate: nil
+                )
+            } catch is CancellationError {
+                if self.meetingStartMeetingID == meetingID {
+                    self.disarmMeetingAutoStop()
+                    self.resolveLiveMeetingAfterStartFailure(id: meetingID)
+                    self.cancelMeetingRecordingHotkeyToggleAfterFailedStart(meetingID: meetingID)
+                    self.meetingMonitor.resumeAfterCooldown()
+                    self.meetingMonitor.refreshState()
+                    self.statusBarController?.setStatus("Idle")
+                    self.statusBarController?.refresh()
+                    self.setState(.idle)
+                    self.endMeetingActivity()
+                    self.syncDictationRecorderWarmup(intent: .idlePrewarm(.meetingStateChanged))
+                }
+            } catch {
+                if self.meetingStartMeetingID == meetingID {
+                    fputs("[muesli-native] failed to resume meeting: \(error)\n", stderr)
+                    self.disarmMeetingAutoStop()
+                    self.resolveLiveMeetingAfterStartFailure(id: meetingID)
+                    self.cancelMeetingRecordingHotkeyToggleAfterFailedStart(meetingID: meetingID)
+                    self.meetingMonitor.resumeAfterCooldown()
+                    self.meetingMonitor.refreshState()
+                    self.statusBarController?.setStatus("Idle")
+                    self.statusBarController?.refresh()
+                    self.setState(.idle)
+                    self.endMeetingActivity()
+                    self.syncDictationRecorderWarmup(intent: .idlePrewarm(.meetingStateChanged))
+                    self.presentMeetingStartFailureAlert(error: error)
+                }
+            }
+            self.finishMeetingStartAttempt(meetingID: meetingID)
+        }
+    }
+
     // MARK: - Audio File Import
 
     /// Presents a file picker and imports an audio file for offline transcription.
@@ -4639,7 +4739,26 @@ final class MuesliController: NSObject {
         clearCachedMeetingTitle(id: id)
     }
 
+    /// If `id` is a resume in flight, restore it to its prior `.completed` state
+    /// instead of deleting/failing it — the meeting pre-existed and must not be lost.
+    /// Returns true when it handled the meeting.
+    @discardableResult
+    private func restoreResumedMeetingIfNeeded(id: Int64) -> Bool {
+        guard pendingResumePriorTranscript[id] != nil else { return false }
+        pendingResumePriorTranscript[id] = nil
+        updateMeetingStatusAndScheduleSync(id: id, status: .completed)
+        if activeMeetingID == id {
+            activeMeetingID = nil
+        }
+        if activeMeetingAudioWarning?.meetingID == id {
+            activeMeetingAudioWarning = nil
+        }
+        syncAppState()
+        return true
+    }
+
     private func resolveLiveMeetingAfterStartFailure(id: Int64) {
+        if restoreResumedMeetingIfNeeded(id: id) { return }
         let manualNotes = manualNotesForLiveMeeting(id: id)
         if manualNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             deleteMeetingDraftAndScheduleSync(id: id)
@@ -4667,6 +4786,7 @@ final class MuesliController: NSObject {
     }
 
     private func resolveLiveMeetingAfterStopFailure(id: Int64) {
+        if restoreResumedMeetingIfNeeded(id: id) { return }
         let manualNotes = manualNotesForLiveMeeting(id: id)
         if manualNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             deleteMeetingDraftAndScheduleSync(id: id)
@@ -4786,7 +4906,8 @@ final class MuesliController: NSObject {
             var meetingResult: MeetingSessionResult?
             var failedLiveMeetingID: Int64?
             do {
-                let result = try await sessionToStop.stop()
+                let stopped = try await sessionToStop.stop()
+                let result = await self.mergedResumeResult(for: stopped, meetingID: liveMeetingID)
                 meetingResult = result
                 meetingTitle = result.title
                 await MainActor.run {
@@ -4823,6 +4944,9 @@ final class MuesliController: NSObject {
                 self.backgroundMeetingProcessingCount -= 1
                 if let failedLiveMeetingID {
                     self.resolveLiveMeetingAfterStopFailure(id: failedLiveMeetingID)
+                } else if let liveMeetingID {
+                    // Resume merged + persisted successfully — drop the prior-transcript marker.
+                    self.pendingResumePriorTranscript[liveMeetingID] = nil
                 }
                 if !self.isMeetingRecording() && !self.isStartingMeetingRecording && self.backgroundMeetingProcessingCount == 0 {
                     self.setState(.idle)
@@ -4963,6 +5087,56 @@ final class MuesliController: NSObject {
             config: config
         )
         return persistenceResult
+    }
+
+    /// For a resumed meeting, concatenates the prior transcript with the newly
+    /// recorded one and regenerates the summary over the combined text. Returns the
+    /// stop result unchanged when this meeting is not a resume. Does not clear the
+    /// pending-transcript marker — that happens on successful persist or failure restore.
+    private func mergedResumeResult(
+        for result: MeetingSessionResult,
+        meetingID: Int64?
+    ) async -> MeetingSessionResult {
+        guard let meetingID,
+              let prior = pendingResumePriorTranscript[meetingID],
+              !prior.isEmpty else {
+            return result
+        }
+        let manualNotes = manualNotesForLiveMeeting(id: meetingID)
+        let combined = MeetingResumePolicy.combinedResumeTranscript(
+            prior: prior,
+            new: result.rawTranscript
+        )
+        let regeneratedNotes: String
+        do {
+            regeneratedNotes = try await MeetingSummaryClient.summarize(
+                transcript: combined,
+                meetingTitle: result.title,
+                config: config,
+                template: result.templateSnapshot,
+                existingNotes: nil,
+                manualNotesToRetain: manualNotes,
+                visualContext: nil
+            )
+        } catch {
+            fputs("[muesli-native] resume summary regeneration failed: \(error.localizedDescription)\n", stderr)
+            regeneratedNotes = MeetingSummaryClient.summaryFailureNotes(
+                transcript: combined,
+                meetingTitle: result.title,
+                error: error,
+                manualNotes: manualNotes
+            )
+        }
+        // Preserve the original meeting start so resuming doesn't reset the meeting's
+        // date/duration to the resumed session. The row still holds the original start
+        // at this point (resume only flips status to .recording).
+        let originalStart = meeting(id: meetingID)
+            .flatMap { ISO8601DateFormatter().date(from: $0.startTime) }
+        return result.overriding(
+            startTime: originalStart,
+            rawTranscript: combined,
+            formattedNotes: regeneratedNotes
+        )
     }
 
     private func persistMeetingRecordingIfNeeded(

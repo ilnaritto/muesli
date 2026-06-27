@@ -212,6 +212,25 @@ struct DictationStoreTests {
         #expect(inserted.source == .audioImport)
     }
 
+    @Test("meetingRawTranscript returns the stored transcript")
+    func meetingRawTranscriptReturnsStoredTranscript() throws {
+        let store = try makeStore()
+        let id = try store.createLiveMeeting(
+            title: "Standup",
+            calendarEventID: nil,
+            startTime: Date()
+        )
+        try store.updateMeetingTranscript(id: id, rawTranscript: "Hello from the meeting")
+
+        #expect(try store.meetingRawTranscript(id: id) == "Hello from the meeting")
+    }
+
+    @Test("meetingRawTranscript returns nil for a missing meeting")
+    func meetingRawTranscriptReturnsNilForMissingMeeting() throws {
+        let store = try makeStore()
+        #expect(try store.meetingRawTranscript(id: 999_999) == nil)
+    }
+
     @Test("synced iOS dictation preserves source and is clean")
     func syncedIOSDictationPreservesSource() throws {
         let store = try makeStore()
