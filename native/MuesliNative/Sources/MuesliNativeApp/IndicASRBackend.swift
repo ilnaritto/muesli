@@ -47,6 +47,7 @@ enum IndicASRLanguage: String, CaseIterable, Codable, Sendable {
 
 private enum IndicASRConfig {
     static let repoId = "phequals/indic-conformer-600m-multilingual-coreml-rnnt"
+    static let repoRevision = "bf83cff5a5c167f3a08c9ac3461ac8babd88c0a7"
     static let envOverride = "MUESLI_INDIC_ASR_MODEL_DIR"
 
     static let encoderPackage = "indic_conformer_encoder_int8.mlpackage"
@@ -83,6 +84,7 @@ private enum IndicASRConfig {
     ]
 
     static let requiredLanguagePackages = IndicASRLanguage.allCases.map(\.jointPostNetPackage)
+    static let packagesWithExternalWeights = Set(requiredSharedPackages + requiredLanguagePackages).subtracting([jointPreNetPackage])
     // Keep the full exported metadata set in the cache even though the current
     // RNNT path uses language-specific post-nets instead of reading masks.
     static let requiredMetadataFiles = [vocabFile, languageMasksFile, configFile, preprocessorConstantsFile]
@@ -96,6 +98,17 @@ private enum IndicASRConfig {
 
     static func metadataRelativePath(_ fileName: String) -> String {
         "metadata/\(fileName)"
+    }
+
+    static func requiredPackageContents(_ packageName: String) -> [String] {
+        var files = [
+            "Manifest.json",
+            "Data/com.apple.CoreML/model.mlmodel",
+        ]
+        if packagesWithExternalWeights.contains(packageName) {
+            files.append("Data/com.apple.CoreML/weights/weight.bin")
+        }
+        return files
     }
 
     static var defaultCacheDirectory: URL {
@@ -212,7 +225,12 @@ enum IndicASRModelStore {
             let packageURL = layout.packageURL(packageName)
             let compiledURL = layout.compiledURL(packageName)
             let compiledData = compiledURL.appendingPathComponent("coremldata.bin")
-            return fm.fileExists(atPath: packageURL.path) || fm.fileExists(atPath: compiledData.path)
+            if fm.fileExists(atPath: compiledData.path) {
+                return true
+            }
+            return IndicASRConfig.requiredPackageContents(packageName).allSatisfy { relativePath in
+                fm.fileExists(atPath: packageURL.appendingPathComponent(relativePath).path)
+            }
         }
         let hasMetadata = IndicASRConfig.requiredMetadataFiles.allSatisfy { fileName in
             fm.fileExists(atPath: layout.metadataURL(fileName).path)
@@ -221,7 +239,7 @@ enum IndicASRModelStore {
     }
 
     private static func remoteURL(for relativePath: String) -> URL {
-        var url = URL(string: "https://huggingface.co/\(IndicASRConfig.repoId)/resolve/main")!
+        var url = URL(string: "https://huggingface.co/\(IndicASRConfig.repoId)/resolve/\(IndicASRConfig.repoRevision)")!
         for component in relativePath.split(separator: "/") {
             url.appendPathComponent(String(component), isDirectory: false)
         }
@@ -235,10 +253,7 @@ enum IndicASRModelStore {
         let packages = IndicASRConfig.requiredSharedPackages + IndicASRConfig.requiredLanguagePackages
         let packageFiles = packages.flatMap { packageName in
             let packageDirectory = IndicASRConfig.packageRelativeDirectory(packageName)
-            return [
-                "\(packageDirectory)/Manifest.json",
-                "\(packageDirectory)/Data/com.apple.CoreML/model.mlmodel",
-            ]
+            return IndicASRConfig.requiredPackageContents(packageName).map { "\(packageDirectory)/\($0)" }
         }
         let metadataFiles = IndicASRConfig.requiredMetadataFiles.map(IndicASRConfig.metadataRelativePath)
         let required = packageFiles + metadataFiles
