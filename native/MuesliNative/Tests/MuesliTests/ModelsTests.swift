@@ -698,7 +698,7 @@ struct AppConfigTests {
         #expect(config.hasCompletedOnboarding == false)
         #expect(config.resolvedOnboardingUseCase == .dictation)
         #expect(config.defaultMeetingTemplateID == MeetingTemplates.autoID)
-        #expect(config.upcomingMeetingsDayCount == UpcomingMeetingsWindow.defaultDayCount)
+        #expect(config.upcomingMeetingsDayCount == UpcomingMeetingsWindow.threeDays.dayCount)
         #expect(config.hiddenCalendarEventSourceHints.isEmpty)
         #expect(config.meetingRecordingSavePolicy == .never)
         #expect(config.showScheduledMeetingNotifications == true)

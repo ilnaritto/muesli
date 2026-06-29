@@ -1099,9 +1099,13 @@ struct AppConfig: Codable {
         whisperModel = (try? c.decode(String.self, forKey: .whisperModel)) ?? defaults.whisperModel
         idleTimeout = (try? c.decode(Double.self, forKey: .idleTimeout)) ?? defaults.idleTimeout
         autoRecordMeetings = (try? c.decode(Bool.self, forKey: .autoRecordMeetings)) ?? defaults.autoRecordMeetings
-        upcomingMeetingsDayCount = UpcomingMeetingsWindow
-            .resolve(dayCount: try? c.decode(Int.self, forKey: .upcomingMeetingsDayCount))
-            .dayCount
+        if c.contains(.upcomingMeetingsDayCount) {
+            upcomingMeetingsDayCount = UpcomingMeetingsWindow
+                .resolve(dayCount: try? c.decode(Int.self, forKey: .upcomingMeetingsDayCount))
+                .dayCount
+        } else {
+            upcomingMeetingsDayCount = UpcomingMeetingsWindow.threeDays.dayCount
+        }
         let decodedShowMeetingDetectionNotification = try? c.decode(Bool.self, forKey: .showMeetingDetectionNotification)
         showScheduledMeetingNotifications =
             (try? c.decode(Bool.self, forKey: .showScheduledMeetingNotifications))

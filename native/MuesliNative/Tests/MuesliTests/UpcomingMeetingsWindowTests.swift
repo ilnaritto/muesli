@@ -49,6 +49,14 @@ struct UpcomingMeetingsWindowTests {
         #expect(config.upcomingMeetingsDayCount == UpcomingMeetingsWindow.defaultDayCount)
     }
 
+    @Test("legacy config without persisted day count preserves widest coverage")
+    func legacyConfigWithoutPersistedDayCountPreservesWidestCoverage() throws {
+        let data = #"{}"#.data(using: .utf8)!
+        let config = try JSONDecoder().decode(AppConfig.self, from: data)
+
+        #expect(config.upcomingMeetingsDayCount == UpcomingMeetingsWindow.threeDays.dayCount)
+    }
+
     @Test("hidden events outside narrowed windows are preserved")
     func hiddenEventsOutsideNarrowedWindowsArePreserved() {
         let staleIDs = UpcomingMeetingsWindow.staleHiddenEventIDs(
