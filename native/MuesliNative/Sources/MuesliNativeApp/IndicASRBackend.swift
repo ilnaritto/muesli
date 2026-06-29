@@ -47,7 +47,7 @@ enum IndicASRLanguage: String, CaseIterable, Codable, Sendable {
 
 private enum IndicASRConfig {
     static let repoId = "phequals/indic-conformer-600m-multilingual-coreml-rnnt"
-    static let repoRevision = "bf83cff5a5c167f3a08c9ac3461ac8babd88c0a7"
+    static let repoRevision = "5590d07c06e95d461790ff753d4af536f0660197"
     static let envOverride = "MUESLI_INDIC_ASR_MODEL_DIR"
 
     static let encoderPackage = "indic_conformer_encoder_int8.mlpackage"
@@ -85,6 +85,7 @@ private enum IndicASRConfig {
 
     static let requiredLanguagePackages = IndicASRLanguage.allCases.map(\.jointPostNetPackage)
     static let packagesWithExternalWeights = Set(requiredSharedPackages + requiredLanguagePackages).subtracting([jointPreNetPackage])
+    static let packagesWithEmptyWeightsDirectory = Set([jointPreNetPackage])
     // Keep the full exported metadata set in the cache even though the current
     // RNNT path uses language-specific post-nets instead of reading masks.
     static let requiredMetadataFiles = [vocabFile, languageMasksFile, configFile, preprocessorConstantsFile]
@@ -109,6 +110,10 @@ private enum IndicASRConfig {
             files.append("Data/com.apple.CoreML/weights/weight.bin")
         }
         return files
+    }
+
+    static func emptyWeightsDirectoryRelativePath(_ packageName: String) -> String {
+        "\(packageRelativeDirectory(packageName))/Data/com.apple.CoreML/weights"
     }
 
     static var defaultCacheDirectory: URL {
@@ -265,6 +270,10 @@ enum IndicASRModelStore {
             if fm.fileExists(atPath: compiledData.path) {
                 return true
             }
+            if IndicASRConfig.packagesWithEmptyWeightsDirectory.contains(packageName),
+               !fm.fileExists(atPath: packageURL.appendingPathComponent("Data/com.apple.CoreML/weights", isDirectory: true).path) {
+                return false
+            }
             return IndicASRConfig.requiredPackageContents(packageName).allSatisfy { relativePath in
                 fm.fileExists(atPath: packageURL.appendingPathComponent(relativePath).path)
             }
@@ -313,6 +322,10 @@ enum IndicASRModelStore {
             let destination = directory.appendingPathComponent(relativePath)
             try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
             try await downloadWithRetry(from: remoteURL(for: relativePath), to: destination)
+        }
+        for packageName in IndicASRConfig.packagesWithEmptyWeightsDirectory {
+            let weightsDirectory = directory.appendingPathComponent(IndicASRConfig.emptyWeightsDirectoryRelativePath(packageName), isDirectory: true)
+            try fm.createDirectory(at: weightsDirectory, withIntermediateDirectories: true)
         }
         progress?(1.0, "Indic ASR download complete")
     }
@@ -641,6 +654,12 @@ private struct IndicASRModels {
         if FileManager.default.fileExists(atPath: compiledURL.path) {
             modelURL = compiledURL
         } else {
+            if IndicASRConfig.packagesWithEmptyWeightsDirectory.contains(packageName) {
+                try FileManager.default.createDirectory(
+                    at: packageURL.appendingPathComponent("Data/com.apple.CoreML/weights", isDirectory: true),
+                    withIntermediateDirectories: true
+                )
+            }
             let compiledTemp = try await MLModel.compileModel(at: packageURL)
             try? FileManager.default.removeItem(at: compiledURL)
             try FileManager.default.copyItem(at: compiledTemp, to: compiledURL)
@@ -763,28 +782,137 @@ actor IndicASRTranscriber {
 private struct IndicASRRNNTGreedyDecoder {
     let models: IndicASRModels
 
+    private struct DecodedChunk {
+        let tokenIds: [Int]
+        let tokenFrames: [Int]
+        let text: String
+    }
+
+    private struct DecoderResult {
+        let outputs: MLMultiArray
+        let hState: MLMultiArray
+        let cState: MLMultiArray
+    }
+
+    private struct DecoderState {
+        var hState: MLMultiArray
+        var cState: MLMultiArray
+        var previousToken: Int
+        var cachedResult: DecoderResult?
+        var cachedPredFrame: MLMultiArray?
+
+        mutating func consume(_ result: DecoderResult, emittedToken: Int) throws {
+            previousToken = emittedToken
+            hState = try IndicASRRNNTGreedyDecoder.copyAsFloat32(result.hState)
+            cState = try IndicASRRNNTGreedyDecoder.copyAsFloat32(result.cState)
+            cachedResult = nil
+            cachedPredFrame = nil
+        }
+    }
+
+    private final class DecodeWorkspace {
+        let encoderFrameInput: MLMultiArray
+        let decoderFrameInput: MLMultiArray
+        let jointInput: MLMultiArray
+        let tokenArray: MLMultiArray
+        let tokenLength: MLMultiArray
+        let jointEncInputProvider: MLDictionaryFeatureProvider
+        let jointPredInputProvider: MLDictionaryFeatureProvider
+        let jointPreNetInputProvider: MLDictionaryFeatureProvider
+
+        init() throws {
+            encoderFrameInput = try MLMultiArray(
+                shape: [1, 1, NSNumber(value: IndicASRConfig.encoderDim)],
+                dataType: .float32
+            )
+            decoderFrameInput = try MLMultiArray(
+                shape: [1, 1, NSNumber(value: IndicASRConfig.predHiddenDim)],
+                dataType: .float32
+            )
+            jointInput = try MLMultiArray(
+                shape: [1, 1, NSNumber(value: IndicASRConfig.predHiddenDim)],
+                dataType: .float32
+            )
+            tokenArray = try MLMultiArray(shape: [1, 1], dataType: .int32)
+            tokenLength = try MLMultiArray(shape: [1], dataType: .int32)
+            tokenLength[0] = NSNumber(value: Int32(1))
+            jointEncInputProvider = try MLDictionaryFeatureProvider(dictionary: [
+                "input": MLFeatureValue(multiArray: encoderFrameInput),
+            ])
+            jointPredInputProvider = try MLDictionaryFeatureProvider(dictionary: [
+                "input": MLFeatureValue(multiArray: decoderFrameInput),
+            ])
+            jointPreNetInputProvider = try MLDictionaryFeatureProvider(dictionary: [
+                "input": MLFeatureValue(multiArray: jointInput),
+            ])
+        }
+    }
+
+    private struct EncoderFrameView {
+        let encoded: MLMultiArray
+        let frameCount: Int
+        let strides: [Int]
+
+        init(encoded: MLMultiArray, encodedFrameCount: Int) throws {
+            let shape = encoded.shape.map(\.intValue)
+            let strides = encoded.strides.map(\.intValue)
+            guard shape.count == 3, strides.count == 3 else {
+                throw NSError(domain: "IndicASR", code: 40, userInfo: [
+                    NSLocalizedDescriptionKey: "Unexpected Indic ASR encoder output rank \(shape.count); expected [batch, encoderDim, frames]. Shape: \(encoded.shape).",
+                ])
+            }
+            guard shape[1] == IndicASRConfig.encoderDim else {
+                throw NSError(domain: "IndicASR", code: 42, userInfo: [
+                    NSLocalizedDescriptionKey: "Unexpected Indic ASR encoder hidden dimension \(shape[1]); expected \(IndicASRConfig.encoderDim). Shape: \(encoded.shape).",
+                ])
+            }
+            let frameCapacity = shape[2]
+            self.frameCount = min(max(encodedFrameCount, 0), frameCapacity)
+            self.encoded = encoded
+            self.strides = strides
+        }
+
+        func copyFrame(_ frameIndex: Int, into destination: MLMultiArray) throws {
+            guard frameIndex >= 0, frameIndex < frameCount else {
+                throw NSError(domain: "IndicASR", code: 43, userInfo: [
+                    NSLocalizedDescriptionKey: "Indic ASR frame index \(frameIndex) is outside available frame count \(frameCount).",
+                ])
+            }
+            let ptr = destination.dataPointer.bindMemory(to: Float.self, capacity: IndicASRConfig.encoderDim)
+            for dim in 0..<IndicASRConfig.encoderDim {
+                let sourceOffset = strides[1] * dim + strides[2] * frameIndex
+                ptr[dim] = IndicASRRNNTGreedyDecoder.floatValue(encoded, offset: sourceOffset)
+            }
+        }
+    }
+
     func transcribe(audioSamples: [Float], language: IndicASRLanguage) async throws -> String {
         let sampleRate = IndicASRConfig.sampleRate
         let chunkSize = max(1, Int(IndicASRConfig.chunkSeconds * Double(sampleRate)))
         let stepSize = max(1, Int((IndicASRConfig.chunkSeconds - IndicASRConfig.overlapSeconds) * Double(sampleRate)))
-        var transcripts: [String] = []
+        var chunks: [DecodedChunk] = []
         var start = 0
 
         while start < audioSamples.count {
             let end = min(start + chunkSize, audioSamples.count)
             let chunk = Array(audioSamples[start..<end])
-            let chunkText = try await transcribeChunk(audioSamples: chunk, language: language)
-            if !chunkText.isEmpty {
-                transcripts.append(chunkText)
+            let decoded = try await transcribeChunk(audioSamples: chunk, language: language)
+            if !decoded.tokenIds.isEmpty || !decoded.text.isEmpty {
+                chunks.append(decoded)
             }
             if end == audioSamples.count { break }
             start += stepSize
         }
 
-        return IndicASRTranscriptMerger.mergeOverlappingTranscripts(transcripts)
+        guard !chunks.isEmpty else { return "" }
+        let tokenMerge = mergeOverlappingTokenChunks(chunks.map(\.tokenIds))
+        if tokenMerge.appliedOverlap {
+            return models.tokenizer.decode(tokenMerge.tokenIds, language: language)
+        }
+        return IndicASRTranscriptMerger.mergeOverlappingTranscripts(chunks.map(\.text))
     }
 
-    private func transcribeChunk(audioSamples: [Float], language: IndicASRLanguage) async throws -> String {
+    private func transcribeChunk(audioSamples: [Float], language: IndicASRLanguage) async throws -> DecodedChunk {
         guard let jointPostNet = models.jointPostNets[language] else {
             throw NSError(domain: "IndicASR", code: 30, userInfo: [
                 NSLocalizedDescriptionKey: "Missing Indic ASR joint post-net for \(language.label).",
@@ -811,14 +939,21 @@ private struct IndicASRRNNTGreedyDecoder {
 
         let encodedFrameCount = min(max(encodedLengths[0].intValue, 0), IndicASRConfig.melFrames)
         IndicASRLogging.logVerbose("encoded frames=\(encodedFrameCount), encoded shape=\(encoded.shape)")
-        guard encodedFrameCount > 0 else { return "" }
+        guard encodedFrameCount > 0 else {
+            return DecodedChunk(tokenIds: [], tokenFrames: [], text: "")
+        }
 
-        var hState = try zeroFloatArray(shape: [IndicASRConfig.predLayers, 1, IndicASRConfig.predHiddenDim])
-        var cState = try zeroFloatArray(shape: [IndicASRConfig.predLayers, 1, IndicASRConfig.predHiddenDim])
-        var previousToken = IndicASRConfig.sosId
+        let encoderFrames = try EncoderFrameView(encoded: encoded, encodedFrameCount: encodedFrameCount)
+        let workspace = try DecodeWorkspace()
+        var decoderState = try DecoderState(
+            hState: zeroFloatArray(shape: [IndicASRConfig.predLayers, 1, IndicASRConfig.predHiddenDim]),
+            cState: zeroFloatArray(shape: [IndicASRConfig.predLayers, 1, IndicASRConfig.predHiddenDim]),
+            previousToken: IndicASRConfig.sosId
+        )
         var tokenIds: [Int] = []
+        var tokenFrames: [Int] = []
 
-        for frameIndex in 0..<encodedFrameCount {
+        for frameIndex in 0..<encoderFrames.frameCount {
             if frameIndex > 0 && frameIndex % 10 == 0 {
                 try Task.checkCancellation()
                 await Task.yield()
@@ -826,16 +961,27 @@ private struct IndicASRRNNTGreedyDecoder {
             if frameIndex > 0 && frameIndex % 100 == 0 {
                 IndicASRLogging.logVerbose("decoded frame \(frameIndex)/\(encodedFrameCount), tokens=\(tokenIds.count)")
             }
-            let encFrame = try await runJointEncFrame(encoded: encoded, frameIndex: frameIndex)
+            let encFrame = try await runJointEncFrame(encoderFrames: encoderFrames, frameIndex: frameIndex, workspace: workspace)
 
             for _ in 0..<IndicASRConfig.rnntMaxSymbols {
-                let decoderResult = try await runDecoder(previousToken: previousToken, hState: hState, cState: cState)
-                let predFrame = try await runJointPred(decoderResult.outputs)
-                let jointInput = try addArrays(encFrame, predFrame, shape: [1, 1, IndicASRConfig.predHiddenDim])
+                let decoderResult: DecoderResult
+                let predFrame: MLMultiArray
+                if let cachedResult = decoderState.cachedResult,
+                   let cachedPredFrame = decoderState.cachedPredFrame {
+                    decoderResult = cachedResult
+                    predFrame = cachedPredFrame
+                } else {
+                    let result = try await runDecoder(state: decoderState, workspace: workspace)
+                    let projected = try await runJointPred(result.outputs, workspace: workspace)
+                    decoderState.cachedResult = result
+                    decoderState.cachedPredFrame = projected
+                    decoderResult = result
+                    predFrame = projected
+                }
+                try addArrays(encFrame, predFrame, into: workspace.jointInput)
                 let preNetOutput = try await predict(
                     model: models.jointPreNet,
-                    inputName: "input",
-                    input: jointInput,
+                    provider: workspace.jointPreNetInputProvider,
                     outputName: "output"
                 )
                 let logits = try await predict(
@@ -850,43 +996,28 @@ private struct IndicASRRNNTGreedyDecoder {
                 }
 
                 tokenIds.append(predicted)
-                previousToken = predicted
-                hState = try copyAsFloat32(decoderResult.hState)
-                cState = try copyAsFloat32(decoderResult.cState)
+                tokenFrames.append(frameIndex)
+                try decoderState.consume(decoderResult, emittedToken: predicted)
             }
         }
 
         let text = models.tokenizer.decode(tokenIds, language: language)
         IndicASRLogging.logVerbose("decoded tokens=\(tokenIds.count), text chars=\(text.count)")
-        return text
+        return DecodedChunk(tokenIds: tokenIds, tokenFrames: tokenFrames, text: text)
     }
 
-    private func runJointEncFrame(encoded: MLMultiArray, frameIndex: Int) async throws -> MLMultiArray {
-        let input = try MLMultiArray(shape: [1, 1, NSNumber(value: IndicASRConfig.encoderDim)], dataType: .float32)
-        let ptr = input.dataPointer.bindMemory(to: Float.self, capacity: IndicASRConfig.encoderDim)
-        let encodedStrides = encoded.strides.map(\.intValue)
-        guard encodedStrides.count >= 3 else {
-            throw NSError(domain: "IndicASR", code: 40, userInfo: [
-                NSLocalizedDescriptionKey: "Unexpected Indic ASR encoder output rank \(encodedStrides.count); expected at least 3. Shape: \(encoded.shape).",
-            ])
-        }
-        for dim in 0..<IndicASRConfig.encoderDim {
-            let sourceOffset = encodedStrides[1] * dim + encodedStrides[2] * frameIndex
-            ptr[dim] = floatValue(encoded, offset: sourceOffset)
-        }
-        return try await predict(model: models.jointEnc, inputName: "input", input: input, outputName: "output")
+    private func runJointEncFrame(encoderFrames: EncoderFrameView, frameIndex: Int, workspace: DecodeWorkspace) async throws -> MLMultiArray {
+        try encoderFrames.copyFrame(frameIndex, into: workspace.encoderFrameInput)
+        return try await predict(model: models.jointEnc, provider: workspace.jointEncInputProvider, outputName: "output")
     }
 
-    private func runDecoder(previousToken: Int, hState: MLMultiArray, cState: MLMultiArray) async throws -> (outputs: MLMultiArray, hState: MLMultiArray, cState: MLMultiArray) {
-        let tokenArray = try MLMultiArray(shape: [1, 1], dataType: .int32)
-        tokenArray[0] = NSNumber(value: Int32(previousToken))
-        let tokenLength = try MLMultiArray(shape: [1], dataType: .int32)
-        tokenLength[0] = NSNumber(value: Int32(1))
+    private func runDecoder(state: DecoderState, workspace: DecodeWorkspace) async throws -> DecoderResult {
+        workspace.tokenArray[0] = NSNumber(value: Int32(state.previousToken))
         let input = try MLDictionaryFeatureProvider(dictionary: [
-            "targets": MLFeatureValue(multiArray: tokenArray),
-            "target_length": MLFeatureValue(multiArray: tokenLength),
-            "states_1": MLFeatureValue(multiArray: hState),
-            "cell_state_in": MLFeatureValue(multiArray: cState),
+            "targets": MLFeatureValue(multiArray: workspace.tokenArray),
+            "target_length": MLFeatureValue(multiArray: workspace.tokenLength),
+            "states_1": MLFeatureValue(multiArray: state.hState),
+            "cell_state_in": MLFeatureValue(multiArray: state.cState),
         ])
         let output = try await models.decoder.prediction(from: input)
         guard let decoderOutputs = output.featureValue(for: "outputs")?.multiArrayValue,
@@ -896,28 +1027,37 @@ private struct IndicASRRNNTGreedyDecoder {
                 NSLocalizedDescriptionKey: "Indic ASR RNNT decoder did not return expected state outputs.",
             ])
         }
-        return (decoderOutputs, nextHState, nextCState)
+        return DecoderResult(outputs: decoderOutputs, hState: nextHState, cState: nextCState)
     }
 
-    private func runJointPred(_ decoderOutputs: MLMultiArray) async throws -> MLMultiArray {
-        let input = try MLMultiArray(shape: [1, 1, NSNumber(value: IndicASRConfig.predHiddenDim)], dataType: .float32)
-        let ptr = input.dataPointer.bindMemory(to: Float.self, capacity: IndicASRConfig.predHiddenDim)
+    private func runJointPred(_ decoderOutputs: MLMultiArray, workspace: DecodeWorkspace) async throws -> MLMultiArray {
+        let shape = decoderOutputs.shape.map(\.intValue)
         let strides = decoderOutputs.strides.map(\.intValue)
-        guard strides.count >= 2 else {
+        guard shape.count >= 2, strides.count >= 2 else {
             throw NSError(domain: "IndicASR", code: 41, userInfo: [
-                NSLocalizedDescriptionKey: "Unexpected Indic ASR decoder output rank \(strides.count); expected at least 2. Shape: \(decoderOutputs.shape).",
+                NSLocalizedDescriptionKey: "Unexpected Indic ASR decoder output rank \(shape.count); expected at least 2. Shape: \(decoderOutputs.shape).",
             ])
         }
-        for dim in 0..<IndicASRConfig.predHiddenDim {
-            ptr[dim] = floatValue(decoderOutputs, offset: strides[1] * dim)
+        guard shape[1] == IndicASRConfig.predHiddenDim else {
+            throw NSError(domain: "IndicASR", code: 44, userInfo: [
+                NSLocalizedDescriptionKey: "Unexpected Indic ASR decoder hidden dimension \(shape[1]); expected \(IndicASRConfig.predHiddenDim). Shape: \(decoderOutputs.shape).",
+            ])
         }
-        return try await predict(model: models.jointPred, inputName: "input", input: input, outputName: "output")
+        let ptr = workspace.decoderFrameInput.dataPointer.bindMemory(to: Float.self, capacity: IndicASRConfig.predHiddenDim)
+        for dim in 0..<IndicASRConfig.predHiddenDim {
+            ptr[dim] = Self.floatValue(decoderOutputs, offset: strides[1] * dim)
+        }
+        return try await predict(model: models.jointPred, provider: workspace.jointPredInputProvider, outputName: "output")
     }
 
     private func predict(model: MLModel, inputName: String, input: MLMultiArray, outputName: String) async throws -> MLMultiArray {
         let provider = try MLDictionaryFeatureProvider(dictionary: [
             inputName: MLFeatureValue(multiArray: input),
         ])
+        return try await predict(model: model, provider: provider, outputName: outputName)
+    }
+
+    private func predict(model: MLModel, provider: MLFeatureProvider, outputName: String) async throws -> MLMultiArray {
         let output = try await model.prediction(from: provider)
         guard let result = output.featureValue(for: outputName)?.multiArrayValue else {
             throw NSError(domain: "IndicASR", code: 33, userInfo: [
@@ -945,16 +1085,14 @@ private struct IndicASRRNNTGreedyDecoder {
         return try makeFloatArray(shape: shape, values: [Float](repeating: 0, count: count))
     }
 
-    private func addArrays(_ lhs: MLMultiArray, _ rhs: MLMultiArray, shape: [Int]) throws -> MLMultiArray {
-        let output = try MLMultiArray(shape: shape.map(NSNumber.init(value:)), dataType: .float32)
+    private func addArrays(_ lhs: MLMultiArray, _ rhs: MLMultiArray, into output: MLMultiArray) throws {
         let ptr = output.dataPointer.bindMemory(to: Float.self, capacity: output.count)
         for index in 0..<output.count {
-            ptr[index] = floatValue(lhs, linearIndex: index) + floatValue(rhs, linearIndex: index)
+            ptr[index] = Self.floatValue(lhs, linearIndex: index) + Self.floatValue(rhs, linearIndex: index)
         }
-        return output
     }
 
-    private func copyAsFloat32(_ source: MLMultiArray) throws -> MLMultiArray {
+    private static func copyAsFloat32(_ source: MLMultiArray) throws -> MLMultiArray {
         let output = try MLMultiArray(shape: source.shape, dataType: .float32)
         let ptr = output.dataPointer.bindMemory(to: Float.self, capacity: output.count)
         for index in 0..<source.count {
@@ -963,11 +1101,11 @@ private struct IndicASRRNNTGreedyDecoder {
         return output
     }
 
-    private func floatValue(_ array: MLMultiArray, linearIndex: Int) -> Float {
+    private static func floatValue(_ array: MLMultiArray, linearIndex: Int) -> Float {
         floatValue(array, offset: linearIndex)
     }
 
-    private func floatValue(_ array: MLMultiArray, offset: Int) -> Float {
+    private static func floatValue(_ array: MLMultiArray, offset: Int) -> Float {
         switch array.dataType {
         case .float32:
             return array.dataPointer.bindMemory(to: Float.self, capacity: array.count)[offset]
@@ -982,11 +1120,37 @@ private struct IndicASRRNNTGreedyDecoder {
         }
     }
 
+    private func mergeOverlappingTokenChunks(_ chunks: [[Int]], maxOverlap: Int = 64) -> (tokenIds: [Int], appliedOverlap: Bool) {
+        var merged: [Int] = []
+        var appliedOverlap = false
+        for chunk in chunks where !chunk.isEmpty {
+            guard !merged.isEmpty else {
+                merged.append(contentsOf: chunk)
+                continue
+            }
+            let overlapLimit = min(maxOverlap, merged.count, chunk.count)
+            var overlap = 0
+            if overlapLimit > 0 {
+                for count in stride(from: overlapLimit, through: 1, by: -1) {
+                    if Array(merged.suffix(count)) == Array(chunk.prefix(count)) {
+                        overlap = count
+                        break
+                    }
+                }
+            }
+            if overlap > 0 {
+                appliedOverlap = true
+            }
+            merged.append(contentsOf: chunk.dropFirst(overlap))
+        }
+        return (merged, appliedOverlap)
+    }
+
     private func argmax(_ logits: MLMultiArray, count: Int) -> Int {
         var bestIndex = 0
         var bestValue = -Float.infinity
         for index in 0..<min(count, logits.count) {
-            let value = floatValue(logits, linearIndex: index)
+            let value = Self.floatValue(logits, linearIndex: index)
             if value > bestValue {
                 bestValue = value
                 bestIndex = index

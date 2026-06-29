@@ -537,6 +537,7 @@ struct AppConfigTests {
         config.hasCompletedOnboarding = true
         config.onboardingUseCase = OnboardingUseCase.dictationAndMeetings.rawValue
         config.cohereLanguage = CohereTranscribeLanguage.german.rawValue
+        config.indicASRLanguage = IndicASRLanguage.tamil.rawValue
         config.defaultMeetingTemplateID = "weekly-team-meeting"
         config.meetingRecordingSavePolicy = .always
         config.customMeetingTemplates = [
@@ -581,6 +582,7 @@ struct AppConfigTests {
         #expect(decoded.hasCompletedOnboarding == true)
         #expect(decoded.resolvedOnboardingUseCase == .dictationAndMeetings)
         #expect(decoded.cohereLanguage == CohereTranscribeLanguage.german.rawValue)
+        #expect(decoded.indicASRLanguage == IndicASRLanguage.tamil.rawValue)
         #expect(decoded.defaultMeetingTemplateID == "weekly-team-meeting")
         #expect(decoded.meetingRecordingSavePolicy == .always)
         #expect(decoded.customMeetingTemplates.count == 1)
@@ -635,6 +637,7 @@ struct AppConfigTests {
         #expect(json["computer_use_hotkey_trigger_threshold_ms"] != nil)
         #expect(json["meeting_recording_hotkey_trigger_threshold_ms"] != nil)
         #expect(json["cohere_language"] != nil)
+        #expect(json["indic_asr_language"] != nil)
         #expect(json["meeting_transcription_backend"] != nil)
         #expect(json["meeting_transcription_model"] != nil)
         #expect(json["indicator_anchor"] != nil)
@@ -671,6 +674,7 @@ struct AppConfigTests {
         #expect(config.openAIAPIKey.isEmpty)
         #expect(config.showFloatingIndicator == true)
         #expect(config.resolvedCohereLanguage == .english)
+        #expect(config.resolvedIndicASRLanguage == .defaultLanguage)
         #expect(config.hasCompletedOnboarding == false)
         #expect(config.resolvedOnboardingUseCase == .dictation)
         #expect(config.defaultMeetingTemplateID == MeetingTemplates.autoID)
