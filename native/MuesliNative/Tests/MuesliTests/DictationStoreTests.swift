@@ -1219,6 +1219,7 @@ struct DictationStoreTests {
         #expect(meeting.formattedNotes.contains("Recovered from live transcript checkpoints after a resumed meeting"))
         #expect(meeting.durationSeconds == 123)
         #expect(try store.liveTranscriptCheckpointText(meetingID: id) == nil)
+        #expect(try store.recoverLiveMeetingFromTranscriptCheckpoints(id: id) == false)
     }
 
     @Test("resumed meeting crash recovery restores prior completed row without checkpoints")
@@ -1246,6 +1247,7 @@ struct DictationStoreTests {
         #expect(meeting.rawTranscript == "Original transcript")
         #expect(meeting.formattedNotes == "## Summary\nOriginal notes")
         #expect(meeting.durationSeconds == 120)
+        #expect(try store.recoverLiveMeetingFromTranscriptCheckpoints(id: id) == false)
     }
 
     @Test("normal live meeting completion clears transcript checkpoints")
