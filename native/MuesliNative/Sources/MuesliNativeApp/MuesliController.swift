@@ -1869,14 +1869,14 @@ final class MuesliController: NSObject {
 
         if googleCalAuth.isAuthenticated {
             do {
-                let googleEvents = try await googleCalClient.fetchUpcomingEvents(
+                let googleResult = try await googleCalClient.fetchUpcomingEvents(
                     daysAhead: dayCount,
                     disabledCalendarIDs: disabledIDs,
                     now: refreshNow
                 )
-                canConfirmMissingGoogleEvents = googleCalClient.lastUpcomingEventsFetchWasComplete
-                observedEventIDs.formUnion(googleEvents.map(\.id))
-                ekEvents = GoogleCalendarClient.mergeEvents(eventKit: ekEvents, google: googleEvents)
+                canConfirmMissingGoogleEvents = googleResult.wasComplete
+                observedEventIDs.formUnion(googleResult.events.map(\.id))
+                ekEvents = GoogleCalendarClient.mergeEvents(eventKit: ekEvents, google: googleResult.events)
             } catch GoogleCalendarAuthError.notAuthenticated {
                 invalidateGoogleCalendarAuth()
                 fputs("[muesli-native] Google Calendar token invalid, signed out\n", stderr)

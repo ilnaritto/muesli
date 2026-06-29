@@ -43,6 +43,11 @@ struct GoogleCalendarSummary: Identifiable, Equatable {
     let colorHex: String?
 }
 
+struct GoogleCalendarFetchResult {
+    let events: [UnifiedCalendarEvent]
+    let wasComplete: Bool
+}
+
 enum GoogleCalendarClientError: Error, LocalizedError {
     case requestFailed(String)
     case staleRequest
@@ -110,9 +115,6 @@ final class GoogleCalendarClient {
     /// Last fetched calendar list. Refreshed each time `fetchUpcomingEvents` runs
     /// so calendars added in the Google web UI get picked up automatically.
     private var cachedCalendarList: [GoogleCalendarSummary] = []
-    /// False when the latest fetch returned cached or partial Google Calendar
-    /// results because a list or event request failed.
-    private(set) var lastUpcomingEventsFetchWasComplete = true
     private var upcomingEventsFetchGeneration = 0
 
     /// Fetch upcoming events from every Google calendar the user can read,
@@ -123,15 +125,10 @@ final class GoogleCalendarClient {
         daysAhead: Int = UpcomingMeetingsWindow.defaultDayCount,
         disabledCalendarIDs: Set<String> = [],
         now: Date = Date()
-    ) async throws -> [UnifiedCalendarEvent] {
+    ) async throws -> GoogleCalendarFetchResult {
         upcomingEventsFetchGeneration += 1
         let fetchGeneration = upcomingEventsFetchGeneration
         var completedAllFetches = true
-        defer {
-            if fetchGeneration == upcomingEventsFetchGeneration {
-                lastUpcomingEventsFetchWasComplete = completedAllFetches
-            }
-        }
 
         let resolvedDayCount = UpcomingMeetingsWindow.resolve(dayCount: daysAhead).dayCount
         let windowScope = EventWindowScope(
@@ -185,7 +182,8 @@ final class GoogleCalendarClient {
                     forCalendarID: calendar.id,
                     daysAhead: resolvedDayCount,
                     windowScope: windowScope,
-                    fetchGeneration: fetchGeneration
+                    fetchGeneration: fetchGeneration,
+                    now: now
                 )
             } catch let authError as GoogleCalendarAuthError {
                 throw authError
@@ -215,7 +213,10 @@ final class GoogleCalendarClient {
             .values
             .flatMap { $0.values }
             .filter { $0.endDate > now && $0.startDate < future }
-        return merged.sorted { $0.startDate < $1.startDate }
+        return GoogleCalendarFetchResult(
+            events: merged.sorted { $0.startDate < $1.startDate },
+            wasComplete: completedAllFetches
+        )
     }
 
     /// Fetch events for a single calendar, populating `cachedEventsByCalendar[calendarID]`.
@@ -226,6 +227,7 @@ final class GoogleCalendarClient {
         daysAhead: Int,
         windowScope: EventWindowScope,
         fetchGeneration: Int,
+        now: Date,
         isRetry: Bool = false
     ) async throws {
         var token = try await auth.validAccessToken()
@@ -246,7 +248,6 @@ final class GoogleCalendarClient {
             } else if let syncToken = syncTokens[calendarID] {
                 components.queryItems = [URLQueryItem(name: "syncToken", value: syncToken)]
             } else {
-                let now = Date()
                 guard let future = UpcomingMeetingsWindow.endDate(from: now, dayCount: daysAhead) else {
                     throw GoogleCalendarClientError.requestFailed("invalid upcoming events window")
                 }
@@ -278,6 +279,7 @@ final class GoogleCalendarClient {
                     daysAhead: daysAhead,
                     windowScope: windowScope,
                     fetchGeneration: fetchGeneration,
+                    now: now,
                     isRetry: true
                 )
             }
@@ -417,7 +419,6 @@ final class GoogleCalendarClient {
         cachedEventWindowDayCount = nil
         cachedEventWindowStartOfDay = nil
         cachedCalendarList.removeAll()
-        lastUpcomingEventsFetchWasComplete = true
     }
 
     @discardableResult
