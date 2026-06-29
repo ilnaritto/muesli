@@ -785,6 +785,37 @@ struct DictationStoreTests {
         #expect(hasPendingAfterSecondPage == false)
     }
 
+    @Test("dirty sync queue skips live meetings until completion")
+    func dirtySyncQueueSkipsLiveMeetingsUntilCompletion() throws {
+        let store = try makeStore()
+        let start = Date(timeIntervalSince1970: 1_770_000_000)
+        let id = try store.createLiveMeeting(
+            title: "Live Meeting",
+            calendarEventID: nil,
+            startTime: start
+        )
+
+        #expect(try store.textRecordsNeedingSync().isEmpty)
+        #expect(try store.hasTextRecordsNeedingSync() == false)
+
+        try store.completeLiveMeeting(
+            id: id,
+            title: "Completed Meeting",
+            calendarEventID: nil,
+            startTime: start,
+            endTime: start.addingTimeInterval(60),
+            rawTranscript: "Completed transcript",
+            formattedNotes: "## Summary\nCompleted",
+            micAudioPath: nil,
+            systemAudioPath: nil
+        )
+
+        let record = try #require(try store.textRecordsNeedingSync().first { $0.kind == .meeting })
+        #expect(record.title == "Completed Meeting")
+        #expect(record.meetingStatus == .completed)
+        #expect(try store.hasTextRecordsNeedingSync())
+    }
+
     @Test("soft delete tombstones purge only after sync and retention")
     func softDeleteTombstonesPurgeOnlyAfterSyncAndRetention() throws {
         let store = try makeStore()

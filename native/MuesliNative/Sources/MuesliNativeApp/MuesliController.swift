@@ -4053,7 +4053,6 @@ final class MuesliController: NSObject {
         let priorTranscript: String
         do {
             priorTranscript = try dictationStore.prepareMeetingForResume(id: meetingID)
-            scheduleICloudSyncAfterLocalChange()
         } catch {
             fputs("[muesli-native] failed to prepare meeting resume \(meetingID): \(error)\n", stderr)
             presentErrorAlert(title: "Resume failed", message: error.localizedDescription)

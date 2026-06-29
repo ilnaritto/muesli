@@ -2016,6 +2016,7 @@ public final class DictationStore {
                updated_at, deleted_at, cloud_change_tag
         FROM meetings
         WHERE sync_dirty = 1 AND cloud_record_name IS NOT NULL
+          AND meeting_status NOT IN (?, ?)
         ORDER BY updated_at DESC, id DESC
         LIMIT ?
         OFFSET ?
@@ -2025,8 +2026,10 @@ public final class DictationStore {
             throw lastError(db)
         }
         defer { sqlite3_finalize(meetingStatement) }
-        sqlite3_bind_int(meetingStatement, 1, Int32(limit))
-        sqlite3_bind_int(meetingStatement, 2, Int32(max(offset, 0)))
+        sqlite3_bind_text(meetingStatement, 1, (MeetingStatus.recording.rawValue as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(meetingStatement, 2, (MeetingStatus.processing.rawValue as NSString).utf8String, -1, nil)
+        sqlite3_bind_int(meetingStatement, 3, Int32(limit))
+        sqlite3_bind_int(meetingStatement, 4, Int32(max(offset, 0)))
         while sqlite3_step(meetingStatement) == SQLITE_ROW {
             guard let record = makeSyncMeetingRecord(meetingStatement) else { continue }
             records.append(record)
@@ -2042,7 +2045,7 @@ public final class DictationStore {
         if try hasDirtyTextRecords(table: "dictations", db: db) {
             return true
         }
-        return try hasDirtyTextRecords(table: "meetings", db: db)
+        return try hasDirtyMeetingTextRecords(db: db)
     }
 
     public func textRecordsForSyncMigration(
@@ -2144,6 +2147,25 @@ public final class DictationStore {
             throw lastError(db)
         }
         defer { sqlite3_finalize(statement) }
+        return sqlite3_step(statement) == SQLITE_ROW
+    }
+
+    private func hasDirtyMeetingTextRecords(db: OpaquePointer?) throws -> Bool {
+        let sql = """
+        SELECT 1
+        FROM meetings
+        WHERE sync_dirty = 1
+          AND cloud_record_name IS NOT NULL
+          AND meeting_status NOT IN (?, ?)
+        LIMIT 1
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw lastError(db)
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_text(statement, 1, (MeetingStatus.recording.rawValue as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(statement, 2, (MeetingStatus.processing.rawValue as NSString).utf8String, -1, nil)
         return sqlite3_step(statement) == SQLITE_ROW
     }
 
