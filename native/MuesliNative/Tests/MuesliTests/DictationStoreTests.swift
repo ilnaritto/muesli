@@ -1782,9 +1782,11 @@ struct DictationStoreTests {
     func clearMeetings() throws {
         let store = try makeStore()
         let now = Date()
-        try store.insertMeeting(title: "Del", calendarEventID: nil, startTime: now, endTime: now.addingTimeInterval(60), rawTranscript: "x", formattedNotes: "", micAudioPath: nil, systemAudioPath: nil)
+        let meetingID = try store.insertMeeting(title: "Del", calendarEventID: nil, startTime: now, endTime: now.addingTimeInterval(60), rawTranscript: "x", formattedNotes: "", micAudioPath: nil, systemAudioPath: nil)
+        _ = try store.prepareMeetingForResume(id: meetingID)
         try store.clearMeetings()
         #expect(try store.recentMeetings(limit: 100).isEmpty)
+        #expect(try store.recoverLiveMeetingFromTranscriptCheckpoints(id: meetingID) == false)
     }
 
     @Test("delete meeting removes a single meeting row")
