@@ -141,6 +141,10 @@ struct SettingsView: View {
         UpcomingMeetingsWindow.resolve(dayCount: appState.config.upcomingMeetingsDayCount)
     }
 
+    private var selectedIndicASRLanguage: IndicASRLanguage {
+        appState.config.resolvedIndicASRLanguage
+    }
+
     private var dictationMicrophoneOptions: [DictationMicrophoneOption] {
         var options = [DictationMicrophoneOption(uid: nil, label: "Automatic")]
         options += dictationInputDevices.map { device in
@@ -542,6 +546,20 @@ struct SettingsView: View {
                         }
                     }
                 }
+                if appState.selectedBackend.backend == BackendOption.indicASR.backend {
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("Indic language") {
+                        FixedWidthPopUp(
+                            selection: selectedIndicASRLanguage.label,
+                            options: IndicASRLanguage.allCases.map(\.label),
+                            onSelectIndex: { index in
+                                guard index >= 0, index < IndicASRLanguage.allCases.count else { return }
+                                controller.selectIndicASRLanguage(IndicASRLanguage.allCases[index])
+                            }
+                        )
+                        .frame(height: 24)
+                    }
+                }
                 Divider().background(MuesliTheme.surfaceBorder)
                 settingsRow(
                     "Microphone",
@@ -689,6 +707,20 @@ struct SettingsView: View {
                             guard let language = CohereTranscribeLanguage.allCases.first(where: { $0.label == label }) else { return }
                             controller.selectCohereLanguage(language)
                         }
+                    }
+                }
+                if appState.selectedMeetingTranscriptionBackend.backend == BackendOption.indicASR.backend {
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("Indic language") {
+                        FixedWidthPopUp(
+                            selection: selectedIndicASRLanguage.label,
+                            options: IndicASRLanguage.allCases.map(\.label),
+                            onSelectIndex: { index in
+                                guard index >= 0, index < IndicASRLanguage.allCases.count else { return }
+                                controller.selectIndicASRLanguage(IndicASRLanguage.allCases[index])
+                            }
+                        )
+                        .frame(height: 24)
                     }
                 }
                 Divider().background(MuesliTheme.surfaceBorder)

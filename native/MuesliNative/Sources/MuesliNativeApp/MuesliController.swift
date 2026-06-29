@@ -1612,6 +1612,12 @@ final class MuesliController: NSObject {
         }
     }
 
+    func selectIndicASRLanguage(_ language: IndicASRLanguage) {
+        updateConfig {
+            $0.indicASRLanguage = language.rawValue
+        }
+    }
+
     var isPostProcessorReady: Bool {
         config.enablePostProcessor && runtimePostProcessorOption() != nil
     }
@@ -3284,7 +3290,8 @@ final class MuesliController: NSObject {
                 let transcription = try await self.transcriptionCoordinator.transcribeMeeting(
                     at: recordingURL,
                     backend: backend,
-                    cohereLanguage: self.config.resolvedCohereLanguage
+                    cohereLanguage: self.config.resolvedCohereLanguage,
+                    indicASRLanguage: self.config.resolvedIndicASRLanguage
                 )
                 let rawTranscript = transcription.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !rawTranscript.isEmpty else {
@@ -5718,6 +5725,7 @@ final class MuesliController: NSObject {
                     at: wavURL,
                     backend: self.selectedBackend,
                     cohereLanguage: self.config.resolvedCohereLanguage,
+                    indicASRLanguage: self.config.resolvedIndicASRLanguage,
                     enablePostProcessor: false,
                     customWords: self.serializedCustomWords(),
                     appContext: nil
@@ -6665,6 +6673,7 @@ final class MuesliController: NSObject {
         let outputMode = currentDictationOutputMode
         let transcriptionBackend = isTestMode ? (dictationTestBackend ?? selectedBackend) : selectedBackend
         let transcriptionLanguage = isTestMode ? (dictationTestCohereLanguage ?? config.resolvedCohereLanguage) : config.resolvedCohereLanguage
+        let indicTranscriptionLanguage = config.resolvedIndicASRLanguage
         let capturedContext = capturedDictationContext
         let promptContext = capturedContext.map { DictationContextCapture.formatForPrompt($0) }
         let correctionTargetApp = capturedDictationCorrectionTargetApp
@@ -6682,6 +6691,7 @@ final class MuesliController: NSObject {
                     at: wavURL,
                     backend: transcriptionBackend,
                     cohereLanguage: transcriptionLanguage,
+                    indicASRLanguage: indicTranscriptionLanguage,
                     enablePostProcessor: self.isPostProcessorReady,
                     customWords: self.serializedCustomWords(),
                     appContext: promptContext
