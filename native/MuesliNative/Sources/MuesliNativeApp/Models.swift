@@ -64,12 +64,12 @@ struct BackendOption: Equatable {
         recommended: false
     )
 
-    static let nemotronStreaming = BackendOption(
-        backend: "nemotron",
-        model: "FluidInference/nemotron-speech-streaming-en-0.6b-coreml",
-        label: "Nemotron Streaming (Experimental)",
-        sizeLabel: "~600 MB",
-        description: "Experimental. NVIDIA streaming RNNT. English-only. Handsfree mode only. No punctuation (RNNT limitation). Append-only — no corrections.",
+    static let nemotron35Multilingual = BackendOption(
+        backend: "nemotron35",
+        model: "FluidInference/Nemotron-3.5-ASR-Streaming-Multilingual-0.6b-CoreML",
+        label: "Nemotron 3.5 Multilingual",
+        sizeLabel: "~665 MB",
+        description: "NVIDIA Nemotron 3.5 streaming RNNT via FluidInference. Multilingual incl. Hindi, Chinese, Japanese + 100+ locales (auto-detect). Native punctuation. Hold-to-talk or double-tap handsfree (live text). Append-only — no corrections.",
         recommended: false
     )
 
@@ -88,6 +88,15 @@ struct BackendOption: Equatable {
         label: "Cohere Transcribe",
         sizeLabel: "~3.8 GB",
         description: "Mixed precision (FP16 encoder + INT8 decoder). 14 languages. High accuracy (#1 Open ASR Leaderboard). Final transcript after stop. May decode hallucinated text during silence — use in quiet environments or with VAD.",
+        recommended: false
+    )
+
+    static let indicASR = BackendOption(
+        backend: "indicasr",
+        model: "phequals/indic-conformer-600m-multilingual-coreml-rnnt",
+        label: "Indic ASR",
+        sizeLabel: "~618 MB",
+        description: "Experimental AI4Bharat IndicConformer RNNT CoreML backend for seven Indian languages. Requires explicit language selection.",
         recommended: false
     )
 
@@ -121,14 +130,16 @@ struct BackendOption: Equatable {
     )
 
     static let experimental: [BackendOption] = [
-        .senseVoiceSmall, .qwen3Asr, .canaryQwen, .nemotronStreaming,
+        .senseVoiceSmall, .qwen3Asr, .canaryQwen, .indicASR,
     ]
 
     /// Models available for download and use.
-    static let all: [BackendOption] = parakeetFamily + whisperFamily + [.cohereTranscribe] + experimental
+    static let all: [BackendOption] = parakeetFamily + whisperFamily + [.cohereTranscribe, .nemotron35Multilingual] + experimental
 
-    /// Conservative first-run choices. Experimental models stay in Models.
-    static let onboarding: [BackendOption] = [.parakeetMultilingual, .whisperTinyEnglish, .whisperSmall, .cohereTranscribe]
+    /// Curated first-run choices shown in onboarding's "Other models" section.
+    /// This is a deliberate hand-picked list, not a derived rule. Experimental models
+    /// are excluded by default.
+    static let onboarding: [BackendOption] = [.parakeetMultilingual, .whisperTinyEnglish, .whisperSmall, .cohereTranscribe, .nemotron35Multilingual]
 
     /// Models coming soon — shown greyed out in the Models tab.
     static let comingSoon: [BackendOption] = []
@@ -140,6 +151,10 @@ struct BackendOption: Equatable {
 
     static func resolve(backend: String, model: String) -> BackendOption? {
         all.first { $0.backend == backend && $0.model == model }
+    }
+
+    var isStreamingDictationBackend: Bool {
+        backend == "nemotron35"
     }
 
     static func resolveDownloaded(
@@ -179,19 +194,91 @@ struct BackendOption: Equatable {
                 .appendingPathComponent("Library/Application Support/FluidAudio/Models/qwen3-asr-0.6b-coreml")
             return fm.fileExists(atPath: supportDir.appendingPathComponent("int8/vocab.json").path)
                 || fm.fileExists(atPath: supportDir.appendingPathComponent("f32/vocab.json").path)
-        case "nemotron":
+        case "nemotron35":
             let path = fm.homeDirectoryForCurrentUser
-                .appendingPathComponent(".cache/muesli/models/nemotron-560ms/encoder/encoder_int8.mlmodelc")
+                .appendingPathComponent(".cache/muesli/models/nemotron35-multilingual-2240ms/encoder.mlmodelc/coremldata.bin")
             return fm.fileExists(atPath: path.path)
         case "canary":
             return CanaryQwenModelStore.isAvailableLocally()
         case "cohere":
             return CohereTranscribeModelStore.isAvailableLocally()
+        case "indicasr":
+            return IndicASRModelStore.isAvailableLocally()
         case "sensevoice":
             return SenseVoiceTranscriber.isModelDownloaded()
         default:
             return false
         }
+    }
+}
+
+/// Language selection for the Nemotron 3.5 multilingual backend. Maps to the
+/// model's `prompt_id` encoder input (from the FluidInference `metadata.json`
+/// `prompt_dictionary`). `auto` (101) lets the model detect the language.
+enum Nemotron35Language: String, CaseIterable, Codable, Sendable {
+    case auto
+    case english = "en"
+    case hindi = "hi"
+    case spanish = "es"
+    case french = "fr"
+    case german = "de"
+    case italian = "it"
+    case portuguese = "pt"
+    case chinese = "zh"
+    case japanese = "ja"
+    case korean = "ko"
+    case russian = "ru"
+    case arabic = "ar"
+
+    static let defaultLanguage: Self = .auto
+
+    /// `prompt_id` value fed to the encoder. 101 = auto-detect.
+    var promptId: Int32 {
+        switch self {
+        case .auto: return 101
+        case .english: return 0
+        case .hindi: return 6
+        case .spanish: return 3
+        case .french: return 8
+        case .german: return 9
+        case .italian: return 15
+        case .portuguese: return 13
+        case .chinese: return 4
+        case .japanese: return 10
+        case .korean: return 14
+        case .russian: return 11
+        case .arabic: return 7
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .auto: return "Auto-detect"
+        case .english: return "English"
+        case .hindi: return "Hindi"
+        case .spanish: return "Spanish"
+        case .french: return "French"
+        case .german: return "German"
+        case .italian: return "Italian"
+        case .portuguese: return "Portuguese"
+        case .chinese: return "Chinese"
+        case .japanese: return "Japanese"
+        case .korean: return "Korean"
+        case .russian: return "Russian"
+        case .arabic: return "Arabic"
+        }
+    }
+
+    static func resolved(_ rawValue: String?) -> Self {
+        guard let rawValue,
+              let language = Self(rawValue: rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) else {
+            return defaultLanguage
+        }
+        return language
+    }
+
+    static func resolvedCode(_ rawValue: String?) -> String {
+        resolved(rawValue).rawValue
     }
 }
 
@@ -810,6 +897,8 @@ struct AppConfig: Codable {
     var sttModel: String = BackendOption.whisper.model
     var dictationInputDeviceUID: String? = nil
     var cohereLanguage: String = CohereTranscribeLanguage.defaultLanguage.rawValue
+    var indicASRLanguage: String = IndicASRLanguage.defaultLanguage.rawValue
+    var nemotron35Language: String = Nemotron35Language.defaultLanguage.rawValue
     var meetingTranscriptionBackend: String = BackendOption.whisper.backend
     var meetingTranscriptionModel: String = BackendOption.whisper.model
     var meetingSummaryBackend: String = MeetingSummaryBackendOption.chatGPT.backend
@@ -817,6 +906,7 @@ struct AppConfig: Codable {
     var whisperModel: String = BackendOption.whisper.model
     var idleTimeout: Double = 120
     var autoRecordMeetings: Bool = false
+    var upcomingMeetingsDayCount: Int = UpcomingMeetingsWindow.defaultDayCount
     var showScheduledMeetingNotifications: Bool = true
     var scheduledMeetingNotificationLeadTime: ScheduledMeetingNotificationLeadTime = .atStart
     var showMeetingDetectionNotification: Bool = true
@@ -869,6 +959,7 @@ struct AppConfig: Codable {
     var maraudersMapAudioClip: String = "bbc_world_news"
     var maraudersMapCustomAudioPath: String?
     var hiddenCalendarEventIDs: [String] = []
+    var hiddenCalendarEventSourceHints: [String: String] = [:]
     var disabledCalendarIDs: [String] = []
     var enablePostProcessor: Bool = false
     var activePostProcessorId: String = PostProcessorOption.defaultOption.id
@@ -902,6 +993,8 @@ struct AppConfig: Codable {
         case sttModel = "stt_model"
         case dictationInputDeviceUID = "dictation_input_device_uid"
         case cohereLanguage = "cohere_language"
+        case indicASRLanguage = "indic_asr_language"
+        case nemotron35Language = "nemotron35_language"
         case meetingTranscriptionBackend = "meeting_transcription_backend"
         case meetingTranscriptionModel = "meeting_transcription_model"
         case meetingSummaryBackend = "meeting_summary_backend"
@@ -909,6 +1002,7 @@ struct AppConfig: Codable {
         case whisperModel = "whisper_model"
         case idleTimeout = "idle_timeout"
         case autoRecordMeetings = "auto_record_meetings"
+        case upcomingMeetingsDayCount = "upcoming_meetings_day_count"
         case showScheduledMeetingNotifications = "show_scheduled_meeting_notifications"
         case scheduledMeetingNotificationLeadTime = "scheduled_meeting_notification_lead_time"
         case showMeetingDetectionNotification = "show_meeting_detection_notification"
@@ -959,6 +1053,7 @@ struct AppConfig: Codable {
         case maraudersMapAudioClip = "marauders_map_audio_clip"
         case maraudersMapCustomAudioPath = "marauders_map_custom_audio_path"
         case hiddenCalendarEventIDs = "hidden_calendar_event_ids"
+        case hiddenCalendarEventSourceHints = "hidden_calendar_event_source_hints"
         case disabledCalendarIDs = "disabled_calendar_ids"
         case enablePostProcessor = "enable_post_processor"
         case activePostProcessorId = "active_post_processor_id"
@@ -1001,6 +1096,8 @@ struct AppConfig: Codable {
         sttModel = (try? c.decode(String.self, forKey: .sttModel)) ?? defaults.sttModel
         dictationInputDeviceUID = try? c.decode(String.self, forKey: .dictationInputDeviceUID)
         cohereLanguage = CohereTranscribeLanguage.resolvedCode(try? c.decode(String.self, forKey: .cohereLanguage))
+        indicASRLanguage = IndicASRLanguage.resolvedCode(try? c.decode(String.self, forKey: .indicASRLanguage))
+        nemotron35Language = Nemotron35Language.resolvedCode(try? c.decode(String.self, forKey: .nemotron35Language))
         meetingTranscriptionBackend = (try? c.decode(String.self, forKey: .meetingTranscriptionBackend)) ?? sttBackend
         meetingTranscriptionModel = (try? c.decode(String.self, forKey: .meetingTranscriptionModel)) ?? sttModel
         meetingSummaryBackend = (try? c.decode(String.self, forKey: .meetingSummaryBackend)) ?? defaults.meetingSummaryBackend
@@ -1008,6 +1105,13 @@ struct AppConfig: Codable {
         whisperModel = (try? c.decode(String.self, forKey: .whisperModel)) ?? defaults.whisperModel
         idleTimeout = (try? c.decode(Double.self, forKey: .idleTimeout)) ?? defaults.idleTimeout
         autoRecordMeetings = (try? c.decode(Bool.self, forKey: .autoRecordMeetings)) ?? defaults.autoRecordMeetings
+        if c.contains(.upcomingMeetingsDayCount) {
+            upcomingMeetingsDayCount = UpcomingMeetingsWindow
+                .resolve(dayCount: try? c.decode(Int.self, forKey: .upcomingMeetingsDayCount))
+                .dayCount
+        } else {
+            upcomingMeetingsDayCount = UpcomingMeetingsWindow.threeDays.dayCount
+        }
         let decodedShowMeetingDetectionNotification = try? c.decode(Bool.self, forKey: .showMeetingDetectionNotification)
         showScheduledMeetingNotifications =
             (try? c.decode(Bool.self, forKey: .showScheduledMeetingNotifications))
@@ -1083,6 +1187,10 @@ struct AppConfig: Codable {
         maraudersMapAudioClip = (try? c.decode(String.self, forKey: .maraudersMapAudioClip)) ?? defaults.maraudersMapAudioClip
         maraudersMapCustomAudioPath = try? c.decode(String.self, forKey: .maraudersMapCustomAudioPath)
         hiddenCalendarEventIDs = (try? c.decode([String].self, forKey: .hiddenCalendarEventIDs)) ?? defaults.hiddenCalendarEventIDs
+        hiddenCalendarEventSourceHints = (try? c.decode(
+            [String: String].self,
+            forKey: .hiddenCalendarEventSourceHints
+        )) ?? defaults.hiddenCalendarEventSourceHints
         disabledCalendarIDs = (try? c.decode([String].self, forKey: .disabledCalendarIDs)) ?? defaults.disabledCalendarIDs
         enablePostProcessor = (try? c.decode(Bool.self, forKey: .enablePostProcessor)) ?? defaults.enablePostProcessor
         activePostProcessorId = (try? c.decode(String.self, forKey: .activePostProcessorId)) ?? defaults.activePostProcessorId
@@ -1104,6 +1212,14 @@ struct AppConfig: Codable {
 
     var resolvedCohereLanguage: CohereTranscribeLanguage {
         CohereTranscribeLanguage.resolved(cohereLanguage)
+    }
+
+    var resolvedIndicASRLanguage: IndicASRLanguage {
+        IndicASRLanguage.resolved(indicASRLanguage)
+    }
+
+    var resolvedNemotron35Language: Nemotron35Language {
+        Nemotron35Language.resolved(nemotron35Language)
     }
 
     var resolvedOnboardingUseCase: OnboardingUseCase {
