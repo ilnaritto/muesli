@@ -57,7 +57,6 @@ private enum IndicASRConfig {
     static let jointPreNetPackage = "indic_conformer_joint_pre_net.mlpackage"
     static let vocabFile = "vocab.json"
     static let languageMasksFile = "language_masks.json"
-    static let configFile = "config.json"
     static let preprocessorConstantsFile = "preprocessor_constants.bin"
 
     static let sampleRate = 16_000
@@ -86,9 +85,9 @@ private enum IndicASRConfig {
     static let requiredLanguagePackages = IndicASRLanguage.allCases.map(\.jointPostNetPackage)
     static let packagesWithExternalWeights = Set(requiredSharedPackages + requiredLanguagePackages).subtracting([jointPreNetPackage])
     static let packagesWithEmptyWeightsDirectory = Set([jointPreNetPackage])
-    // Keep the full exported metadata set in the cache even though the current
-    // RNNT path uses language-specific post-nets instead of reading masks.
-    static let requiredMetadataFiles = [vocabFile, languageMasksFile, configFile, preprocessorConstantsFile]
+    // Keep language masks with the exported metadata for artifact completeness,
+    // even though the RNNT path currently uses language-specific post-nets.
+    static let requiredMetadataFiles = [vocabFile, languageMasksFile, preprocessorConstantsFile]
 
     static func packageRelativeDirectory(_ packageName: String) -> String {
         if packageName == encoderPackage {
@@ -1033,9 +1032,10 @@ private struct IndicASRRNNTGreedyDecoder {
     private func runJointPred(_ decoderOutputs: MLMultiArray, workspace: DecodeWorkspace) async throws -> MLMultiArray {
         let shape = decoderOutputs.shape.map(\.intValue)
         let strides = decoderOutputs.strides.map(\.intValue)
-        guard shape.count >= 2, strides.count >= 2 else {
+        let hasExpectedRank = shape.count == 2 || (shape.count == 3 && shape[2] == 1)
+        guard hasExpectedRank, strides.count == shape.count else {
             throw NSError(domain: "IndicASR", code: 41, userInfo: [
-                NSLocalizedDescriptionKey: "Unexpected Indic ASR decoder output rank \(shape.count); expected at least 2. Shape: \(decoderOutputs.shape).",
+                NSLocalizedDescriptionKey: "Unexpected Indic ASR decoder output shape; expected [batch, predHiddenDim] or [batch, predHiddenDim, 1]. Shape: \(decoderOutputs.shape).",
             ])
         }
         guard shape[1] == IndicASRConfig.predHiddenDim else {

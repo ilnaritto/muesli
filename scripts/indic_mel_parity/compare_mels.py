@@ -25,6 +25,11 @@ def main() -> None:
     torch_frames = int(torch_npz["real_frames"][0])
     swift_mel, swift_frames = read_swift_bin(Path(args.swift))
     frames = min(torch_frames, swift_frames, 1024)
+    if frames == 0:
+        print(f"label={args.label}")
+        print(f"frames torch={torch_frames} swift={swift_frames} compared=0")
+        print("no overlapping mel frames to compare")
+        return
 
     diff = swift_mel[:, :frames] - torch_mel[:, :frames]
     torch_flat = torch_mel[:, :frames].reshape(-1).astype(np.float64)

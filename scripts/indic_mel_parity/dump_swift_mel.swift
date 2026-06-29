@@ -44,7 +44,17 @@ private func readWav(_ url: URL) throws -> WavAudio {
         let id = string(offset, 4)
         let size = Int(u32(offset + 4))
         let payload = offset + 8
+        guard payload <= data.count, payload + size <= data.count else {
+            throw NSError(domain: "Wav", code: 7, userInfo: [
+                NSLocalizedDescriptionKey: "Truncated WAV chunk \(id)",
+            ])
+        }
         if id == "fmt " {
+            guard size >= 16 else {
+                throw NSError(domain: "Wav", code: 8, userInfo: [
+                    NSLocalizedDescriptionKey: "Invalid fmt chunk size \(size)",
+                ])
+            }
             audioFormat = u16(payload)
             channels = u16(payload + 2)
             sampleRate = Int(u32(payload + 4))
@@ -60,7 +70,13 @@ private func readWav(_ url: URL) throws -> WavAudio {
     guard let dataOffset else { throw NSError(domain: "Wav", code: 3) }
     guard channels > 0 else { throw NSError(domain: "Wav", code: 4) }
     let channelCount = Int(channels)
-    let frameCount = dataSize / (Int(bitsPerSample) / 8) / channelCount
+    let bytesPerSample = Int(bitsPerSample) / 8
+    guard bytesPerSample > 0 else {
+        throw NSError(domain: "Wav", code: 9, userInfo: [
+            NSLocalizedDescriptionKey: "Invalid bits per sample \(bitsPerSample)",
+        ])
+    }
+    let frameCount = dataSize / bytesPerSample / channelCount
     var samples = [Float](repeating: 0, count: frameCount)
 
     let isPCM16 = (audioFormat == 1 || audioFormat == 0xfffe) && bitsPerSample == 16

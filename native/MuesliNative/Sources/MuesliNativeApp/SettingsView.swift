@@ -545,13 +545,15 @@ struct SettingsView: View {
                 if appState.selectedBackend.backend == BackendOption.indicASR.backend {
                     Divider().background(MuesliTheme.surfaceBorder)
                     settingsRow("Indic language") {
-                        settingsMenu(
+                        FixedWidthPopUp(
                             selection: selectedIndicASRLanguage.label,
-                            options: IndicASRLanguage.allCases.map(\.label)
-                        ) { label in
-                            guard let language = IndicASRLanguage.allCases.first(where: { $0.label == label }) else { return }
-                            controller.selectIndicASRLanguage(language)
-                        }
+                            options: IndicASRLanguage.allCases.map(\.label),
+                            onSelectIndex: { index in
+                                guard index >= 0, index < IndicASRLanguage.allCases.count else { return }
+                                controller.selectIndicASRLanguage(IndicASRLanguage.allCases[index])
+                            }
+                        )
+                        .frame(height: 24)
                     }
                 }
                 Divider().background(MuesliTheme.surfaceBorder)
@@ -707,13 +709,15 @@ struct SettingsView: View {
                 if appState.selectedMeetingTranscriptionBackend.backend == BackendOption.indicASR.backend {
                     Divider().background(MuesliTheme.surfaceBorder)
                     settingsRow("Indic language") {
-                        settingsMenu(
+                        FixedWidthPopUp(
                             selection: selectedIndicASRLanguage.label,
-                            options: IndicASRLanguage.allCases.map(\.label)
-                        ) { label in
-                            guard let language = IndicASRLanguage.allCases.first(where: { $0.label == label }) else { return }
-                            controller.selectIndicASRLanguage(language)
-                        }
+                            options: IndicASRLanguage.allCases.map(\.label),
+                            onSelectIndex: { index in
+                                guard index >= 0, index < IndicASRLanguage.allCases.count else { return }
+                                controller.selectIndicASRLanguage(IndicASRLanguage.allCases[index])
+                            }
+                        )
+                        .frame(height: 24)
                     }
                 }
                 Divider().background(MuesliTheme.surfaceBorder)
