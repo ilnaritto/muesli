@@ -5266,9 +5266,22 @@ final class MuesliController: NSObject {
             completedAt: result.endTime,
             config: config
         )
-        if config.autoExportMarkdownEnabled,
-           let record = try? dictationStore.meeting(id: persistenceResult.meetingID) {
-            meetingMarkdownAutoExporter.exportIfConfigured(meeting: record, config: config)
+        if config.autoExportMarkdownEnabled {
+            do {
+                if let record = try dictationStore.meeting(id: persistenceResult.meetingID) {
+                    meetingMarkdownAutoExporter.exportIfConfigured(meeting: record, config: config)
+                } else {
+                    meetingMarkdownAutoExporter.recordMeetingLookupFailure(
+                        meetingID: persistenceResult.meetingID,
+                        error: nil
+                    )
+                }
+            } catch {
+                meetingMarkdownAutoExporter.recordMeetingLookupFailure(
+                    meetingID: persistenceResult.meetingID,
+                    error: error
+                )
+            }
         }
         return persistenceResult
     }

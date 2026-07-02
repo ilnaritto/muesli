@@ -122,6 +122,45 @@ struct MeetingMarkdownAutoExporterTests {
         #expect(FileManager.default.fileExists(atPath: second.path))
     }
 
+    @Test("concurrent exports reserve distinct destinations")
+    func concurrentExportsReserveDistinctDestinations() async throws {
+        let support = makeTemporaryDirectory()
+        let destination = makeTemporaryDirectory()
+        let exporter = MeetingMarkdownAutoExporter(supportDirectory: support)
+        var config = AppConfig()
+        config.autoExportMarkdownEnabled = true
+        config.autoExportMarkdownFolderPath = destination.path
+
+        let urls = await withTaskGroup(of: URL?.self) { group in
+            for _ in 0..<8 {
+                group.addTask {
+                    exporter.performExport(meeting: makeMeeting(), config: config)
+                }
+            }
+
+            var results: [URL] = []
+            for await url in group {
+                if let url { results.append(url) }
+            }
+            return results
+        }
+
+        #expect(urls.count == 8)
+        #expect(Set(urls.map(\.lastPathComponent)).count == 8)
+    }
+
+    @Test("meeting lookup failures are written to export log")
+    func lookupFailureWritesLog() throws {
+        let support = makeTemporaryDirectory()
+        let exporter = MeetingMarkdownAutoExporter(supportDirectory: support)
+
+        exporter.recordMeetingLookupFailure(meetingID: 42, error: nil)
+        exporter.waitForPendingLogWrites()
+
+        let log = try String(contentsOf: exporter.logURL, encoding: .utf8)
+        #expect(log.contains("persisted meeting not found id=42"))
+    }
+
     @Test("creates destination folder when missing")
     func createsMissingFolder() throws {
         let support = makeTemporaryDirectory()

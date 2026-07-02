@@ -1,5 +1,6 @@
 import Foundation
 import MuesliCore
+import Darwin
 import os
 
 /// Automatically writes a Markdown file for a completed meeting to a
@@ -7,6 +8,7 @@ import os
 /// runs off the main thread so persisting a meeting never blocks the UI.
 protocol MeetingMarkdownAutoExporting {
     func exportIfConfigured(meeting: MeetingRecord, config: AppConfig)
+    func recordMeetingLookupFailure(meetingID: Int64, error: Error?)
 }
 
 final class MeetingMarkdownAutoExporter: MeetingMarkdownAutoExporting {
@@ -38,6 +40,14 @@ final class MeetingMarkdownAutoExporter: MeetingMarkdownAutoExporting {
         }
     }
 
+    func recordMeetingLookupFailure(meetingID: Int64, error: Error?) {
+        if let error {
+            writeLog("export failed: could not load persisted meeting id=\(meetingID) error=\(error.localizedDescription)")
+        } else {
+            writeLog("export failed: persisted meeting not found id=\(meetingID)")
+        }
+    }
+
     /// Builds the Markdown and writes it to disk. Returns the written URL on
     /// success (exposed for testing); logs and returns nil on any failure.
     @discardableResult
@@ -62,39 +72,66 @@ final class MeetingMarkdownAutoExporter: MeetingMarkdownAutoExporting {
 
         let content = config.resolvedAutoExportMarkdownContent
         let markdown = MeetingExporter.buildMarkdown(meeting: meeting, content: content)
-        let destinationURL = uniqueDestinationURL(in: folderURL, meeting: meeting, content: content)
 
         do {
-            try markdown.write(to: destinationURL, atomically: true, encoding: .utf8)
+            let destinationURL = try writeMarkdown(markdown, in: folderURL, meeting: meeting, content: content)
             writeLog("exported: id=\(meeting.id) path=\(destinationURL.path)")
             return destinationURL
         } catch {
-            writeLog("export failed: id=\(meeting.id) path=\(destinationURL.path) error=\(error.localizedDescription)")
+            writeLog("export failed: id=\(meeting.id) error=\(error.localizedDescription)")
             return nil
         }
     }
 
     // MARK: - Filename
 
-    /// Returns a non-colliding `.md` URL in the destination folder. The base
-    /// name is a date prefix plus the sanitized meeting title; subsequent
-    /// collisions get a numeric suffix so previously exported notes are never
-    /// overwritten.
-    func uniqueDestinationURL(in folder: URL, meeting: MeetingRecord, content: MeetingExportContent) -> URL {
+    private func writeMarkdown(
+        _ markdown: String,
+        in folder: URL,
+        meeting: MeetingRecord,
+        content: MeetingExportContent
+    ) throws -> URL {
         let baseName = baseFilename(meeting: meeting, content: content)
+        let data = Data(markdown.utf8)
         let firstCandidate = folder.appendingPathComponent("\(baseName).md")
-        if !fileManager.fileExists(atPath: firstCandidate.path) {
+        if try write(data, toNewFileAt: firstCandidate) {
             return firstCandidate
         }
+
         for index in 2...Self.maxCollisionAttempts {
             let candidate = folder.appendingPathComponent("\(baseName)-\(index).md")
-            if !fileManager.fileExists(atPath: candidate.path) {
+            if try write(data, toNewFileAt: candidate) {
                 return candidate
             }
         }
+
         // Degenerate case (folder saturated with the same base name): fall back to
         // a UUID-suffixed name so we never overwrite and never loop unbounded.
-        return folder.appendingPathComponent("\(baseName)-\(UUID().uuidString).md")
+        let fallback = folder.appendingPathComponent("\(baseName)-\(UUID().uuidString).md")
+        guard try write(data, toNewFileAt: fallback) else {
+            throw CocoaError(.fileWriteFileExists)
+        }
+        return fallback
+    }
+
+    /// Atomically reserves a path before writing so concurrent exports cannot
+    /// choose the same destination after a preflight existence check.
+    private func write(_ data: Data, toNewFileAt url: URL) throws -> Bool {
+        let descriptor = open(url.path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
+        guard descriptor >= 0 else {
+            if errno == EEXIST { return false }
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        do {
+            try handle.write(contentsOf: data)
+            try handle.close()
+            return true
+        } catch {
+            try? fileManager.removeItem(at: url)
+            throw error
+        }
     }
 
     private static let maxCollisionAttempts = 1000
@@ -148,7 +185,7 @@ final class MeetingMarkdownAutoExporter: MeetingMarkdownAutoExporting {
     private static let fileDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone.current
+        formatter.timeZone = TimeZone.autoupdatingCurrent
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()

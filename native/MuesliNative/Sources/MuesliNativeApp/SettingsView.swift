@@ -2113,6 +2113,7 @@ struct SettingsView: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Clear destination folder")
                 .help("Clear destination folder")
             }
 
@@ -2131,6 +2132,7 @@ struct SettingsView: View {
                     )
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Choose destination folder")
             .help("Choose destination folder")
         }
     }
