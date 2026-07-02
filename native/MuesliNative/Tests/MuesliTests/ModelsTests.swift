@@ -1,4 +1,5 @@
 import Testing
+import Accelerate
 import AppKit
 import Foundation
 import MuesliCore
@@ -24,7 +25,7 @@ struct BackendOptionTests {
 
     @Test("backend field is one of the known backends")
     func knownBackends() {
-        let known: Set<String> = ["fluidaudio", "whisper", "qwen", "nemotron", "canary", "cohere", "sensevoice"]
+        let known: Set<String> = ["fluidaudio", "whisper", "qwen", "nemotron35", "canary", "cohere", "indicasr", "sensevoice"]
         for option in BackendOption.all {
             #expect(known.contains(option.backend), "Unknown backend: \(option.backend)")
         }
@@ -43,10 +44,14 @@ struct BackendOptionTests {
         #expect(BackendOption.whisperLargeTurbo.backend == "whisper")
     }
 
-    @Test("Nemotron uses nemotron backend")
-    func nemotronBackend() {
-        #expect(BackendOption.nemotronStreaming.backend == "nemotron")
-        #expect(BackendOption.nemotronStreaming.model.contains("nemotron"))
+    @Test("Nemotron 3.5 uses nemotron35 backend")
+    func nemotron35Backend() {
+        #expect(BackendOption.nemotron35Multilingual.backend == "nemotron35")
+        #expect(BackendOption.nemotron35Multilingual.model.contains("Nemotron-3.5"))
+        #expect(!BackendOption.nemotron35Multilingual.label.contains("Experimental"))
+        #expect(!BackendOption.nemotron35Multilingual.recommended)
+        #expect(!BackendOption.experimental.contains(.nemotron35Multilingual))
+        #expect(BackendOption.all.contains(.nemotron35Multilingual))
     }
 
     @Test("whisper alias points to parakeetMultilingual")
@@ -64,14 +69,76 @@ struct BackendOptionTests {
         #expect(BackendOption.all.contains(.qwen3Asr))
         #expect(BackendOption.all.contains(.canaryQwen))
         #expect(BackendOption.all.contains(.cohereTranscribe))
+        #expect(BackendOption.all.contains(.indicASR))
         #expect(BackendOption.all.contains(.senseVoiceSmall))
-        #expect(BackendOption.all.contains(.nemotronStreaming))
+        #expect(BackendOption.all.contains(.nemotron35Multilingual))
     }
 
     @Test("Cohere uses cohere backend")
     func cohereBackend() {
         #expect(BackendOption.cohereTranscribe.backend == "cohere")
         #expect(BackendOption.cohereTranscribe.model.contains("cohere"))
+    }
+
+    @Test("Indic ASR uses indicasr backend")
+    func indicASRBackend() {
+        #expect(BackendOption.indicASR.backend == "indicasr")
+        #expect(BackendOption.indicASR.model.contains("indic-conformer"))
+    }
+
+    @Test("Indic ASR chunk merge deduplicates Indic overlap")
+    func indicASRChunkMergeDeduplicatesIndicOverlap() {
+        let result = IndicASRTranscriptMerger.mergeOverlappingTranscripts([
+            "मैं हिंदी में बोल सकता हूँ",
+            "बोल सकता हूँ और तमिल भी",
+            "தமிழ் கூட பேச முடியும்",
+            "பேச முடியும் இப்போ",
+        ])
+
+        #expect(result == "मैं हिंदी में बोल सकता हूँ और तमिल भी தமிழ் கூட பேச முடியும் இப்போ")
+    }
+
+    @Test("Indic ASR chunk merge preserves non-overlapping text")
+    func indicASRChunkMergePreservesNonOverlappingText() {
+        let result = IndicASRTranscriptMerger.mergeOverlappingTranscripts([
+            "நான் தமிழ் பேசுகிறேன்",
+            "यह नया वाक्य है",
+        ])
+
+        #expect(result == "நான் தமிழ் பேசுகிறேன் यह नया वाक्य है")
+    }
+
+    @Test("Indic ASR mel transpose uses row-major vDSP parameter order")
+    func indicASRMelTransposeParameterOrder() {
+        let rows = 2
+        let columns = 3
+        let frameMajor: [Float] = [
+            1, 2, 3,
+            4, 5, 6,
+        ]
+        let expectedColumnMajorTranspose: [Float] = [
+            1, 4,
+            2, 5,
+            3, 6,
+        ]
+
+        var actual = [Float](repeating: 0, count: frameMajor.count)
+        vDSP_mtrans(
+            frameMajor, 1,
+            &actual, 1,
+            vDSP_Length(columns),
+            vDSP_Length(rows)
+        )
+        #expect(actual == expectedColumnMajorTranspose)
+
+        var swapped = [Float](repeating: 0, count: frameMajor.count)
+        vDSP_mtrans(
+            frameMajor, 1,
+            &swapped, 1,
+            vDSP_Length(rows),
+            vDSP_Length(columns)
+        )
+        #expect(swapped != expectedColumnMajorTranspose)
     }
 
     @Test("SenseVoice uses native FluidAudio CoreML model")
@@ -86,12 +153,19 @@ struct BackendOptionTests {
         #expect(!BackendOption.experimental.contains(.cohereTranscribe))
     }
 
-    @Test("onboarding model choices exclude experimental models")
-    func onboardingModelsExcludeExperimentalOptions() {
-        #expect(BackendOption.onboarding == [.parakeetMultilingual, .whisperTinyEnglish, .whisperSmall, .cohereTranscribe])
+    @Test("onboarding offers the conservative models plus Nemotron 3.5")
+    func onboardingModelChoices() {
+        #expect(BackendOption.onboarding == [.parakeetMultilingual, .whisperTinyEnglish, .whisperSmall, .cohereTranscribe, .nemotron35Multilingual])
         for option in BackendOption.experimental {
             #expect(!BackendOption.onboarding.contains(option))
         }
+        #expect(BackendOption.onboarding.contains(.nemotron35Multilingual))
+    }
+
+    @Test("only Nemotron backends use streaming dictation")
+    func streamingDictationBackends() {
+        let streaming = BackendOption.all.filter(\.isStreamingDictationBackend)
+        #expect(streaming == [.nemotron35Multilingual])
     }
 
     @Test("Whisper models use WhisperKit CoreML identifiers")
@@ -421,6 +495,7 @@ struct AppConfigTests {
         #expect(config.sttBackend == BackendOption.whisper.backend)
         #expect(config.sttModel == BackendOption.whisper.model)
         #expect(config.cohereLanguage == CohereTranscribeLanguage.defaultLanguage.rawValue)
+        #expect(config.indicASRLanguage == IndicASRLanguage.defaultLanguage.rawValue)
         #expect(config.meetingTranscriptionBackend == BackendOption.whisper.backend)
         #expect(config.meetingTranscriptionModel == BackendOption.whisper.model)
         #expect(config.meetingSummaryBackend == "chatgpt")
@@ -463,6 +538,10 @@ struct AppConfigTests {
         #expect(config.contributionPromptNextMeetingCount == nil)
         #expect(config.contributionGitHubStarClicked == false)
         #expect(config.contributionBuyMeCoffeeClicked == false)
+        #expect(config.contributionTweetClicked == false)
+        #expect(config.contributionLinkedInClicked == false)
+        #expect(config.upcomingMeetingsDayCount == UpcomingMeetingsWindow.defaultDayCount)
+        #expect(config.hiddenCalendarEventSourceHints.isEmpty)
     }
 
     @Test("JSON encode/decode round-trip")
@@ -473,6 +552,7 @@ struct AppConfigTests {
         config.hasCompletedOnboarding = true
         config.onboardingUseCase = OnboardingUseCase.dictationAndMeetings.rawValue
         config.cohereLanguage = CohereTranscribeLanguage.german.rawValue
+        config.indicASRLanguage = IndicASRLanguage.tamil.rawValue
         config.defaultMeetingTemplateID = "weekly-team-meeting"
         config.meetingRecordingSavePolicy = .always
         config.customMeetingTemplates = [
@@ -508,6 +588,13 @@ struct AppConfigTests {
         config.contributionPromptNextMeetingCount = 75
         config.contributionGitHubStarClicked = true
         config.contributionBuyMeCoffeeClicked = false
+        config.contributionTweetClicked = true
+        config.contributionLinkedInClicked = false
+        config.upcomingMeetingsDayCount = UpcomingMeetingsWindow.today.dayCount
+        config.hiddenCalendarEventSourceHints = [
+            "ek-event-1": UnifiedCalendarEvent.CalendarSource.eventKit.rawValue,
+            "google-event-1": UnifiedCalendarEvent.CalendarSource.googleCalendar.rawValue,
+        ]
 
         let data = try JSONEncoder().encode(config)
         let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
@@ -517,6 +604,7 @@ struct AppConfigTests {
         #expect(decoded.hasCompletedOnboarding == true)
         #expect(decoded.resolvedOnboardingUseCase == .dictationAndMeetings)
         #expect(decoded.cohereLanguage == CohereTranscribeLanguage.german.rawValue)
+        #expect(decoded.indicASRLanguage == IndicASRLanguage.tamil.rawValue)
         #expect(decoded.defaultMeetingTemplateID == "weekly-team-meeting")
         #expect(decoded.meetingRecordingSavePolicy == .always)
         #expect(decoded.customMeetingTemplates.count == 1)
@@ -549,6 +637,10 @@ struct AppConfigTests {
         #expect(decoded.contributionPromptNextMeetingCount == 75)
         #expect(decoded.contributionGitHubStarClicked == true)
         #expect(decoded.contributionBuyMeCoffeeClicked == false)
+        #expect(decoded.contributionTweetClicked == true)
+        #expect(decoded.contributionLinkedInClicked == false)
+        #expect(decoded.upcomingMeetingsDayCount == UpcomingMeetingsWindow.today.dayCount)
+        #expect(decoded.hiddenCalendarEventSourceHints == config.hiddenCalendarEventSourceHints)
     }
 
     @Test("JSON coding keys use snake_case")
@@ -571,6 +663,7 @@ struct AppConfigTests {
         #expect(json["computer_use_hotkey_trigger_threshold_ms"] != nil)
         #expect(json["meeting_recording_hotkey_trigger_threshold_ms"] != nil)
         #expect(json["cohere_language"] != nil)
+        #expect(json["indic_asr_language"] != nil)
         #expect(json["meeting_transcription_backend"] != nil)
         #expect(json["meeting_transcription_model"] != nil)
         #expect(json["indicator_anchor"] != nil)
@@ -590,6 +683,8 @@ struct AppConfigTests {
         #expect(json["contribution_prompt_next_meeting_count"] != nil)
         #expect(json["contribution_github_star_clicked"] != nil)
         #expect(json["contribution_buy_me_coffee_clicked"] != nil)
+        #expect(json["contribution_tweet_clicked"] != nil)
+        #expect(json["contribution_linkedin_clicked"] != nil)
         #expect(json["lmstudio_url"] != nil)
         #expect(json["lmstudio_model"] != nil)
         #expect(json["custom_llm_url"] != nil)
@@ -607,9 +702,12 @@ struct AppConfigTests {
         #expect(config.openAIAPIKey.isEmpty)
         #expect(config.showFloatingIndicator == true)
         #expect(config.resolvedCohereLanguage == .english)
+        #expect(config.resolvedIndicASRLanguage == .defaultLanguage)
         #expect(config.hasCompletedOnboarding == false)
         #expect(config.resolvedOnboardingUseCase == .dictation)
         #expect(config.defaultMeetingTemplateID == MeetingTemplates.autoID)
+        #expect(config.upcomingMeetingsDayCount == UpcomingMeetingsWindow.threeDays.dayCount)
+        #expect(config.hiddenCalendarEventSourceHints.isEmpty)
         #expect(config.meetingRecordingSavePolicy == .never)
         #expect(config.showScheduledMeetingNotifications == true)
         #expect(config.showMeetingDetectionNotification == true)
