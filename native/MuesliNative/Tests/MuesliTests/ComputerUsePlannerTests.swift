@@ -1898,6 +1898,7 @@ struct ComputerUsePlannerRuntimeTests {
     @MainActor
     func runtimeExposesScreenshotOCRTextAfterOCRTool() async {
         var ocrCalls = 0
+        let privateOCRText = "Sheet contains pasted task text"
         let runtime = ComputerUsePlannerRuntime(
             config: AppConfig(),
             observe: { _, _, _ in
@@ -1908,21 +1909,37 @@ struct ComputerUsePlannerRuntimeTests {
                     #expect(request.latestWindowState.screenshotOCRText == nil)
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .recognizeScreenshotText, screenshotID: "s1"))
                 }
-                #expect(request.latestWindowState.screenshotOCRText == "Sheet contains pasted task text")
-                #expect(request.priorOutcomes.last?.message.contains("Sheet contains pasted task text") == true)
+                #expect(request.latestWindowState.screenshotOCRText == privateOCRText)
+                #expect(request.priorOutcomes.last?.message.contains(privateOCRText) == false)
+                #expect(request.priorOutcomes.last?.message.contains("Text withheld from trace history") == true)
                 return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
             },
             execute: { _, _ in .executed("unexpected") },
             recognizeScreenshotText: { _ in
                 ocrCalls += 1
-                return "Sheet contains pasted task text"
+                return privateOCRText
             }
         )
 
         let result = await runtime.run(command: "inspect sheet")
+        let traceBodies = result.traceEvents.map(\.body).joined(separator: "\n")
+        let traceDebugPayloads = result.traceEvents.compactMap(\.debugPayload).joined(separator: "\n")
+        let secondPlanningPayload = result.traceEvents
+            .filter { $0.kind == "planning" }
+            .dropFirst()
+            .first?
+            .debugPayload ?? ""
 
         #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
         #expect(ocrCalls == 1)
+        #expect(traceBodies.contains(privateOCRText) == false)
+        #expect(traceBodies.contains("Text withheld from trace history") == true)
+        #expect(traceDebugPayloads.contains(privateOCRText) == false)
+        #expect(secondPlanningPayload.contains("screenshot_ocr_text") == false)
+        #expect(secondPlanningPayload.contains("screenshot_ocr_metadata_by_id") == true)
+        #expect(secondPlanningPayload.contains("character_count") == true)
+        #expect(secondPlanningPayload.contains("normalized_sha256") == true)
+        #expect(secondPlanningPayload.contains("Text withheld from trace history") == true)
     }
 
     @Test("OCR tool failures are recoverable planner feedback")

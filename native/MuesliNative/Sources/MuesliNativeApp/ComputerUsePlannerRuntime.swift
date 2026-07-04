@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import MuesliCore
 
@@ -629,14 +630,14 @@ final class ComputerUsePlannerRuntime {
             return .failed("Stale screenshot_id \(requested); latest screenshot is \(screenshot.screenshotID). Call recognize_screenshot_text with the latest screenshot_id.")
         }
         if let cached = screenshotOCRTextByID[screenshot.screenshotID] {
-            return .executed(cached.isEmpty ? "OCR found no text." : "OCR text:\n\(cached)")
+            return .executed(computerUseOCRTraceReceipt(text: cached, screenshotID: screenshot.screenshotID, cached: true).message)
         }
         guard let recognized = await recognizeScreenshotText(screenshot) else {
-            return .executed("OCR found no text.")
+            return .executed(computerUseOCRTraceReceipt(text: "", screenshotID: screenshot.screenshotID, cached: false).message)
         }
         let bounded = Self.boundedScreenshotOCRText(recognized)
         screenshotOCRTextByID[screenshot.screenshotID] = bounded
-        return .executed(bounded.isEmpty ? "OCR found no text." : "OCR text:\n\(bounded)")
+        return .executed(computerUseOCRTraceReceipt(text: bounded, screenshotID: screenshot.screenshotID, cached: false).message)
     }
 
     private static func boundedScreenshotOCRText(_ text: String) -> String {
@@ -1606,6 +1607,7 @@ private struct TracePlannerRequestPayload: Codable {
     let maxSteps: Int?
     let toolCatalogVersion: String
     let latestWindowState: ComputerUseWindowState
+    let ocrMetadataByScreenshotID: [String: OCRTraceReceipt]
     let observationContext: ComputerUseObservationContext
     let priorOutcomes: [ComputerUseToolOutcome]
 
@@ -1615,6 +1617,7 @@ private struct TracePlannerRequestPayload: Codable {
         case maxSteps = "max_steps"
         case toolCatalogVersion = "tool_catalog_version"
         case latestWindowState = "latest_window_state"
+        case ocrMetadataByScreenshotID = "screenshot_ocr_metadata_by_id"
         case observationContext = "observation_context"
         case priorOutcomes = "prior_tool_outcomes"
     }
@@ -1624,15 +1627,97 @@ private struct TracePlannerRequestPayload: Codable {
         step = request.step
         maxSteps = request.maxSteps
         toolCatalogVersion = request.toolCatalogVersion
-        latestWindowState = request.latestWindowState
+        let redactedOCR = Self.redactedOCRWindowState(request.latestWindowState)
+        latestWindowState = redactedOCR.state
+        ocrMetadataByScreenshotID = redactedOCR.metadataByScreenshotID
         observationContext = request.observationContext
         priorOutcomes = request.priorOutcomes
+    }
+
+    private static func redactedOCRWindowState(
+        _ state: ComputerUseWindowState
+    ) -> (state: ComputerUseWindowState, metadataByScreenshotID: [String: OCRTraceReceipt]) {
+        guard let ocrText = state.screenshotOCRText else {
+            return (state, [:])
+        }
+        let screenshotID = state.screenshot?.screenshotID ?? ""
+        let receipt = computerUseOCRTraceReceipt(
+            text: ocrText,
+            screenshotID: screenshotID,
+            cached: true
+        )
+        let redactedState = ComputerUseWindowState(
+            stateID: state.stateID,
+            appName: state.appName,
+            bundleID: state.bundleID,
+            processID: state.processID,
+            windowID: state.windowID,
+            windowTitle: state.windowTitle,
+            windowFrame: state.windowFrame,
+            screenshot: state.screenshot,
+            screenshotOCRText: nil,
+            cursorPosition: state.cursorPosition,
+            focusedElement: state.focusedElement,
+            selectedText: state.selectedText,
+            appInstructions: state.appInstructions,
+            targetMismatch: state.targetMismatch,
+            elements: state.elements,
+            capturedAt: state.capturedAt
+        )
+        return (redactedState, screenshotID.isEmpty ? [:] : [screenshotID: receipt])
     }
 }
 
 private struct ObservationTracePayload: Codable {
     let state: ComputerUseWindowState
     let context: ComputerUseObservationContext
+}
+
+private struct OCRTraceReceipt: Codable, Equatable {
+    let screenshotID: String
+    let textPresent: Bool
+    let characterCount: Int
+    let lineCount: Int
+    let normalizedSHA256: String
+    let cached: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case screenshotID = "screenshot_id"
+        case textPresent = "text_present"
+        case characterCount = "character_count"
+        case lineCount = "line_count"
+        case normalizedSHA256 = "normalized_sha256"
+        case cached
+    }
+
+    var message: String {
+        if !textPresent {
+            return "OCR completed for screenshot \(screenshotID): no text recognized. Text withheld from trace history."
+        }
+        let source = cached ? "cached " : ""
+        return "OCR completed for \(source)screenshot \(screenshotID): \(characterCount) chars, \(lineCount) lines, sha256 \(normalizedSHA256). Text withheld from trace history."
+    }
+}
+
+private func computerUseOCRTraceReceipt(
+    text: String,
+    screenshotID: String,
+    cached: Bool
+) -> OCRTraceReceipt {
+    let lines = text
+        .split(whereSeparator: \.isNewline)
+        .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        .count
+    let digest = SHA256.hash(data: Data(ComputerUseElementCandidate.normalizedText(text).utf8))
+    let hash = digest.map { String(format: "%02x", $0) }.joined()
+    return OCRTraceReceipt(
+        screenshotID: screenshotID,
+        textPresent: !text.isEmpty,
+        characterCount: text.count,
+        lineCount: lines,
+        normalizedSHA256: hash,
+        cached: cached
+    )
 }
 
 private struct TraceToolResultPayload: Codable {
