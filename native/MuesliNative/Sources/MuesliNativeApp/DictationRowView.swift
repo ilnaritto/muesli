@@ -183,6 +183,8 @@ struct DictationRowView: View {
             return MuesliTheme.transcribing
         case "failed", "unsupported":
             return MuesliTheme.recording
+        case "no_progress", "noprogress":
+            return MuesliTheme.transcribing
         default:
             return MuesliTheme.textTertiary
         }
@@ -193,9 +195,11 @@ struct DictationRowView: View {
         case "done":
             return "Done"
         case "timed_out", "timedout":
-            return "Timed out"
+            return "Safety limit"
         case "failed", "fail":
             return "Failed"
+        case "no_progress", "noprogress":
+            return "No progress"
         case "confirm", "needsconfirmation", "needs_confirmation":
             return "Confirm"
         case "cancelled", "canceled":

@@ -762,6 +762,21 @@ struct NemotronDictationModePolicyTests {
     }
 
     @MainActor
+    @Test("CUA result message is callable without crash in idle state")
+    func showComputerUseResultMessageIdleNoCrash() {
+        let configStore = ConfigStore()
+        let config = configStore.load()
+        let indicator = FloatingIndicatorController(configStore: configStore)
+        indicator.setState(.idle, config: config)
+        indicator.showComputerUseResultMessage(
+            "I could not complete the task because the target app required confirmation.",
+            icon: "!",
+            duration: 0.01
+        )
+        indicator.close()
+    }
+
+    @MainActor
     @Test("showWarning is a no-op when indicator is in recording state")
     func showWarningIgnoredDuringRecording() {
         let configStore = ConfigStore()

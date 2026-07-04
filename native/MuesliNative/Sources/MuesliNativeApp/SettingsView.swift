@@ -640,6 +640,16 @@ struct SettingsView: View {
 
     private var computerUseSettingsPane: some View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing24) {
+            settingsSection("Visual Access") {
+                permissionStatusRow(
+                    "Screen Recording",
+                    granted: screenRecordingGranted,
+                    action: { CGRequestScreenCaptureAccess() },
+                    pane: "Privacy_ScreenCapture"
+                )
+                settingsDescription("Required for Computer Use to inspect and click visual web apps reliably.")
+            }
+
             settingsSection("Computer Use") {
                 settingsRow("Enable planner", controlWidth: meetingControlWidth) {
                     settingsSwitch(isOn: appState.config.enableComputerUsePlanner) { newValue in
@@ -670,24 +680,51 @@ struct SettingsView: View {
                 }
                 settingsDescription(appState.config.computerUseInteractionMode.description)
                 Divider().background(MuesliTheme.surfaceBorder)
-                settingsRow("Timeout", controlWidth: meetingControlWidth) {
-                    Stepper(
-                        value: Binding(
-                            get: { max(appState.config.computerUseTimeoutSeconds, 1) },
-                            set: { newValue in
-                                controller.updateConfig { $0.computerUseTimeoutSeconds = max(newValue, 1) }
-                            }
-                        ),
-                        in: 1...600,
-                        step: 15
-                    ) {
-                        Text("\(max(appState.config.computerUseTimeoutSeconds, 1)) seconds")
-                            .font(MuesliTheme.body())
-                            .foregroundStyle(MuesliTheme.textPrimary)
+                settingsRow("Auto-stop after", controlWidth: meetingControlWidth) {
+                    settingsMenu(
+                        selection: computerUseSafetyLimitLabel(for: appState.config.computerUseTimeoutSeconds),
+                        options: computerUseSafetyLimitOptions(for: appState.config.computerUseTimeoutSeconds).map(\.label)
+                    ) { label in
+                        guard let option = computerUseSafetyLimitOptions(for: appState.config.computerUseTimeoutSeconds).first(where: { $0.label == label }) else { return }
+                        controller.updateConfig {
+                            $0.computerUseTimeoutSeconds = option.seconds
+                        }
                     }
+                    .frame(width: meetingControlWidth)
                 }
+                settingsDescription("Safety limit for runaway tasks. Computer Use can still finish earlier, fail, ask for confirmation, or be cancelled manually.")
             }
         }
+    }
+
+    private func computerUseSafetyLimitOptions(for currentSeconds: Int) -> [(seconds: Int, label: String)] {
+        var options = computerUseSafetyLimitBaseOptions
+        let current = max(currentSeconds, 1)
+        if !options.contains(where: { $0.seconds == current }) {
+            options.append((current, computerUseSafetyLimitLabel(for: current)))
+            options.sort { $0.seconds < $1.seconds }
+        }
+        return options
+    }
+
+    private func computerUseSafetyLimitLabel(for seconds: Int) -> String {
+        let clamped = max(seconds, 1)
+        if let option = computerUseSafetyLimitBaseOptions.first(where: { $0.seconds == clamped }) {
+            return option.label
+        }
+        if clamped % 60 == 0 {
+            return "\(clamped / 60) min"
+        }
+        return "\(clamped) sec"
+    }
+
+    private var computerUseSafetyLimitBaseOptions: [(seconds: Int, label: String)] {
+        [
+            (120, "2 min"),
+            (180, "3 min"),
+            (300, "5 min"),
+            (600, "10 min"),
+        ]
     }
 
     private var meetingsSettingsPane: some View {

@@ -138,7 +138,7 @@ enum PasteController {
     private static func post(_ event: CGEvent?, processID: pid_t?) {
         guard let event else { return }
         if let processID, processID > 0 {
-            event.postToPid(processID)
+            _ = ComputerUseBackgroundDriver.postKeyEvent(event, to: processID)
         } else {
             event.post(tap: .cghidEventTap)
         }

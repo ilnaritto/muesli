@@ -13,25 +13,47 @@ struct ComputerUseExecutionResult: Equatable {
 
     let status: Status
     let message: String
+    let diagnostics: [String: String]?
+    let transaction: ComputerUseActionTransaction?
 
-    static func executed(_ message: String) -> ComputerUseExecutionResult {
-        ComputerUseExecutionResult(status: .executed, message: message)
+    static func executed(
+        _ message: String,
+        diagnostics: [String: String]? = nil,
+        transaction: ComputerUseActionTransaction? = nil
+    ) -> ComputerUseExecutionResult {
+        ComputerUseExecutionResult(status: .executed, message: message, diagnostics: diagnostics, transaction: transaction)
     }
 
-    static func needsConfirmation(_ message: String) -> ComputerUseExecutionResult {
-        ComputerUseExecutionResult(status: .needsConfirmation, message: message)
+    static func needsConfirmation(
+        _ message: String,
+        diagnostics: [String: String]? = nil,
+        transaction: ComputerUseActionTransaction? = nil
+    ) -> ComputerUseExecutionResult {
+        ComputerUseExecutionResult(status: .needsConfirmation, message: message, diagnostics: diagnostics, transaction: transaction)
     }
 
-    static func unsupported(_ message: String) -> ComputerUseExecutionResult {
-        ComputerUseExecutionResult(status: .unsupported, message: message)
+    static func unsupported(
+        _ message: String,
+        diagnostics: [String: String]? = nil,
+        transaction: ComputerUseActionTransaction? = nil
+    ) -> ComputerUseExecutionResult {
+        ComputerUseExecutionResult(status: .unsupported, message: message, diagnostics: diagnostics, transaction: transaction)
     }
 
-    static func failed(_ message: String) -> ComputerUseExecutionResult {
-        ComputerUseExecutionResult(status: .failed, message: message)
+    static func failed(
+        _ message: String,
+        diagnostics: [String: String]? = nil,
+        transaction: ComputerUseActionTransaction? = nil
+    ) -> ComputerUseExecutionResult {
+        ComputerUseExecutionResult(status: .failed, message: message, diagnostics: diagnostics, transaction: transaction)
     }
 
-    static func cancelled(_ message: String = "Cancelled") -> ComputerUseExecutionResult {
-        ComputerUseExecutionResult(status: .cancelled, message: message)
+    static func cancelled(
+        _ message: String = "Cancelled",
+        diagnostics: [String: String]? = nil,
+        transaction: ComputerUseActionTransaction? = nil
+    ) -> ComputerUseExecutionResult {
+        ComputerUseExecutionResult(status: .cancelled, message: message, diagnostics: diagnostics, transaction: transaction)
     }
 }
 
@@ -72,13 +94,15 @@ enum ComputerUseToolExecutor {
         ",": 43, "comma": 43, "/": 44, "slash": 44, "n": 45, "m": 46, ".": 47, "period": 47,
         "`": 50, "grave": 50, "return": 36, "enter": 36, "tab": 48, "space": 49,
         "delete": 51, "backspace": 51, "escape": 53, "esc": 53,
+        "pageup": 116, "page up": 116, "pagedown": 121, "page down": 121,
         "left arrow": 123, "right arrow": 124, "down arrow": 125, "up arrow": 126,
         "left": 123, "right": 124, "down": 125, "up": 126,
     ]
 
     static func execute(
         _ toolCall: ComputerUseToolCall,
-        registry: ComputerUseElementRegistry?
+        registry: ComputerUseElementRegistry?,
+        interactionMode: ComputerUseInteractionMode = .direct
     ) async -> ComputerUseExecutionResult {
         if let failure = toolCall.validationFailure() {
             return .unsupported(failure)
@@ -93,74 +117,146 @@ enum ComputerUseToolExecutor {
         case .listApps:
             return listApps()
         case .launchApp:
-            return await openApp(named: toolCall.appName?.isEmpty == false ? toolCall.appName! : toolCall.canonicalBundleID)
+            return await openApp(
+                named: toolCall.appName?.isEmpty == false ? toolCall.appName! : toolCall.canonicalBundleID,
+                allowActivation: interactionMode == .direct
+            )
         case .listWindows:
             return listWindows(appBundleID: toolCall.canonicalBundleID)
         case .getAppState, .getWindowState:
             if !toolCall.canonicalBundleID.isEmpty || toolCall.appName?.isEmpty == false {
+                guard interactionMode == .direct else {
+                    return .executed("Captured target state without foreground activation request")
+                }
                 return await focusApp(named: toolCall.appName?.isEmpty == false ? toolCall.appName! : toolCall.canonicalBundleID)
             }
             return .executed("Captured window state")
         case .moveCursor:
-            return moveCursor(toolCall, registry: registry)
+            return moveCursor(toolCall, registry: registry, allowCursorWarp: interactionMode == .direct)
         case .click, .clickElement, .clickPoint:
-            return click(toolCall, registry: registry)
+            return await withFrontmostPreserved(enabled: interactionMode == .quiet) {
+                click(
+                    toolCall,
+                    registry: registry,
+                    allowPointerFallback: interactionMode == .direct,
+                    allowBackgroundDispatch: interactionMode == .quiet
+                )
+            }
         case .focusElement:
-            return await focusElement(toolCall, registry: registry)
+            guard interactionMode == .direct else {
+                return .needsConfirmation("Moving focus as a standalone step would interrupt the user's current app. In Work quietly mode, use paste_text with the intended process/window/element target so Muesli can route insertion to that target without foregrounding it.")
+            }
+            return await focusElement(toolCall, registry: registry, allowAppActivation: interactionMode == .direct)
         case .activateFocused:
-            return await activateFocused(toolCall)
+            return await activateFocused(toolCall, allowAppActivation: interactionMode == .direct)
         case .performSecondaryAction:
             return performSecondaryAction(toolCall, registry: registry)
         case .setValue:
             return setValue(toolCall, registry: registry)
         case .drag:
+            guard interactionMode == .direct else {
+                return .needsConfirmation("Dragging the pointer requires direct app control.")
+            }
             return drag(toolCall, registry: registry)
         case .pressKey, .hotkey:
-            return await pressKey(toolCall, registry: registry)
+            return await withFrontmostPreserved(enabled: interactionMode == .quiet) {
+                await pressKey(
+                    toolCall,
+                    registry: registry,
+                    allowBackgroundDispatch: interactionMode == .quiet
+                )
+            }
         case .typeText:
-            return await enterText(toolCall, registry: registry, mode: .keyboard)
+            return await withFrontmostPreserved(enabled: interactionMode == .quiet) {
+                await enterText(
+                    toolCall,
+                    registry: registry,
+                    mode: .keyboard,
+                    allowAppActivation: interactionMode == .direct
+                )
+            }
         case .pasteText:
-            return await enterText(toolCall, registry: registry, mode: .paste)
+            return await withFrontmostPreserved(enabled: interactionMode == .quiet) {
+                await enterText(
+                    toolCall,
+                    registry: registry,
+                    mode: .paste,
+                    allowAppActivation: interactionMode == .direct
+                )
+            }
         case .scroll:
-            return scroll(toolCall, registry: registry)
+            return await withFrontmostPreserved(enabled: interactionMode == .quiet) {
+                scroll(
+                    toolCall,
+                    registry: registry,
+                    allowGlobalScroll: interactionMode == .direct,
+                    allowBackgroundDispatch: interactionMode == .quiet
+                )
+            }
         case .listBrowserTabs:
-            return await ComputerUseBrowserAutomation.listTabs(appBundleID: toolCall.canonicalBundleID)
+            return await withFrontmostPreserved(enabled: interactionMode == .quiet) {
+                await ComputerUseBrowserAutomation.listTabs(appBundleID: toolCall.canonicalBundleID)
+            }
         case .activateBrowserTab:
-            return await ComputerUseBrowserAutomation.activateTab(
-                appBundleID: toolCall.canonicalBundleID,
-                windowIndex: toolCall.windowIndex ?? 1,
-                tabIndex: toolCall.tabIndex ?? 1
-            )
+            return await withFrontmostPreserved(enabled: interactionMode == .quiet) {
+                await ComputerUseBrowserAutomation.activateTab(
+                    appBundleID: toolCall.canonicalBundleID,
+                    windowIndex: toolCall.windowIndex ?? 1,
+                    tabIndex: toolCall.tabIndex ?? 1,
+                    allowActivation: interactionMode == .direct
+                )
+            }
         case .openNewBrowserTab:
-            return await ComputerUseBrowserAutomation.openNewTab(appBundleID: toolCall.canonicalBundleID)
+            return await withFrontmostPreserved(enabled: interactionMode == .quiet) {
+                await ComputerUseBrowserAutomation.openNewTab(
+                    appBundleID: toolCall.canonicalBundleID,
+                    allowActivation: interactionMode == .direct,
+                    processID: toolCall.processID.map(pid_t.init),
+                    windowID: toolCall.windowID.map(CGWindowID.init)
+                )
+            }
         case .navigateURL:
-            return await ComputerUseBrowserAutomation.navigate(
-                appBundleID: toolCall.canonicalBundleID,
-                windowIndex: toolCall.windowIndex,
-                tabIndex: toolCall.tabIndex,
-                url: toolCall.url ?? ""
-            )
+            return await withFrontmostPreserved(enabled: interactionMode == .quiet) {
+                await ComputerUseBrowserAutomation.navigate(
+                    appBundleID: toolCall.canonicalBundleID,
+                    windowIndex: toolCall.windowIndex,
+                    tabIndex: toolCall.tabIndex,
+                    url: toolCall.url ?? "",
+                    allowActivation: interactionMode == .direct,
+                    processID: toolCall.processID.map(pid_t.init),
+                    windowID: toolCall.windowID.map(CGWindowID.init)
+                )
+            }
         case .navigateActiveBrowserTab:
-            return await ComputerUseBrowserAutomation.navigate(
-                appBundleID: toolCall.canonicalBundleID,
-                windowIndex: nil,
-                tabIndex: nil,
-                url: toolCall.url ?? ""
-            )
+            return await withFrontmostPreserved(enabled: interactionMode == .quiet) {
+                await ComputerUseBrowserAutomation.navigate(
+                    appBundleID: toolCall.canonicalBundleID,
+                    windowIndex: nil,
+                    tabIndex: nil,
+                    url: toolCall.url ?? "",
+                    allowActivation: interactionMode == .direct,
+                    processID: toolCall.processID.map(pid_t.init),
+                    windowID: toolCall.windowID.map(CGWindowID.init)
+                )
+            }
         case .pageGetText:
-            return await ComputerUseBrowserAutomation.pageText(
-                appBundleID: toolCall.canonicalBundleID,
-                windowIndex: toolCall.windowIndex,
-                tabIndex: toolCall.tabIndex
-            )
+            return await withFrontmostPreserved(enabled: interactionMode == .quiet) {
+                await ComputerUseBrowserAutomation.pageText(
+                    appBundleID: toolCall.canonicalBundleID,
+                    windowIndex: toolCall.windowIndex,
+                    tabIndex: toolCall.tabIndex
+                )
+            }
         case .pageQueryDOM:
-            return await ComputerUseBrowserAutomation.queryDOM(
-                appBundleID: toolCall.canonicalBundleID,
-                windowIndex: toolCall.windowIndex,
-                tabIndex: toolCall.tabIndex,
-                selector: toolCall.selector ?? "",
-                attributes: toolCall.attributes ?? []
-            )
+            return await withFrontmostPreserved(enabled: interactionMode == .quiet) {
+                await ComputerUseBrowserAutomation.queryDOM(
+                    appBundleID: toolCall.canonicalBundleID,
+                    windowIndex: toolCall.windowIndex,
+                    tabIndex: toolCall.tabIndex,
+                    selector: toolCall.selector ?? "",
+                    attributes: toolCall.attributes ?? []
+                )
+            }
         case .finish:
             return .executed(toolCall.reason ?? "Done")
         case .fail:
@@ -208,7 +304,7 @@ enum ComputerUseToolExecutor {
         let appByPID: [pid_t: NSRunningApplication] = Dictionary(
             uniqueKeysWithValues: NSWorkspace.shared.runningApplications.map { ($0.processIdentifier, $0) }
         )
-        let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[CFString: Any]] ?? []
+        let windowList = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[CFString: Any]] ?? []
         return windowList.compactMap { window in
             guard let layer = window[kCGWindowLayer] as? Int, layer == 0,
                   let ownerPID = window[kCGWindowOwnerPID] as? pid_t
@@ -234,6 +330,10 @@ enum ComputerUseToolExecutor {
     }
 
     private static func matchedWindowID(processID: pid_t, frame: CGRect) -> Int? {
+        if let axWindow = containingWindowForID(ofProcessID: processID, frame: frame),
+           axWindow > 0 {
+            return Int(axWindow)
+        }
         let matchedWindow = windowInfos(appBundleID: "")
             .filter { $0.processID == Int(processID) }
             .first { info in
@@ -248,6 +348,28 @@ enum ComputerUseToolExecutor {
         return matchedWindow?.windowID
     }
 
+    private static func containingWindowForID(ofProcessID processID: pid_t, frame: CGRect) -> CGWindowID? {
+        let app = AXUIElementCreateApplication(processID)
+        guard let window = windowMatchingFrame(in: app, frame: frame) else { return nil }
+        var windowID = CGWindowID(0)
+        guard AXWindowIDResolver.getWindowID(window, &windowID), windowID > 0 else {
+            return nil
+        }
+        return windowID
+    }
+
+    private static func windowMatchingFrame(in axApp: AXUIElement, frame: CGRect) -> AXUIElement? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &value) == .success,
+              let windows = value as? [AXUIElement] else {
+            return nil
+        }
+        return windows.first { window in
+            guard let candidateFrame = rect(of: window) else { return false }
+            return framesApproximatelyMatch(candidateFrame, frame)
+        }
+    }
+
     private static func framesApproximatelyMatch(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
         let tolerance: CGFloat = 8
         return abs(lhs.origin.x - rhs.origin.x) <= tolerance
@@ -256,25 +378,48 @@ enum ComputerUseToolExecutor {
             && abs(lhs.size.height - rhs.size.height) <= tolerance
     }
 
-    private static func openApp(named rawName: String) async -> ComputerUseExecutionResult {
+    private static func openApp(
+        named rawName: String,
+        allowActivation: Bool = true
+    ) async -> ComputerUseExecutionResult {
         let name = cleanedName(rawName)
         do {
             if let app = runningApplication(named: name) {
-                app.activate(options: [.activateAllWindows])
-                _ = try await waitUntilActive(app: app, timeout: 1.5)
-                return .executed("Opened \(name) (already running)")
+                if allowActivation {
+                    app.activate(options: [.activateAllWindows])
+                    _ = try await waitUntilActive(app: app, timeout: 1.5)
+                    return .executed(
+                        "Opened \(name) (already running)",
+                        transaction: launchTransaction(path: "running_app_activate", app: app, verified: true)
+                    )
+                }
+                return .executed(
+                    "Launched \(name) (already running; left in background)",
+                    transaction: launchTransaction(path: "running_app_background", app: app, verified: true)
+                )
             }
 
             guard let appURL = try await applicationURL(for: name) else {
                 return .failed("Could not find \(name)")
             }
 
+            let priorFrontmost = NSWorkspace.shared.frontmostApplication
             let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = true
+            configuration.activates = allowActivation
             let app = try await openApplication(at: appURL, configuration: configuration)
-            app.activate(options: [.activateAllWindows])
-            _ = try await waitUntilActive(app: app, timeout: 1.5)
-            return .executed("Opened \(name)")
+            if allowActivation {
+                app.activate(options: [.activateAllWindows])
+                _ = try await waitUntilActive(app: app, timeout: 1.5)
+                return .executed(
+                    "Opened \(name)",
+                    transaction: launchTransaction(path: "launch_services_activate", app: app, verified: true)
+                )
+            }
+            await restoreFrontmostApp(priorFrontmost, ifTargetSelfActivated: app)
+            return .executed(
+                "Launched \(name) in background",
+                transaction: launchTransaction(path: "launch_services_background", app: app, verified: true)
+            )
         } catch is CancellationError {
             return .cancelled("Cancelled opening \(name)")
         } catch {
@@ -295,12 +440,30 @@ enum ComputerUseToolExecutor {
             }
             return .executed("Focused \(name)")
         }
-        return await openApp(named: name)
+        return await openApp(named: name, allowActivation: true)
+    }
+
+    private static func launchTransaction(
+        path: String,
+        app: NSRunningApplication,
+        verified: Bool
+    ) -> ComputerUseActionTransaction {
+        ComputerUseActionTransaction(
+            path: path,
+            posted: true,
+            verified: verified,
+            effect: verified ? .confirmed : .unknown,
+            targetStable: true,
+            processID: Int(app.processIdentifier),
+            escalationHint: "Use get_window_state before interacting with this app so actions are scoped to the current process/window.",
+            warning: verified ? nil : "Launch command was sent, but the running app could not be confirmed."
+        )
     }
 
     private static func pressKey(
         _ toolCall: ComputerUseToolCall,
-        registry: ComputerUseElementRegistry?
+        registry: ComputerUseElementRegistry?,
+        allowBackgroundDispatch: Bool = false
     ) async -> ComputerUseExecutionResult {
         let command = ComputerUseKeyCommand(
             modifiers: toolCall.modifiers ?? [],
@@ -315,11 +478,13 @@ enum ComputerUseToolExecutor {
         let resolvedProcessID: pid_t?
         if let suppliedProcessID = toolCall.processID, suppliedProcessID > 0 {
             let expectedProcessID = pid_t(suppliedProcessID)
-            guard let focusedProcessID = currentFocusedProcessID() else {
-                return .failed("Could not validate process_id \(suppliedProcessID) against current keyboard focus. Refresh state before pressing keys.")
-            }
-            guard focusedProcessID == expectedProcessID else {
-                return .failed("Stale process_id \(suppliedProcessID); focused element pid is \(focusedProcessID). Refresh state before pressing keys.")
+            if !allowBackgroundDispatch {
+                guard let focusedProcessID = currentFocusedProcessID() else {
+                    return .failed("Could not validate process_id \(suppliedProcessID) against current keyboard focus. Refresh state before pressing keys.")
+                }
+                guard focusedProcessID == expectedProcessID else {
+                    return .failed("Stale process_id \(suppliedProcessID); focused element pid is \(focusedProcessID). Refresh state before pressing keys.")
+                }
             }
             resolvedProcessID = expectedProcessID
         } else if let mismatch = focusedAppHintMismatchMessage(toolCall) {
@@ -327,23 +492,53 @@ enum ComputerUseToolExecutor {
         } else {
             resolvedProcessID = nil
         }
+        if allowBackgroundDispatch,
+           let resolvedProcessID,
+           let windowID = toolCall.windowID,
+           windowID > 0 {
+            _ = ComputerUseBackgroundDriver.focusWithoutRaise(
+                processID: resolvedProcessID,
+                windowID: CGWindowID(windowID)
+            )
+        }
         let flags = cgFlags(for: command.modifiers)
         let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)
         let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
         keyDown?.flags = flags
         keyUp?.flags = flags
-        postKeyEvent(keyDown, processID: resolvedProcessID)
-        postKeyEvent(keyUp, processID: resolvedProcessID)
-        return .executed("Pressed key")
+        let attachAuthMessage = !flags.contains(.maskCommand)
+        let postedDown = postKeyEvent(keyDown, processID: resolvedProcessID, attachAuthMessage: attachAuthMessage)
+        let postedUp = postKeyEvent(keyUp, processID: resolvedProcessID, attachAuthMessage: attachAuthMessage)
+        let posted = postedDown && postedUp
+        let transaction = ComputerUseActionTransaction(
+            path: resolvedProcessID == nil ? "global_key_events" : "pid_key_events",
+            posted: posted,
+            verified: false,
+            effect: posted ? .unverifiable : .blocked,
+            targetStable: true,
+            processID: resolvedProcessID.map(Int.init),
+            windowID: toolCall.windowID,
+            escalationHint: posted
+                ? "Inspect the post-action screenshot/AX state; if the key had no effect, refresh state and choose another action."
+                : "Refresh target state and retry with a valid process_id/window_id or direct-control fallback.",
+            warning: posted
+                ? "Key events were posted, but this does not prove the app consumed them."
+                : "Key events were not fully posted."
+        )
+        guard posted else {
+            return .failed("Could not post key events", transaction: transaction)
+        }
+        return .executed("Pressed key", transaction: transaction)
     }
 
     private static func focusElement(
         _ toolCall: ComputerUseToolCall,
-        registry: ComputerUseElementRegistry?
+        registry: ComputerUseElementRegistry?,
+        allowAppActivation: Bool = true
     ) async -> ComputerUseExecutionResult {
         let targetApp = await prepareTextEntryApp(
             toolCall,
-            shouldActivateNamedApp: !toolCall.canonicalBundleID.isEmpty || toolCall.appName?.isEmpty == false
+            shouldActivateNamedApp: allowAppActivation && (!toolCall.canonicalBundleID.isEmpty || toolCall.appName?.isEmpty == false)
         )
         if case let .failure(message) = targetApp {
             return .failed(message)
@@ -352,7 +547,7 @@ enum ComputerUseToolExecutor {
             return .cancelled()
         }
         guard let elementResult = elementTarget(toolCall, registry: registry) else {
-            return .failed("focus_element requires element_index or element_id")
+            return .failed("Focus requires element_index or element_id")
         }
         let element: AXUIElement
         switch elementResult {
@@ -361,7 +556,11 @@ enum ComputerUseToolExecutor {
         case .success(let resolved):
             element = resolved
         }
-        switch await focusElement(element, label: toolCall.label ?? elementTargetLabel(toolCall), allowClickFallback: true) {
+        switch await focusElement(
+            element,
+            label: toolCall.label ?? elementTargetLabel(toolCall),
+            allowClickFallback: allowAppActivation
+        ) {
         case .success:
             return .executed("Focused \(elementTargetLabel(toolCall))")
         case .failure(let message):
@@ -371,10 +570,13 @@ enum ComputerUseToolExecutor {
         }
     }
 
-    private static func activateFocused(_ toolCall: ComputerUseToolCall) async -> ComputerUseExecutionResult {
+    private static func activateFocused(
+        _ toolCall: ComputerUseToolCall,
+        allowAppActivation: Bool = true
+    ) async -> ComputerUseExecutionResult {
         let targetApp = await prepareTextEntryApp(
             toolCall,
-            shouldActivateNamedApp: !toolCall.canonicalBundleID.isEmpty || toolCall.appName?.isEmpty == false
+            shouldActivateNamedApp: allowAppActivation && (!toolCall.canonicalBundleID.isEmpty || toolCall.appName?.isEmpty == false)
         )
         if case let .failure(message) = targetApp {
             return .failed(message)
@@ -388,7 +590,7 @@ enum ComputerUseToolExecutor {
         let requiredProcessID = toolCall.processID.map(pid_t.init)
         guard let element = focusedUIElement(requiredApp: targetApp.app, requiredProcessID: requiredProcessID) else {
             let target = toolCall.processID.map { " for pid \($0)" } ?? ""
-            return .failed("No focused UI element\(target). Use get_app_state/get_window_state to inspect focus, or move focus with click_element/press_key tab before activate_focused.")
+            return .failed("No focused UI element\(target). Use get_app_state/get_window_state to inspect focus, or move focus with click or press_key tab before activation.")
         }
 
         let fallbackLabel = focusedElementLabel(element, fallback: toolCall.label)
@@ -397,7 +599,7 @@ enum ComputerUseToolExecutor {
             return .needsConfirmation("Confirm: activate focused \(fallbackLabel)")
         }
         if axBool(element, kAXEnabledAttribute) == false {
-            return .failed("\(fallbackLabel) is disabled; activate_focused would likely be a no-op")
+            return .failed("\(fallbackLabel) is disabled; focused activation would likely be a no-op")
         }
         if let rect = rect(of: element) {
             ComputerUseCursorOverlay.shared.show(
@@ -409,7 +611,21 @@ enum ComputerUseToolExecutor {
         let advertisedActions = actionNames(of: element)
         if advertisedActions?.contains(kAXPressAction as String) != false,
            AXUIElementPerformAction(element, kAXPressAction as CFString) == .success {
-            return .executed("Sent AXPress to focused \(fallbackLabel); inspect the post-action screenshot/state to decide whether the UI changed as intended")
+            return .executed(
+                "Sent AXPress to focused \(fallbackLabel); inspect the post-action screenshot/state to decide whether the UI changed as intended",
+                transaction: ComputerUseActionTransaction(
+                    path: "ax_press_focused",
+                    route: "ax_press",
+                    posted: true,
+                    verified: false,
+                    effect: .unverifiable,
+                    targetStable: true,
+                    processID: processID(of: element).map(Int.init),
+                    windowID: toolCall.windowID,
+                    escalationHint: "Inspect the post-action screenshot/AX state; if nothing changed, choose a click or key route.",
+                    warning: "AXPress was accepted, but this does not prove the focused control changed app state."
+                )
+            )
         }
 
         guard let keyCode = keyCode(for: "enter"),
@@ -427,12 +643,35 @@ enum ComputerUseToolExecutor {
         }
         let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)
         let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
-        postKeyEvent(keyDown, processID: processID)
-        postKeyEvent(keyUp, processID: processID)
-        return .executed("Sent Enter to focused \(fallbackLabel); inspect the post-action screenshot/state to decide whether the UI changed as intended")
+        let postedDown = postKeyEvent(keyDown, processID: processID)
+        let postedUp = postKeyEvent(keyUp, processID: processID)
+        let posted = postedDown && postedUp
+        let transaction = ComputerUseActionTransaction(
+            path: processID == nil ? "global_key_events" : "pid_key_events",
+            posted: posted,
+            verified: false,
+            effect: posted ? .unverifiable : .blocked,
+            targetStable: true,
+            processID: processID.map(Int.init),
+            windowID: toolCall.windowID,
+            escalationHint: "Inspect the post-action screenshot/AX state to decide whether focused activation succeeded.",
+            warning: posted ? "Enter was posted, but this does not prove the focused UI consumed it." : "Enter was not fully posted."
+        )
+        guard posted else {
+            return .failed("Could not post Enter to focused \(fallbackLabel)", transaction: transaction)
+        }
+        return .executed(
+            "Sent Enter to focused \(fallbackLabel); inspect the post-action screenshot/state to decide whether the UI changed as intended",
+            transaction: transaction
+        )
     }
 
-    private static func scroll(_ toolCall: ComputerUseToolCall, registry: ComputerUseElementRegistry?) -> ComputerUseExecutionResult {
+    private static func scroll(
+        _ toolCall: ComputerUseToolCall,
+        registry: ComputerUseElementRegistry?,
+        allowGlobalScroll: Bool,
+        allowBackgroundDispatch: Bool = false
+    ) -> ComputerUseExecutionResult {
         let direction = toolCall.direction ?? .down
         let pages = toolCall.pages ?? 1
         if let elementResult = elementTarget(toolCall, registry: registry) {
@@ -443,7 +682,93 @@ enum ComputerUseToolExecutor {
                 return scrollElement(element, direction: direction, pages: pages, label: toolCall.label)
             }
         }
+        guard allowGlobalScroll else {
+            if allowBackgroundDispatch,
+               let processID = toolCall.processID,
+               processID > 0 {
+                return scrollInBackground(
+                    direction: direction,
+                    pages: pages,
+                    processID: pid_t(processID),
+                    windowID: toolCall.windowID.flatMap { $0 > 0 ? CGWindowID($0) : nil }
+                )
+            }
+            return .needsConfirmation("Scrolling the active view in Work quietly mode requires process_id/window_id from the latest target state.")
+        }
         return scroll(direction: direction, pages: pages)
+    }
+
+    private static func scrollInBackground(
+        direction: ComputerUseScrollDirection,
+        pages: Double,
+        processID: pid_t,
+        windowID: CGWindowID?
+    ) -> ComputerUseExecutionResult {
+        if let windowID {
+            _ = ComputerUseBackgroundDriver.focusWithoutRaise(processID: processID, windowID: windowID)
+        }
+        let repeats = max(1, min(8, Int(pages.rounded(.up))))
+        let key = backgroundScrollKey(direction: direction, pages: pages)
+        for _ in 0..<repeats {
+            guard postKey(key, processID: processID) else {
+                return .failed(
+                    "Could not post background \(key) scroll key to process \(processID).",
+                    transaction: ComputerUseActionTransaction(
+                        path: "pid_key_scroll",
+                        posted: false,
+                        verified: false,
+                        effect: .blocked,
+                        targetStable: true,
+                        processID: Int(processID),
+                        windowID: windowID.map(Int.init),
+                        escalationHint: "Refresh target state and retry with a valid process_id/window_id or use direct-control scroll.",
+                        warning: "Scroll key was not posted."
+                    )
+                )
+            }
+        }
+        return .executed(
+            "Scrolled target window \(direction.rawValue)",
+            transaction: ComputerUseActionTransaction(
+                path: "pid_key_scroll",
+                posted: true,
+                verified: false,
+                effect: .unverifiable,
+                targetStable: true,
+                processID: Int(processID),
+                windowID: windowID.map(Int.init),
+                escalationHint: "Inspect the post-action screenshot/AX state; if the viewport did not move, choose another scroll target or route.",
+                warning: "Scroll keys were posted, but this does not prove the viewport consumed them."
+            )
+        )
+    }
+
+    private static func postKey(_ key: String, processID: pid_t) -> Bool {
+        guard let keyCode = keyCode(for: key),
+              let source = CGEventSource(stateID: .combinedSessionState),
+              let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
+        else { return false }
+        let postedDown = ComputerUseBackgroundDriver.postKeyEvent(down, to: processID)
+        let postedUp = ComputerUseBackgroundDriver.postKeyEvent(up, to: processID)
+        return postedDown && postedUp
+    }
+
+    private static func backgroundScrollKey(direction: ComputerUseScrollDirection, pages: Double) -> String {
+        if pages >= 1 {
+            switch direction {
+            case .up: return "pageup"
+            case .down: return "pagedown"
+            case .left: return "left"
+            case .right: return "right"
+            }
+        }
+        switch direction {
+        case .up: return "up"
+        case .down: return "down"
+        case .left: return "left"
+        case .right: return "right"
+        }
     }
 
     private static func scroll(direction: ComputerUseScrollDirection, pages: Double) -> ComputerUseExecutionResult {
@@ -461,8 +786,31 @@ enum ComputerUseToolExecutor {
             wheel2: deltas.horizontal,
             wheel3: 0
         )
-        event?.post(tap: .cghidEventTap)
-        return .executed("Scrolled \(direction.rawValue)")
+        guard let event else {
+            return .failed(
+                "Could not create scroll event",
+                transaction: ComputerUseActionTransaction(
+                    path: "global_scroll_wheel",
+                    posted: false,
+                    verified: false,
+                    effect: .blocked,
+                    escalationHint: "Refresh target state and retry scroll with an element or pid/window-scoped target.",
+                    warning: "Scroll event was not created."
+                )
+            )
+        }
+        event.post(tap: .cghidEventTap)
+        return .executed(
+            "Scrolled \(direction.rawValue)",
+            transaction: ComputerUseActionTransaction(
+                path: "global_scroll_wheel",
+                posted: true,
+                verified: false,
+                effect: .unverifiable,
+                escalationHint: "Inspect the post-action screenshot/AX state; if the viewport did not move, choose another scroll target or route.",
+                warning: "Global scroll was posted, but this does not prove the viewport consumed it."
+            )
+        )
     }
 
     private static func scrollElement(
@@ -480,13 +828,35 @@ enum ComputerUseToolExecutor {
         let count = max(1, min(8, Int(pages.rounded(.up))))
         for _ in 0..<count {
             guard AXUIElementPerformAction(element, action as CFString) == .success else {
-                return .failed("Could not perform \(action) on scroll target")
+                return .failed(
+                    "Could not perform \(action) on scroll target",
+                    transaction: ComputerUseActionTransaction(
+                        path: "ax_scroll_action",
+                        route: action,
+                        posted: false,
+                        verified: false,
+                        effect: .blocked,
+                        escalationHint: "Refresh target state and choose another scrollable element or direct-control scroll.",
+                        warning: "AX scroll action was rejected."
+                    )
+                )
             }
         }
         if let rect = rect(of: element) {
             ComputerUseCursorOverlay.shared.show(at: CGPoint(x: rect.midX, y: rect.midY), label: label)
         }
-        return .executed("Scrolled element \(direction.rawValue)")
+        return .executed(
+            "Scrolled element \(direction.rawValue)",
+            transaction: ComputerUseActionTransaction(
+                path: "ax_scroll_action",
+                route: action,
+                posted: true,
+                verified: false,
+                effect: .unverifiable,
+                escalationHint: "Inspect the post-action screenshot/AX state; if the element did not move, choose another scroll target or route.",
+                warning: "AX scroll action was accepted, but this does not prove visible content moved."
+            )
+        )
     }
 
     private static func scrollActionName(direction: ComputerUseScrollDirection) -> String {
@@ -516,16 +886,47 @@ enum ComputerUseToolExecutor {
         }
     }
 
-    private static func click(_ toolCall: ComputerUseToolCall, registry: ComputerUseElementRegistry?) -> ComputerUseExecutionResult {
+    private static func click(
+        _ toolCall: ComputerUseToolCall,
+        registry: ComputerUseElementRegistry?,
+        allowPointerFallback: Bool,
+        allowBackgroundDispatch: Bool = false
+    ) -> ComputerUseExecutionResult {
+        if allowBackgroundDispatch {
+            guard let processID = toolCall.processID, processID > 0 else {
+                return .needsConfirmation("Work quietly click requires nonzero process_id from the latest target snapshot.")
+            }
+            guard let windowID = toolCall.windowID, windowID > 0 else {
+                return .needsConfirmation("Work quietly click requires nonzero window_id from the latest target snapshot.")
+            }
+        }
         if toolCall.tool != .clickPoint, let elementResult = elementTarget(toolCall, registry: registry) {
             switch elementResult {
             case .failure(let message):
                 return .failed(message)
             case .success(let element):
-                return clickElement(element, fallbackLabel: toolCall.label ?? elementTargetLabel(toolCall))
+                return clickElement(
+                    element,
+                    fallbackLabel: toolCall.label ?? elementTargetLabel(toolCall),
+                    allowPointerFallback: allowPointerFallback,
+                    backgroundProcessID: allowBackgroundDispatch ? toolCall.processID.map(pid_t.init) : nil,
+                    backgroundWindowID: allowBackgroundDispatch ? toolCall.windowID.flatMap { $0 > 0 ? CGWindowID($0) : nil } : nil,
+                    button: clickButton(from: toolCall.button),
+                    clicks: toolCall.clicks ?? 1
+                )
             }
         }
         if toolCall.x != nil, toolCall.y != nil {
+            if allowBackgroundDispatch {
+                return clickPoint(
+                    toolCall,
+                    registry: registry,
+                    backgroundProcessID: pid_t(toolCall.processID ?? 0),
+                    backgroundWindowID: toolCall.windowID.flatMap { $0 > 0 ? CGWindowID($0) : nil }
+                )
+            } else if !allowPointerFallback {
+                return .needsConfirmation("Clicking a screen coordinate requires direct app control.")
+            }
             return clickPoint(toolCall, registry: registry)
         }
         return .needsConfirmation("Confirm: unknown click target")
@@ -536,7 +937,7 @@ enum ComputerUseToolExecutor {
         registry: ComputerUseElementRegistry?
     ) -> ComputerUseExecutionResult {
         guard let elementResult = elementTarget(toolCall, registry: registry) else {
-            return .failed("perform_secondary_action requires element_index or element_id")
+            return .failed("Secondary action requires element_index or element_id")
         }
         let element: AXUIElement
         switch elementResult {
@@ -547,10 +948,10 @@ enum ComputerUseToolExecutor {
         }
         let actionName = toolCall.actionName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !actionName.isEmpty else {
-            return .failed("perform_secondary_action requires action_name")
+            return .failed("Secondary action requires action_name")
         }
         guard actionName != (kAXPressAction as String) else {
-            return .unsupported("Use click for AXPress; perform_secondary_action only invokes non-press advertised actions.")
+            return .unsupported("Use click for AXPress; secondary action only invokes non-press advertised actions.")
         }
         let advertisedActions = actionNames(of: element) ?? []
         guard advertisedActions.contains(actionName) else {
@@ -582,7 +983,7 @@ enum ComputerUseToolExecutor {
         if result == .success {
             return .executed("Set value")
         }
-        return .unsupported("Element does not support set_value")
+        return .unsupported("Element does not support direct value setting")
     }
 
     private static func elementTarget(
@@ -665,7 +1066,7 @@ enum ComputerUseToolExecutor {
 
         var toolName: String {
             switch self {
-            case .keyboard: "type_text"
+            case .keyboard: "keyboard text"
             case .paste: "paste_text"
             }
         }
@@ -676,14 +1077,25 @@ enum ComputerUseToolExecutor {
             case .paste: "Pasted text"
             }
         }
+
+        var transactionPath: String {
+            switch self {
+            case .keyboard: "key_events_text"
+            case .paste: "clipboard_paste"
+            }
+        }
     }
 
     private static func enterText(
         _ toolCall: ComputerUseToolCall,
         registry: ComputerUseElementRegistry?,
-        mode: TextEntryMode
+        mode: TextEntryMode,
+        allowAppActivation: Bool = true
     ) async -> ComputerUseExecutionResult {
-        let targetApp = await prepareTextEntryApp(toolCall, shouldActivateNamedApp: !toolCall.canonicalBundleID.isEmpty || toolCall.appName?.isEmpty == false)
+        let targetApp = await prepareTextEntryApp(
+            toolCall,
+            shouldActivateNamedApp: allowAppActivation && (!toolCall.canonicalBundleID.isEmpty || toolCall.appName?.isEmpty == false)
+        )
         if case let .failure(message) = targetApp {
             return .failed(message)
         }
@@ -691,6 +1103,7 @@ enum ComputerUseToolExecutor {
             return .cancelled()
         }
         let app = targetApp.app
+        let backgroundTextEntry = !allowAppActivation
 
         var explicitElement: AXUIElement?
         if let elementResult = elementTarget(toolCall, registry: registry) {
@@ -701,26 +1114,41 @@ enum ComputerUseToolExecutor {
                 explicitElement = element
             }
         }
-        if let elementResult = await focusTextEntryElement(toolCall, registry: registry) {
+        if let elementResult = await focusTextEntryElement(
+            toolCall,
+            registry: registry,
+            allowClickFallback: allowAppActivation
+        ) {
             if case let .failure(message) = elementResult {
-                return .failed(message)
+                if !backgroundTextEntry || explicitElement == nil {
+                    return .failed(message)
+                }
             }
             if case .cancelled = elementResult {
                 return .cancelled()
             }
         }
 
-        let focusedElement = focusedEditableTextTarget(requiredApp: app)
+        let requiredFocusedProcessID = toolCall.processID.map(pid_t.init)
+        let focusedElement = focusedEditableTextTarget(
+            requiredApp: app,
+            requiredProcessID: requiredFocusedProcessID
+        )
         let targetElement: AXUIElement?
         if let explicitElement {
-            guard isTextEntryTarget(explicitElement) else {
-                return .failed("No focused editable text target: requested element is not an editable text target. Refresh state and choose an editable field before using \(mode.toolName).")
+            if isTextEntryTarget(explicitElement) {
+                if !backgroundTextEntry {
+                    guard let focusedElement,
+                          elementsAppearSame(explicitElement, focusedElement) else {
+                        return .failed("No focused editable text target: focused element no longer matches requested text target. Refresh state before using \(mode.toolName).")
+                    }
+                }
+                targetElement = explicitElement
+            } else if let focusedElement {
+                targetElement = focusedElement
+            } else {
+                return .failed("No focused editable text target: requested element is not an editable text target and no target-process text receiver is focused. Refresh state and choose an editable field before using \(mode.toolName).")
             }
-            guard let focusedElement,
-                  elementsAppearSame(explicitElement, focusedElement) else {
-                return .failed("No focused editable text target: focused element no longer matches requested text target. Refresh state before using \(mode.toolName).")
-            }
-            targetElement = explicitElement
         } else {
             targetElement = focusedElement
         }
@@ -732,9 +1160,18 @@ enum ComputerUseToolExecutor {
             return .failed(mismatch)
         }
 
+        let processID: pid_t?
+        switch targetProcessID(toolCall: toolCall, app: app, element: targetElement) {
+        case .success(let resolvedProcessID):
+            processID = resolvedProcessID
+        case .failure(let message):
+            return .failed(message)
+        }
+
         let text = toolCall.text ?? ""
         let valueBeforeAXSelectedText = axString(targetElement, kAXValueAttribute)
-        if setSelectedText(text, in: targetElement) {
+        if !shouldPlaceCaretBeforeBackgroundTextEntry(targetElement, backgroundTextEntry: backgroundTextEntry),
+           setSelectedText(text, in: targetElement) {
             do {
                 try await Task.sleep(nanoseconds: 250_000_000)
             } catch is CancellationError {
@@ -743,20 +1180,80 @@ enum ComputerUseToolExecutor {
                 return .failed(error.localizedDescription)
             }
             if textWriteReadbackConfirms(text, beforeValue: valueBeforeAXSelectedText, in: targetElement) {
-                return .executed("Inserted text via AXSelectedText")
+                return .executed(
+                    "Inserted text via AXSelectedText",
+                    transaction: ComputerUseActionTransaction(
+                        path: "ax_selected_text",
+                        posted: true,
+                        verified: true,
+                        effect: .confirmed,
+                        targetStable: true,
+                        processID: processID.map(Int.init),
+                        windowID: toolCall.windowID,
+                        elementID: toolCall.elementID,
+                        elementIndex: toolCall.elementIndex,
+                        requestedTextSample: textSample(text),
+                        observedTextSample: textSample(text)
+                    )
+                )
             }
+            return .failed(
+                "AXSelectedText accepted the write, but AX readback did not confirm insertion. Refresh target state before retrying text entry; retrying blindly may duplicate text if the AX write already landed.",
+                transaction: ComputerUseActionTransaction(
+                    path: "ax_selected_text",
+                    posted: true,
+                    verified: false,
+                    effect: .unverifiable,
+                    targetStable: true,
+                    processID: processID.map(Int.init),
+                    windowID: toolCall.windowID,
+                    elementID: toolCall.elementID,
+                    elementIndex: toolCall.elementIndex,
+                    requestedTextSample: textSample(text),
+                    escalationHint: "Inspect the post-action screenshot/AX state before retrying; retrying blindly may duplicate text if the AX write landed but AX readback lagged.",
+                    warning: "AXSelectedText accepted the write, but readback did not prove insertion."
+                )
+            )
         }
 
-        let processID: pid_t?
-        switch targetProcessID(toolCall: toolCall, app: app, element: targetElement) {
-        case .success(let resolvedProcessID):
-            processID = resolvedProcessID
-        case .failure(let message):
-            return .failed(message)
+        if let processID,
+           backgroundTextEntry,
+           let windowID = toolCall.windowID,
+           windowID > 0 {
+            _ = ComputerUseBackgroundDriver.focusWithoutRaise(
+                processID: processID,
+                windowID: CGWindowID(windowID)
+            )
+        }
+        if backgroundTextEntry,
+           shouldPlaceCaretBeforeBackgroundTextEntry(targetElement, backgroundTextEntry: backgroundTextEntry) {
+            guard let processID, processID > 0 else {
+                return .failed("Background text entry for web editor surfaces requires process_id from the latest target state.")
+            }
+            guard let windowID = toolCall.windowID, windowID > 0 else {
+                return .failed("Background text entry for web editor surfaces requires window_id from the latest target state.")
+            }
+            let placed = backgroundClickCenter(
+                of: targetElement,
+                label: toolCall.label ?? elementTargetLabel(toolCall),
+                processID: processID,
+                windowID: CGWindowID(windowID)
+            )
+            guard placed.status == .executed else {
+                return placed
+            }
+            do {
+                try await Task.sleep(nanoseconds: 450_000_000)
+            } catch is CancellationError {
+                return .cancelled()
+            } catch {
+                return .failed(error.localizedDescription)
+            }
         }
         switch mode {
         case .keyboard:
-            if let failure = validateFocusedTextEntryFallbackTarget(targetElement, app: app, mode: mode) {
+            if !backgroundTextEntry,
+               let failure = validateFocusedTextEntryFallbackTarget(targetElement, app: app, mode: mode) {
                 return failure
             }
             PasteController.typeText(text, processID: processID)
@@ -768,7 +1265,8 @@ enum ComputerUseToolExecutor {
                 return .failed(error.localizedDescription)
             }
         case .paste:
-            if let failure = validateFocusedTextEntryFallbackTarget(targetElement, app: app, mode: mode) {
+            if !backgroundTextEntry,
+               let failure = validateFocusedTextEntryFallbackTarget(targetElement, app: app, mode: mode) {
                 return failure
             }
             var pasteWasPosted = false
@@ -776,7 +1274,7 @@ enum ComputerUseToolExecutor {
                 text: text,
                 processID: processID,
                 beforePasteAction: {
-                    guard validateFocusedTextEntryFallbackTarget(targetElement, app: app, mode: mode) == nil else {
+                    guard backgroundTextEntry || validateFocusedTextEntryFallbackTarget(targetElement, app: app, mode: mode) == nil else {
                         return false
                     }
                     pasteWasPosted = true
@@ -791,10 +1289,58 @@ enum ComputerUseToolExecutor {
                 return .failed(error.localizedDescription)
             }
             guard pasteWasPosted else {
-                return .failed("No focused editable text target: focused element changed before paste_text posted. Refresh state and choose the editable field again.")
+                return .failed(
+                    "No focused editable text target: focused element changed before paste_text posted. Refresh state and choose the editable field again.",
+                    transaction: textEntryTransaction(
+                        path: mode.transactionPath,
+                        posted: false,
+                        text: text,
+                        toolCall: toolCall,
+                        processID: processID,
+                        effect: .blocked
+                    )
+                )
             }
         }
-        return .executed(mode.completedMessage)
+        return .executed(
+            mode.completedMessage,
+            transaction: textEntryTransaction(
+                path: mode.transactionPath,
+                posted: true,
+                text: text,
+                toolCall: toolCall,
+                processID: processID,
+                effect: .unverifiable
+            )
+        )
+    }
+
+    private static func textEntryTransaction(
+        path: String,
+        posted: Bool,
+        text: String,
+        toolCall: ComputerUseToolCall,
+        processID: pid_t?,
+        effect: ComputerUseActionEffect
+    ) -> ComputerUseActionTransaction {
+        ComputerUseActionTransaction(
+            path: path,
+            posted: posted,
+            verified: false,
+            effect: effect,
+            targetStable: true,
+            processID: processID.map(Int.init),
+            windowID: toolCall.windowID,
+            elementID: toolCall.elementID,
+            elementIndex: toolCall.elementIndex,
+            requestedTextSample: textSample(text),
+            escalationHint: posted
+                ? "Inspect the post-action screenshot/AX state; if the text is absent, partial, or duplicated, refocus the editable target and retry paste_text."
+                : "Refresh target state and choose the editable field again before retrying text entry.",
+            warning: posted
+                ? "Text input was posted, but this path cannot prove the web/editor surface consumed it."
+                : "Text input was not posted."
+        )
     }
 
     private static func validateFocusedTextEntryFallbackTarget(
@@ -851,6 +1397,20 @@ enum ComputerUseToolExecutor {
             return .success(nil)
         }
 
+        if !shouldActivateNamedApp {
+            if let app = runningApplication(named: target) {
+                return .success(app)
+            }
+            let launchResult = await openApp(named: target, allowActivation: false)
+            if launchResult.status == .cancelled {
+                return .cancelled
+            }
+            guard launchResult.status == .executed else {
+                return .failure(launchResult.message)
+            }
+            return .success(runningApplication(named: target))
+        }
+
         let focusResult = await focusApp(named: target)
         if focusResult.status == .cancelled {
             return .cancelled
@@ -873,7 +1433,8 @@ enum ComputerUseToolExecutor {
 
     private static func focusTextEntryElement(
         _ toolCall: ComputerUseToolCall,
-        registry: ComputerUseElementRegistry?
+        registry: ComputerUseElementRegistry?,
+        allowClickFallback: Bool
     ) async -> ElementFocusResult? {
         let element: AXUIElement?
         if let index = toolCall.elementIndex, index > 0 {
@@ -891,7 +1452,7 @@ enum ComputerUseToolExecutor {
         }
         guard let element else { return nil }
 
-        return await focusElement(element, label: toolCall.label, allowClickFallback: true)
+        return await focusElement(element, label: toolCall.label, allowClickFallback: allowClickFallback)
     }
 
     private static func focusElement(_ element: AXUIElement, label: String?, allowClickFallback: Bool) async -> ElementFocusResult {
@@ -926,31 +1487,15 @@ enum ComputerUseToolExecutor {
         return .success
     }
 
-    private static func clickElement(labeled rawLabel: String) -> ComputerUseExecutionResult {
-        guard AXIsProcessTrusted() else {
-            return .failed("Accessibility permission required")
-        }
-        guard let app = NSWorkspace.shared.frontmostApplication else {
-            return .failed("No frontmost app")
-        }
-
-        let label = canonicalLabel(rawLabel)
-        let axApp = AXUIElementCreateApplication(app.processIdentifier)
-        let root = focusedWindow(in: axApp) ?? axApp
-        guard let match = findElement(labeled: label, in: root, maxDepth: 8, visited: []) else {
-            return .failed("Could not find \(rawLabel)")
-        }
-
-        if AXUIElementPerformAction(match, kAXPressAction as CFString) == .success {
-            return .executed("Clicked \(rawLabel)")
-        }
-        if clickCenter(of: match) {
-            return .executed("Clicked \(rawLabel)")
-        }
-        return .failed("Could not click \(rawLabel)")
-    }
-
-    private static func clickElement(_ element: AXUIElement, fallbackLabel: String) -> ComputerUseExecutionResult {
+    private static func clickElement(
+        _ element: AXUIElement,
+        fallbackLabel: String,
+        allowPointerFallback: Bool = true,
+        backgroundProcessID: pid_t? = nil,
+        backgroundWindowID: CGWindowID? = nil,
+        button: ComputerUseClickDriver.Button = .left,
+        clicks: Int = 1
+    ) -> ComputerUseExecutionResult {
         if let rect = rect(of: element) {
             ComputerUseCursorOverlay.shared.show(
                 at: CGPoint(x: rect.midX, y: rect.midY),
@@ -963,25 +1508,58 @@ enum ComputerUseToolExecutor {
 
         let advertisedActions = actionNames(of: element)
         if let advertisedActions, !advertisedActions.contains(kAXPressAction) {
-            if clickCenter(of: element) {
-                return .executed("Clicked \(fallbackLabel) by coordinates; element does not advertise AXPress")
+            guard backgroundProcessID != nil || allowPointerFallback else {
+                let actions = advertisedActions.isEmpty ? "none" : advertisedActions.joined(separator: ", ")
+                return .needsConfirmation("\(fallbackLabel) needs an element-center click because it does not advertise AXPress (actions: \(actions)). In Work quietly mode include nonzero process_id/window_id from the latest target snapshot.")
             }
-            let actions = advertisedActions.isEmpty ? "none" : advertisedActions.joined(separator: ", ")
-            return .unsupported("\(fallbackLabel) does not advertise AXPress (actions: \(actions))")
         }
 
-        if AXUIElementPerformAction(element, kAXPressAction as CFString) == .success {
-            return .executed("Clicked \(fallbackLabel)")
+        return ComputerUseClickDriver.clickElement(
+            element,
+            label: fallbackLabel,
+            processID: backgroundProcessID,
+            windowID: backgroundWindowID,
+            button: button,
+            clicks: clicks,
+            allowGlobalHID: allowPointerFallback
+        )
+    }
+
+    private static func backgroundClickCenter(
+        of element: AXUIElement,
+        label: String,
+        processID: pid_t?,
+        windowID: CGWindowID?
+    ) -> ComputerUseExecutionResult {
+        guard let processID, processID > 0 else {
+            return .failed("Background element-center click for \(label) requires nonzero process_id from the latest target snapshot.")
         }
-        if clickCenter(of: element) {
-            return .executed("Clicked \(fallbackLabel) by coordinates after AXPress failed")
+        guard let windowID, windowID > 0 else {
+            return .failed("Background element-center click for \(label) requires nonzero window_id from the latest target snapshot.")
         }
-        return .failed("Could not click \(fallbackLabel)")
+        guard let rect = rect(of: element) else {
+            return .failed("Could not resolve \(label) frame for background element click.")
+        }
+        return ComputerUseClickDriver.clickPoint(
+            ComputerUseClickDriver.PointRequest(
+                point: CGPoint(x: rect.midX, y: rect.midY),
+                label: label,
+                processID: processID,
+                windowID: windowID,
+                button: .left,
+                clicks: 1,
+                allowGlobalHID: false
+            ),
+            preferredBackgroundRoute: .elementCenterSkyLight,
+            reason: "caret placement or element-center fallback"
+        )
     }
 
     private static func clickPoint(
         _ toolCall: ComputerUseToolCall,
-        registry: ComputerUseElementRegistry?
+        registry: ComputerUseElementRegistry?,
+        backgroundProcessID: pid_t? = nil,
+        backgroundWindowID: CGWindowID? = nil
     ) -> ComputerUseExecutionResult {
         let point: CGPoint
         switch screenPoint(for: toolCall, registry: registry) {
@@ -990,43 +1568,21 @@ enum ComputerUseToolExecutor {
         case .failure(let message):
             return .failed(message)
         }
-        guard let source = CGEventSource(stateID: .combinedSessionState) else {
-            return .failed("Could not create mouse event")
-        }
-
-        ComputerUseCursorOverlay.shared.show(at: point, label: toolCall.label)
-        CGWarpMouseCursorPosition(point)
-        let button = mouseButton(from: toolCall.button)
-        let downType: CGEventType = button == .right ? .rightMouseDown : .leftMouseDown
-        let upType: CGEventType = button == .right ? .rightMouseUp : .leftMouseUp
-        let clickCount = max(1, min(toolCall.clicks ?? 1, 2))
-        for clickIndex in 1...clickCount {
-            guard let mouseDown = CGEvent(
-                mouseEventSource: source,
-                mouseType: downType,
-                mouseCursorPosition: point,
-                mouseButton: button
-            ),
-            let mouseUp = CGEvent(
-                mouseEventSource: source,
-                mouseType: upType,
-                mouseCursorPosition: point,
-                mouseButton: button
-            ) else {
-                return .failed("Could not create mouse event")
-            }
-            mouseDown.setIntegerValueField(.mouseEventClickState, value: Int64(clickIndex))
-            mouseUp.setIntegerValueField(.mouseEventClickState, value: Int64(clickIndex))
-            mouseDown.post(tap: .cghidEventTap)
-            mouseUp.post(tap: .cghidEventTap)
-        }
-        let label = toolCall.label?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return .executed("Clicked \(label?.isEmpty == false ? label! : "point")")
+        return ComputerUseClickDriver.clickPoint(ComputerUseClickDriver.PointRequest(
+            point: point,
+            label: toolCall.label,
+            processID: backgroundProcessID,
+            windowID: backgroundWindowID,
+            button: clickButton(from: toolCall.button),
+            clicks: toolCall.clicks ?? 1,
+            allowGlobalHID: backgroundProcessID == nil
+        ))
     }
 
     private static func moveCursor(
         _ toolCall: ComputerUseToolCall,
-        registry: ComputerUseElementRegistry?
+        registry: ComputerUseElementRegistry?,
+        allowCursorWarp: Bool
     ) -> ComputerUseExecutionResult {
         let point: CGPoint
         switch screenPoint(for: toolCall, registry: registry) {
@@ -1035,9 +1591,14 @@ enum ComputerUseToolExecutor {
         case .failure(let message):
             return .failed(message)
         }
-        CGWarpMouseCursorPosition(point)
+        if allowCursorWarp {
+            CGWarpMouseCursorPosition(point)
+        }
         ComputerUseCursorOverlay.shared.show(at: point, label: toolCall.label)
-        return .executed("Moved cursor to \(Int(point.x.rounded())),\(Int(point.y.rounded()))")
+        if allowCursorWarp {
+            return .executed("Moved cursor to \(Int(point.x.rounded())),\(Int(point.y.rounded()))")
+        }
+        return .executed("Showed target cursor overlay without moving the system cursor")
     }
 
     private static func drag(
@@ -1224,6 +1785,56 @@ enum ComputerUseToolExecutor {
         return app.isActive
     }
 
+    private static func restoreFrontmostApp(
+        _ priorFrontmost: NSRunningApplication?,
+        ifTargetSelfActivated target: NSRunningApplication
+    ) async {
+        guard let priorFrontmost,
+              priorFrontmost.processIdentifier != target.processIdentifier,
+              !priorFrontmost.isTerminated
+        else { return }
+
+        for delay in [80_000_000, 250_000_000, 500_000_000] as [UInt64] {
+            do {
+                try await Task.sleep(nanoseconds: delay)
+            } catch {
+                return
+            }
+            if target.isActive {
+                priorFrontmost.activate(options: [])
+            }
+        }
+    }
+
+    private static func withFrontmostPreserved(
+        enabled: Bool,
+        operation: () async -> ComputerUseExecutionResult
+    ) async -> ComputerUseExecutionResult {
+        guard enabled else {
+            return await operation()
+        }
+        let priorFrontmost = NSWorkspace.shared.frontmostApplication
+        let result = await operation()
+        await restoreFrontmostAfterPotentialSteal(priorFrontmost)
+        return result
+    }
+
+    private static func restoreFrontmostAfterPotentialSteal(_ priorFrontmost: NSRunningApplication?) async {
+        guard let priorFrontmost,
+              !priorFrontmost.isTerminated
+        else { return }
+        for delay in [0, 80_000_000, 250_000_000] as [UInt64] {
+            if delay > 0 {
+                do {
+                    try await Task.sleep(nanoseconds: delay)
+                } catch {
+                    return
+                }
+            }
+            priorFrontmost.activate(options: [])
+        }
+    }
+
     private static func cgFlags(for modifiers: [ComputerUseKeyModifier]) -> CGEventFlags {
         var flags = CGEventFlags()
         for modifier in modifiers {
@@ -1358,8 +1969,11 @@ enum ComputerUseToolExecutor {
         return element
     }
 
-    private static func focusedEditableTextTarget(requiredApp: NSRunningApplication?) -> AXUIElement? {
-        guard let element = focusedUIElement(requiredApp: requiredApp) else { return nil }
+    private static func focusedEditableTextTarget(
+        requiredApp: NSRunningApplication?,
+        requiredProcessID: pid_t? = nil
+    ) -> AXUIElement? {
+        guard let element = focusedUIElement(requiredApp: requiredApp, requiredProcessID: requiredProcessID) else { return nil }
         return isTextEntryTarget(element) ? element : nil
     }
 
@@ -1383,6 +1997,18 @@ enum ComputerUseToolExecutor {
 
     private static func isTextEntryTarget(_ element: AXUIElement) -> Bool {
         isEditableTextElement(element) || isWebEditorSurface(element)
+    }
+
+    private static func shouldPlaceCaretBeforeBackgroundTextEntry(
+        _ element: AXUIElement,
+        backgroundTextEntry: Bool
+    ) -> Bool {
+        guard backgroundTextEntry else { return false }
+        let role = axString(element, kAXRoleAttribute)
+        if role == kAXTextAreaRole as String || role == kAXTextFieldRole as String || role == kAXComboBoxRole as String {
+            return false
+        }
+        return role == "AXWebArea" || role == "AXGroup" || isWebEditorSurface(element)
     }
 
     private static func isEditableTextElement(_ element: AXUIElement) -> Bool {
@@ -1500,12 +2126,21 @@ enum ComputerUseToolExecutor {
         case failure(String)
     }
 
-    private static func postKeyEvent(_ event: CGEvent?, processID: pid_t?) {
-        guard let event else { return }
+    private static func postKeyEvent(
+        _ event: CGEvent?,
+        processID: pid_t?,
+        attachAuthMessage: Bool = true
+    ) -> Bool {
+        guard let event else { return false }
         if let processID, processID > 0 {
-            event.postToPid(processID)
+            return ComputerUseBackgroundDriver.postKeyEvent(
+                event,
+                to: processID,
+                attachAuthMessage: attachAuthMessage
+            )
         } else {
             event.post(tap: .cghidEventTap)
+            return true
         }
     }
 
@@ -1757,7 +2392,7 @@ enum ComputerUseToolExecutor {
         case failure(String)
     }
 
-    private static func mouseButton(from rawValue: String?) -> CGMouseButton {
+    private static func clickButton(from rawValue: String?) -> ComputerUseClickDriver.Button {
         let value = canonicalLabel(rawValue ?? "")
         return value == "right" || value == "secondary" ? .right : .left
     }

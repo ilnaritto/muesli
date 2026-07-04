@@ -567,6 +567,77 @@ final class FloatingIndicatorController: NSObject {
         }
     }
 
+    /// Show a CUA terminal result with the model's explanation instead of collapsing it to "Failed".
+    func showComputerUseResultMessage(_ message: String, icon: String = "!", duration: TimeInterval = 5.0) {
+        guard state == .idle else { return }
+        let normalized = Self.normalizedComputerUseTranscript(message)
+        guard !normalized.isEmpty else { return }
+        let config = configStore.load()
+        if panel == nil { createPanel(config: config) }
+        guard let panel, let contentView, let iconLabel, let textLabel else { return }
+        guard let screen = NSScreen.main?.visibleFrame else { return }
+
+        let resultSize = Self.computerUseResultPillSize(message: normalized, icon: icon, screen: screen)
+        let center = CGPoint(x: panel.frame.midX, y: panel.frame.midY)
+        let x = min(max(center.x - resultSize.width / 2, screen.minX), screen.maxX - resultSize.width)
+        let y = min(max(center.y - resultSize.height / 2, screen.minY), screen.maxY - resultSize.height)
+        let targetFrame = NSRect(x: x, y: y, width: resultSize.width, height: resultSize.height)
+
+        glassView?.isHidden = true
+        tintLayer?.isHidden = true
+        micIconView?.isHidden = true
+        wandIconView?.isHidden = true
+        stopWaveformAnimation()
+
+        let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let textColor = NSColor.colorWith(hex: 0xFFFFFF, alpha: 0.9)
+        let iconColor = NSColor.colorWith(hex: 0xFFFFFF, alpha: 0.72)
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.18
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.allowsImplicitAnimation = true
+
+            panel.animator().setFrame(targetFrame, display: true)
+            panel.animator().alphaValue = 1.0
+            contentView.animator().frame = NSRect(origin: .zero, size: resultSize)
+            contentView.layer?.cornerRadius = min(18, resultSize.height / 2)
+            contentView.layer?.cornerCurve = .continuous
+            contentView.layer?.backgroundColor = NSColor.colorWith(hex: 0x1E1E2E, alpha: 0.94).cgColor
+            contentView.layer?.borderWidth = 1.0
+            contentView.layer?.borderColor = NSColor.colorWith(hex: 0xFFFFFF, alpha: 0.18).cgColor
+
+            let normalizedIcon = icon.trimmingCharacters(in: .whitespacesAndNewlines)
+            iconLabel.isHidden = normalizedIcon.isEmpty
+            iconLabel.font = NSFont.systemFont(ofSize: 13, weight: .bold)
+            iconLabel.stringValue = normalizedIcon
+            iconLabel.textColor = iconColor
+            iconLabel.alignment = .center
+            iconLabel.animator().alphaValue = normalizedIcon.isEmpty ? 0 : 1
+
+            Self.configureTextLabel(textLabel, forTranscript: true)
+            textLabel.stringValue = normalized
+            textLabel.font = font
+            textLabel.textColor = textColor
+            textLabel.toolTip = normalized
+            textLabel.isHidden = false
+            textLabel.animator().alphaValue = 1
+            layoutComputerUseResultMessage(
+                iconLabel: iconLabel,
+                textLabel: textLabel,
+                icon: normalizedIcon,
+                in: resultSize,
+                animated: true
+            )
+        }
+        panel.orderFrontRegardless()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+            guard let self, self.state == .idle else { return }
+            self.setState(.idle, config: self.configStore.load())
+        }
+    }
+
     private func warningPillSize(message: String, icon: String, font: NSFont, screen: NSRect) -> NSSize {
         let horizontalPadding: CGFloat = 18
         let hasIcon = !icon.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -579,6 +650,41 @@ final class FloatingIndicatorController: NSObject {
         let minWidth: CGFloat = hasIcon ? 180 : 88
         let maxWidth = max(minWidth, min(640, screen.width - 32))
         return NSSize(width: min(max(preferredWidth, minWidth), maxWidth), height: 36)
+    }
+
+    private func layoutComputerUseResultMessage(
+        iconLabel: NSTextField,
+        textLabel: NSTextField,
+        icon: String,
+        in size: NSSize,
+        animated: Bool
+    ) {
+        let hasIcon = !icon.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let iconWidth: CGFloat = hasIcon ? 22 : 0
+        let iconHeight: CGFloat = 18
+        let gap: CGFloat = hasIcon ? 8 : 0
+        let horizontalPadding: CGFloat = 16
+        let verticalPadding: CGFloat = 12
+        let iconFrame = NSRect(
+            x: horizontalPadding,
+            y: floor(size.height - verticalPadding - iconHeight),
+            width: iconWidth,
+            height: iconHeight
+        )
+        let textX = horizontalPadding + iconWidth + gap
+        let textFrame = NSRect(
+            x: textX,
+            y: verticalPadding,
+            width: max(40, size.width - textX - horizontalPadding),
+            height: max(16, size.height - (verticalPadding * 2))
+        )
+        if animated {
+            iconLabel.animator().frame = iconFrame
+            textLabel.animator().frame = textFrame
+        } else {
+            iconLabel.frame = iconFrame
+            textLabel.frame = textFrame
+        }
     }
 
     func showLoading(_ message: String) {
@@ -1471,6 +1577,19 @@ final class FloatingIndicatorController: NSObject {
         )
     }
 
+    static func computerUseResultPillSizeForTesting(
+        message: String,
+        icon: String = "!",
+        screenWidth: CGFloat,
+        screenHeight: CGFloat = 900
+    ) -> NSSize {
+        computerUseResultPillSize(
+            message: message,
+            icon: icon,
+            screen: NSRect(x: 0, y: 0, width: screenWidth, height: screenHeight)
+        )
+    }
+
     private static func transcribingPillSize(
         title: String,
         screenWidth: CGFloat,
@@ -1498,6 +1617,27 @@ final class FloatingIndicatorController: NSObject {
         let chromeWidth = computerUseCancelHitWidth + horizontalPadding + iconWidth + gap + horizontalPadding
         let minWidth = min(CGFloat(280), max(160, screen.width - 48))
         let maxWidth = max(minWidth, min(860, screen.width - 48))
+        let singleLineTextWidth = ceil((normalized as NSString).size(withAttributes: [.font: font]).width) + 2
+        let preferredWidth = min(maxWidth, max(minWidth, chromeWidth + singleLineTextWidth))
+        let textWidth = max(40, preferredWidth - chromeWidth)
+        let textHeight = transcriptTextHeight(normalized, font: font, width: textWidth)
+        let maxHeight = max(CGFloat(56), screen.height - 48)
+        let preferredHeight = max(CGFloat(44), ceil(textHeight) + (verticalPadding * 2) + 4)
+        return NSSize(width: preferredWidth, height: min(preferredHeight, maxHeight))
+    }
+
+    private static func computerUseResultPillSize(message: String, icon: String, screen: NSRect) -> NSSize {
+        let normalized = normalizedComputerUseTranscript(message)
+        let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let hasIcon = !icon.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let iconWidth: CGFloat = hasIcon ? 22 : 0
+        let gap: CGFloat = hasIcon ? 8 : 0
+        let horizontalPadding: CGFloat = 16
+        let verticalPadding: CGFloat = 12
+        let chromeWidth = horizontalPadding + iconWidth + gap + horizontalPadding
+        let availableWidth = max(CGFloat(80), screen.width - 48)
+        let minWidth = min(hasIcon ? CGFloat(300) : CGFloat(120), availableWidth)
+        let maxWidth = max(minWidth, min(860, availableWidth))
         let singleLineTextWidth = ceil((normalized as NSString).size(withAttributes: [.font: font]).width) + 2
         let preferredWidth = min(maxWidth, max(minWidth, chromeWidth + singleLineTextWidth))
         let textWidth = max(40, preferredWidth - chromeWidth)

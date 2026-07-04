@@ -142,6 +142,105 @@ enum ComputerUseVerificationStatus: String, Codable, Equatable {
     case unknown
 }
 
+enum ComputerUseActionEffect: String, Codable, Equatable {
+    case confirmed
+    case unverifiable
+    case blocked
+    case unknown
+}
+
+struct ComputerUseActionTransaction: Codable, Equatable {
+    let path: String
+    let route: String?
+    let posted: Bool?
+    let verified: Bool
+    let effect: ComputerUseActionEffect
+    let targetStable: Bool?
+    let processID: Int?
+    let windowID: Int?
+    let elementID: String?
+    let elementIndex: Int?
+    let requestedTextSample: String?
+    let observedTextSample: String?
+    let requestedURL: String?
+    let escalationHint: String?
+    let warning: String?
+
+    enum CodingKeys: String, CodingKey {
+        case path
+        case route
+        case posted
+        case verified
+        case effect
+        case targetStable = "target_stable"
+        case processID = "process_id"
+        case windowID = "window_id"
+        case elementID = "element_id"
+        case elementIndex = "element_index"
+        case requestedTextSample = "requested_text_sample"
+        case observedTextSample = "observed_text_sample"
+        case requestedURL = "requested_url"
+        case escalationHint = "escalation_hint"
+        case warning
+    }
+
+    init(
+        path: String,
+        route: String? = nil,
+        posted: Bool? = nil,
+        verified: Bool,
+        effect: ComputerUseActionEffect,
+        targetStable: Bool? = nil,
+        processID: Int? = nil,
+        windowID: Int? = nil,
+        elementID: String? = nil,
+        elementIndex: Int? = nil,
+        requestedTextSample: String? = nil,
+        observedTextSample: String? = nil,
+        requestedURL: String? = nil,
+        escalationHint: String? = nil,
+        warning: String? = nil
+    ) {
+        self.path = path
+        self.route = route
+        self.posted = posted
+        self.verified = verified
+        self.effect = effect
+        self.targetStable = targetStable
+        self.processID = processID
+        self.windowID = windowID
+        self.elementID = elementID
+        self.elementIndex = elementIndex
+        self.requestedTextSample = requestedTextSample
+        self.observedTextSample = observedTextSample
+        self.requestedURL = requestedURL
+        self.escalationHint = escalationHint
+        self.warning = warning
+    }
+
+    var summary: String {
+        var parts = ["path=\(path)"]
+        if let route {
+            parts.append("route=\(route)")
+        }
+        if let posted {
+            parts.append("posted=\(posted ? "true" : "false")")
+        }
+        parts.append("verified=\(verified ? "true" : "false")")
+        parts.append("effect=\(effect.rawValue)")
+        if let targetStable {
+            parts.append("target_stable=\(targetStable ? "true" : "false")")
+        }
+        if let processID {
+            parts.append("pid=\(processID)")
+        }
+        if let windowID {
+            parts.append("window_id=\(windowID)")
+        }
+        return parts.joined(separator: " ")
+    }
+}
+
 struct ComputerUseStateDelta: Codable, Equatable {
     let status: ComputerUseVerificationStatus
     let summary: String
@@ -266,6 +365,115 @@ struct ComputerUseWindowState: Codable, Equatable {
             elements: elements,
             capturedAt: capturedAt
         )
+    }
+}
+
+struct ComputerUseAppContextState: Codable, Equatable {
+    let appName: String
+    let bundleID: String
+    let processID: Int?
+    let isTargetApp: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case appName = "app_name"
+        case bundleID = "bundle_id"
+        case processID = "process_id"
+        case isTargetApp = "is_target_app"
+    }
+}
+
+struct ComputerUseTargetContextState: Codable, Equatable {
+    let appName: String
+    let bundleID: String
+    let processID: Int?
+    let windowID: Int?
+    let windowTitle: String
+    let targetMatch: String
+    let isFrontmost: Bool
+    let hasScreenshot: Bool
+    let hasAXCandidates: Bool
+    let usableForActions: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case appName = "app_name"
+        case bundleID = "bundle_id"
+        case processID = "process_id"
+        case windowID = "window_id"
+        case windowTitle = "window_title"
+        case targetMatch = "target_match"
+        case isFrontmost = "is_frontmost"
+        case hasScreenshot = "has_screenshot"
+        case hasAXCandidates = "has_ax_candidates"
+        case usableForActions = "usable_for_actions"
+    }
+}
+
+struct ComputerUseKeyboardFocusContext: Codable, Equatable {
+    let relationToTarget: String
+    let focusedElementProcessID: Int?
+    let note: String
+
+    enum CodingKeys: String, CodingKey {
+        case relationToTarget = "relation_to_target"
+        case focusedElementProcessID = "focused_element_process_id"
+        case note
+    }
+}
+
+struct ComputerUseObservationContext: Codable, Equatable {
+    let controlMode: ComputerUseInteractionMode
+    let userFrontmostState: ComputerUseAppContextState?
+    let targetWindowState: ComputerUseTargetContextState
+    let keyboardFocusState: ComputerUseKeyboardFocusContext
+    let notes: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case controlMode = "control_mode"
+        case userFrontmostState = "user_frontmost_state"
+        case targetWindowState = "target_window_state"
+        case keyboardFocusState = "keyboard_focus_state"
+        case notes
+    }
+
+    init(
+        controlMode: ComputerUseInteractionMode = .direct,
+        userFrontmostState: ComputerUseAppContextState? = nil,
+        targetWindowState: ComputerUseTargetContextState,
+        keyboardFocusState: ComputerUseKeyboardFocusContext,
+        notes: [String] = []
+    ) {
+        self.controlMode = controlMode
+        self.userFrontmostState = userFrontmostState
+        self.targetWindowState = targetWindowState
+        self.keyboardFocusState = keyboardFocusState
+        self.notes = notes
+    }
+
+    init(latestWindowState: ComputerUseWindowState, controlMode: ComputerUseInteractionMode = .direct) {
+        let hasTargetIdentity = latestWindowState.processID != nil || latestWindowState.windowID != nil || !latestWindowState.bundleID.isEmpty
+        let hasUsableState = latestWindowState.targetMismatch == nil
+            && hasTargetIdentity
+            && (latestWindowState.screenshot != nil || !latestWindowState.elements.isEmpty)
+        targetWindowState = ComputerUseTargetContextState(
+            appName: latestWindowState.appName,
+            bundleID: latestWindowState.bundleID,
+            processID: latestWindowState.processID,
+            windowID: latestWindowState.windowID,
+            windowTitle: latestWindowState.windowTitle,
+            targetMatch: latestWindowState.targetMismatch == nil ? "current_or_requested" : "mismatch",
+            isFrontmost: true,
+            hasScreenshot: latestWindowState.screenshot != nil,
+            hasAXCandidates: !latestWindowState.elements.isEmpty,
+            usableForActions: hasUsableState
+        )
+        keyboardFocusState = ComputerUseKeyboardFocusContext(
+            relationToTarget: latestWindowState.focusedElement == nil ? "unknown" : "target_app",
+            focusedElementProcessID: latestWindowState.focusedElement?.processID,
+            note: latestWindowState.focusedElement == nil ? "No target-app focused element was captured." : "Keyboard focus is inside the target app."
+        )
+        self.controlMode = controlMode
+        userFrontmostState = nil
+        notes = []
     }
 }
 
@@ -528,8 +736,8 @@ struct ComputerUseToolInvocation: Codable, Equatable {
         case .pasteText:
             return trimmed(text).isEmpty ? "paste_text requires text" : nil
         case .pressKey, .hotkey:
-            if windowID != nil || elementIndex != nil || !trimmed(elementID).isEmpty {
-                return "\(tool.rawValue) is ambient current-focus action and does not accept window_id, element_index, or element_id"
+            if elementIndex != nil || !trimmed(elementID).isEmpty {
+                return "\(tool.rawValue) does not accept element_index or element_id"
             }
             return trimmed(key).isEmpty ? "\(tool.rawValue) requires key" : nil
         case .scroll:
@@ -774,6 +982,14 @@ struct ComputerUsePlannerResponse: Codable, Equatable {
             decodedToolCall = try ComputerUseToolInvocation(from: decoder)
         }
         toolCall = decodedToolCall.normalizedPlannerOutput()
+        guard ComputerUseToolRegistry.isModelFacing(toolCall.tool) else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "\(toolCall.tool.rawValue) is an internal driver route; use one of the model-facing tools in the catalog"
+                )
+            )
+        }
         if let failure = toolCall.validationFailure() {
             throw DecodingError.dataCorrupted(
                 DecodingError.Context(codingPath: decoder.codingPath, debugDescription: failure)
@@ -787,6 +1003,15 @@ struct ComputerUsePlannerResponse: Codable, Equatable {
         try container.encode(toolCall, forKey: .toolCall)
     }
 
+    func toolAvailabilityFailure(availableTools: [ComputerUseToolName]?) -> String? {
+        guard let availableTools else { return nil }
+        if availableTools.contains(toolCall.tool) {
+            return nil
+        }
+        let available = availableTools.map(\.rawValue).joined(separator: ", ")
+        return "\(toolCall.tool.rawValue) is not available in this planner turn. Available tools: \(available)."
+    }
+
     static func decodeJSON(from text: String) throws -> ComputerUsePlannerResponse {
         let json = try extractJSONObject(from: text)
         try rejectUnknownKeys(in: json)
@@ -798,6 +1023,14 @@ struct ComputerUsePlannerResponse: Codable, Equatable {
         guard let tool = ComputerUseToolName(rawValue: name) else {
             throw DecodingError.dataCorrupted(
                 DecodingError.Context(codingPath: [], debugDescription: "Unknown native tool \(name)")
+            )
+        }
+        guard ComputerUseToolRegistry.isModelFacing(tool) else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: [],
+                    debugDescription: "\(name) is an internal driver route; use one of the model-facing tools in the catalog"
+                )
             )
         }
         let trimmedArguments = arguments.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -853,8 +1086,12 @@ struct ComputerUsePlannerResponse: Codable, Equatable {
             )
         }
         if let toolName = object["tool"] as? String,
-           let tool = ComputerUseToolName(rawValue: toolName),
-           let definition = ComputerUseToolRegistry.definition(for: tool) {
+           let tool = ComputerUseToolName(rawValue: toolName) {
+            guard let definition = ComputerUseToolRegistry.definition(for: tool) else {
+                throw DecodingError.dataCorrupted(
+                    DecodingError.Context(codingPath: [], debugDescription: "\(toolName) is an internal driver route; use one of the model-facing tools in the catalog")
+                )
+            }
             let schemaKeys = Set(definition.schema.properties.keys)
             let extraForTool = keys.subtracting(schemaKeys)
             if let key = extraForTool.sorted().first {
@@ -896,6 +1133,7 @@ struct ComputerUseToolOutcome: Codable, Equatable {
     let beforeStateID: String?
     let afterStateID: String?
     let stateDelta: ComputerUseStateDelta?
+    let transaction: ComputerUseActionTransaction?
 
     enum CodingKeys: String, CodingKey {
         case step
@@ -910,6 +1148,7 @@ struct ComputerUseToolOutcome: Codable, Equatable {
         case beforeStateID = "before_state_id"
         case afterStateID = "after_state_id"
         case stateDelta = "state_delta"
+        case transaction
     }
 
     init(
@@ -924,7 +1163,8 @@ struct ComputerUseToolOutcome: Codable, Equatable {
         verificationStatus: ComputerUseVerificationStatus? = nil,
         beforeStateID: String? = nil,
         afterStateID: String? = nil,
-        stateDelta: ComputerUseStateDelta? = nil
+        stateDelta: ComputerUseStateDelta? = nil,
+        transaction: ComputerUseActionTransaction? = nil
     ) {
         self.step = step
         self.tool = tool
@@ -938,6 +1178,7 @@ struct ComputerUseToolOutcome: Codable, Equatable {
         self.beforeStateID = beforeStateID
         self.afterStateID = afterStateID
         self.stateDelta = stateDelta
+        self.transaction = transaction
     }
 }
 
@@ -947,18 +1188,24 @@ struct ComputerUsePlannerRequest: Codable, Equatable {
     let command: String
     let step: Int
     let maxSteps: Int?
+    let safetyLimitSeconds: Int?
     let toolCatalogVersion: String
     let toolCatalog: String
+    let availableTools: [ComputerUseToolName]?
     let latestWindowState: ComputerUseWindowState
+    let observationContext: ComputerUseObservationContext
     let priorOutcomes: [ComputerUseToolOutcome]
 
     enum CodingKeys: String, CodingKey {
         case command
         case step
         case maxSteps = "max_steps"
+        case safetyLimitSeconds = "safety_limit_seconds"
         case toolCatalogVersion = "tool_catalog_version"
         case toolCatalog = "tool_catalog"
+        case availableTools = "available_tools"
         case latestWindowState = "latest_window_state"
+        case observationContext = "observation_context"
         case priorOutcomes = "prior_tool_outcomes"
     }
 
@@ -966,17 +1213,27 @@ struct ComputerUsePlannerRequest: Codable, Equatable {
         command: String,
         step: Int,
         maxSteps: Int?,
+        safetyLimitSeconds: Int? = nil,
         toolCatalogVersion: String = ComputerUseToolRegistry.catalogVersion,
-        toolCatalog: String = ComputerUseToolRegistry.promptDocumentation(),
+        toolCatalog: String? = nil,
+        availableTools: [ComputerUseToolName]? = nil,
         latestWindowState: ComputerUseWindowState,
+        observationContext: ComputerUseObservationContext? = nil,
         priorOutcomes: [ComputerUseToolOutcome]
     ) {
         self.command = command
         self.step = step
         self.maxSteps = maxSteps
-        self.toolCatalogVersion = toolCatalogVersion
-        self.toolCatalog = toolCatalog
+        self.safetyLimitSeconds = safetyLimitSeconds
+        self.toolCatalogVersion = if let availableTools {
+            "\(toolCatalogVersion):\(availableTools.map(\.rawValue).joined(separator: ","))"
+        } else {
+            toolCatalogVersion
+        }
+        self.toolCatalog = toolCatalog ?? ComputerUseToolRegistry.promptDocumentation(allowedTools: availableTools.map { Set($0) })
+        self.availableTools = availableTools
         self.latestWindowState = latestWindowState
+        self.observationContext = observationContext ?? ComputerUseObservationContext(latestWindowState: latestWindowState)
         self.priorOutcomes = priorOutcomes
     }
 

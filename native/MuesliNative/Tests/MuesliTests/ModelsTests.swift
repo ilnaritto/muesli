@@ -664,6 +664,15 @@ struct AppConfigTests {
         #expect(decoded.hiddenCalendarEventSourceHints == config.hiddenCalendarEventSourceHints)
     }
 
+    @Test("computer use safety limit clamps decoded values")
+    func computerUseSafetyLimitClampsDecodedValues() throws {
+        let low = try JSONDecoder().decode(AppConfig.self, from: Data(#"{"computer_use_timeout_seconds":0}"#.utf8))
+        let high = try JSONDecoder().decode(AppConfig.self, from: Data(#"{"computer_use_timeout_seconds":9999}"#.utf8))
+
+        #expect(low.computerUseTimeoutSeconds == 1)
+        #expect(high.computerUseTimeoutSeconds == 600)
+    }
+
     @Test("JSON coding keys use snake_case")
     func snakeCaseKeys() throws {
         var config = AppConfig()

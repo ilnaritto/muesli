@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 @testable import MuesliNativeApp
 
@@ -169,8 +170,55 @@ struct ComputerUseExecutorTests {
         )
 
         #expect(safe.status == .executed)
+        #expect(safe.transaction?.path == "browser_applescript_navigate")
+        #expect(safe.transaction?.posted == true)
+        #expect(safe.transaction?.verified == false)
+        #expect(safe.transaction?.effect == .unverifiable)
+        #expect(safe.transaction?.requestedURL == "https://www.google.com/search?q=hello&hl=en")
         #expect(capturedScript.contains("https://www.google.com/search?q=hello&hl=en"))
         #expect(unsafe.status == .needsConfirmation)
+    }
+
+    @Test("quiet browser navigation requires process id")
+    func quietBrowserNavigationRequiresProcessID() async {
+        ComputerUseBrowserAutomation.runAppleScriptForTests = { _ in
+            Issue.record("Quiet browser navigation should not use AppleScript mutation")
+            return ""
+        }
+        defer { ComputerUseBrowserAutomation.runAppleScriptForTests = nil }
+
+        let result = await ComputerUseBrowserAutomation.navigate(
+            appBundleID: "com.google.Chrome",
+            windowIndex: 1,
+            tabIndex: 1,
+            url: "https://docs.new",
+            allowActivation: false
+        )
+
+        #expect(result.status == .needsConfirmation)
+    }
+
+    @Test("quiet browser navigation routes to target process")
+    func quietBrowserNavigationRoutesToTargetProcess() async {
+        var capturedCommand: ComputerUseBrowserAutomation.BackgroundBrowserCommand?
+        ComputerUseBrowserAutomation.runBackgroundCommandForTests = { command in
+            capturedCommand = command
+            return .executed("background routed")
+        }
+        defer { ComputerUseBrowserAutomation.runBackgroundCommandForTests = nil }
+
+        let result = await ComputerUseBrowserAutomation.navigate(
+            appBundleID: "com.google.Chrome",
+            windowIndex: nil,
+            tabIndex: nil,
+            url: "https://docs.new",
+            allowActivation: false,
+            processID: 1234,
+            windowID: 88
+        )
+
+        #expect(result.status == .executed)
+        #expect(capturedCommand == .navigate(url: "https://docs.new", processID: 1234, windowID: 88))
     }
 
     @Test("navigate URL validates tab hints before targeting")
@@ -203,6 +251,193 @@ struct ComputerUseExecutorTests {
         #expect(result.status == .executed)
         #expect(capturedScript.contains("make new tab"))
         #expect(capturedScript.contains("active tab index of front window"))
+    }
+
+    @Test("quiet new browser tab requires process id")
+    func quietNewBrowserTabRequiresProcessID() async {
+        ComputerUseBrowserAutomation.runAppleScriptForTests = { _ in
+            Issue.record("Quiet new-tab creation should not use AppleScript mutation")
+            return ""
+        }
+        defer { ComputerUseBrowserAutomation.runAppleScriptForTests = nil }
+
+        let result = await ComputerUseBrowserAutomation.openNewTab(
+            appBundleID: "com.google.Chrome",
+            allowActivation: false
+        )
+
+        #expect(result.status == .needsConfirmation)
+    }
+
+    @Test("quiet new browser tab routes to target process")
+    func quietNewBrowserTabRoutesToTargetProcess() async {
+        var capturedCommand: ComputerUseBrowserAutomation.BackgroundBrowserCommand?
+        ComputerUseBrowserAutomation.runBackgroundCommandForTests = { command in
+            capturedCommand = command
+            return .executed("background routed")
+        }
+        defer { ComputerUseBrowserAutomation.runBackgroundCommandForTests = nil }
+
+        let result = await ComputerUseBrowserAutomation.openNewTab(
+            appBundleID: "com.google.Chrome",
+            allowActivation: false,
+            processID: 1234,
+            windowID: 88
+        )
+
+        #expect(result.status == .executed)
+        #expect(capturedCommand == .openNewTab(processID: 1234, windowID: 88))
+    }
+
+    @Test("quiet coordinate click without process id requires direct control")
+    @MainActor
+    func quietCoordinateClickWithoutProcessIDRequiresDirectControl() async {
+        let registry = ComputerUseElementRegistry()
+        registry.registerScreenshot(ComputerUseScreenshotObservation(
+            screenshotID: "latest-shot",
+            width: 100,
+            height: 80,
+            windowFrame: ComputerUseRect(x: 10, y: 20, width: 100, height: 80),
+            scaleX: 1,
+            scaleY: 1,
+            imageDataURL: nil
+        ))
+
+        let result = await ComputerUseToolExecutor.execute(
+            ComputerUseToolCall(tool: .clickPoint, screenshotID: "latest-shot", x: 20, y: 30),
+            registry: registry,
+            interactionMode: .quiet
+        )
+
+        #expect(result.status == .needsConfirmation)
+    }
+
+    @Test("quiet coordinate click without window id requires target window")
+    @MainActor
+    func quietCoordinateClickWithoutWindowIDRequiresTargetWindow() async {
+        let registry = ComputerUseElementRegistry()
+        registry.registerScreenshot(ComputerUseScreenshotObservation(
+            screenshotID: "latest-shot",
+            width: 100,
+            height: 80,
+            windowFrame: ComputerUseRect(x: 10, y: 20, width: 100, height: 80),
+            scaleX: 1,
+            scaleY: 1,
+            imageDataURL: nil
+        ))
+
+        let result = await ComputerUseToolExecutor.execute(
+            ComputerUseToolCall(tool: .clickPoint, processID: 1234, screenshotID: "latest-shot", label: "Docs editor", x: 20, y: 30),
+            registry: registry,
+            interactionMode: .quiet
+        )
+
+        #expect(result.status == .needsConfirmation)
+        #expect(result.message.contains("window_id"))
+    }
+
+    @Test("quiet YouTube result click uses window scoped route diagnostics")
+    @MainActor
+    func quietYouTubeResultClickUsesWindowScopedRouteDiagnostics() async {
+        let registry = ComputerUseElementRegistry()
+        registry.registerScreenshot(ComputerUseScreenshotObservation(
+            screenshotID: "youtube-results",
+            width: 400,
+            height: 300,
+            windowFrame: ComputerUseRect(x: 100, y: 200, width: 400, height: 300),
+            scaleX: 1,
+            scaleY: 1,
+            imageDataURL: nil
+        ))
+        var capturedRequest: ComputerUseClickDriver.PointRequest?
+        ComputerUseClickDriver.postBackgroundClickForTests = { request in
+            capturedRequest = request
+            return true
+        }
+        defer { ComputerUseClickDriver.postBackgroundClickForTests = nil }
+
+        let result = await ComputerUseToolExecutor.execute(
+            ComputerUseToolCall(
+                tool: .clickPoint,
+                processID: 4321,
+                windowID: 88,
+                screenshotID: "youtube-results",
+                label: "YouTube search result",
+                x: 40,
+                y: 50
+            ),
+            registry: registry,
+            interactionMode: .quiet
+        )
+
+        #expect(result.status == .executed)
+        #expect(result.diagnostics?["click_route"] == "window_point_skylight")
+        #expect(result.diagnostics?["process_id"] == "4321")
+        #expect(result.diagnostics?["window_id"] == "88")
+        #expect(result.transaction?.path == "window_point_skylight")
+        #expect(result.transaction?.route == "window_point_skylight")
+        #expect(result.transaction?.posted == true)
+        #expect(result.transaction?.verified == false)
+        #expect(result.transaction?.effect == .unverifiable)
+        #expect(result.transaction?.processID == 4321)
+        #expect(result.transaction?.windowID == 88)
+        #expect(capturedRequest?.point == CGPoint(x: 140, y: 250))
+    }
+
+    @Test("generic web button click prefers screenshot route when AX is ambiguous")
+    @MainActor
+    func genericWebButtonClickPrefersScreenshotRouteWhenAXIsAmbiguous() async {
+        let decision = ComputerUseClickDriver.routeDecisionForTests(
+            advertisedActions: [],
+            axPressAccepted: false,
+            hasFrame: true,
+            processID: 4321,
+            windowID: 88,
+            allowGlobalHID: false
+        )
+
+        #expect(decision.route == .elementCenterSkyLight)
+        #expect(decision.blockedReason == nil)
+    }
+
+    @Test("Docs and Sheets editor clicks require scoped quiet target")
+    @MainActor
+    func docsAndSheetsEditorClicksRequireScopedQuietTarget() {
+        let docsDecision = ComputerUseClickDriver.routeDecisionForTests(
+            advertisedActions: nil,
+            axPressAccepted: false,
+            hasFrame: true,
+            processID: 4321,
+            windowID: nil,
+            allowGlobalHID: false
+        )
+        let sheetsDecision = ComputerUseClickDriver.routeDecisionForTests(
+            advertisedActions: nil,
+            axPressAccepted: false,
+            hasFrame: true,
+            processID: nil,
+            windowID: 88,
+            allowGlobalHID: false
+        )
+
+        #expect(docsDecision.route == nil)
+        #expect(docsDecision.blockedReason == "missing_window_id")
+        #expect(sheetsDecision.route == nil)
+        #expect(sheetsDecision.blockedReason == "direct_control_required")
+    }
+
+    @Test("quiet standalone focus requires direct control")
+    @MainActor
+    func quietStandaloneFocusRequiresDirectControl() async {
+        let result = await ComputerUseToolExecutor.execute(
+            ComputerUseToolCall(tool: .focusElement, elementIndex: 1, label: "Document content"),
+            registry: ComputerUseElementRegistry(),
+            interactionMode: .quiet
+        )
+
+        #expect(result.status == .needsConfirmation)
+        #expect(result.message.contains("standalone step would interrupt"))
+        #expect(result.message.contains("paste_text"))
     }
 
     @Test("page text and DOM query use read-only JavaScript")

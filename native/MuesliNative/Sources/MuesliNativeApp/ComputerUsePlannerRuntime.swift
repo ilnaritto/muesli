@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import MuesliCore
 
@@ -7,6 +8,7 @@ struct ComputerUsePlannerRuntimeResult: Equatable {
         case timedOut
         case needsConfirmation
         case failed
+        case noProgress
         case cancelled
     }
 
@@ -32,6 +34,7 @@ final class ComputerUsePlannerRuntime {
     private let config: AppConfig
     private let maxSteps: Int?
     private let timeoutSeconds: TimeInterval
+    private let safetyLimitSeconds: Int
     private let registry = ComputerUseElementRegistry()
     private let onStatus: StatusHandler
     private let observe: ObserveHandler
@@ -40,6 +43,19 @@ final class ComputerUsePlannerRuntime {
     private let recognizeScreenshotText: ScreenshotTextRecognizer
     private let maxPlannerRetryCount = 1
     private let maxUnchangedObservationLoops = 4
+    private let maxReadOnlyOrientationStepsBeforeRepair = 4
+    private let maxReadOnlyOrientationRepairs = 2
+    private static let actionRequiredTools: [ComputerUseToolName] = [
+        .recognizeScreenshotText,
+        .click,
+        .pasteText,
+        .pressKey,
+        .scroll,
+        .openNewBrowserTab,
+        .navigateActiveBrowserTab,
+        .finish,
+        .fail,
+    ]
 
     private struct PendingUnverifiedTextWrite {
         let sample: String
@@ -48,6 +64,18 @@ final class ComputerUsePlannerRuntime {
         let sampleWasInTextEvidenceBefore: Bool
         let sampleWasVisibleBefore: Bool
         let preActionOCRText: String?
+    }
+
+    private struct ReadOnlyOrientationStreak {
+        var targetSignature = ""
+        var count = 0
+        var repairCount = 0
+
+        mutating func reset() {
+            targetSignature = ""
+            count = 0
+            repairCount = 0
+        }
     }
 
     init(
@@ -63,22 +91,32 @@ final class ComputerUsePlannerRuntime {
             )
         },
         plan: PlanHandler? = nil,
-        execute: @escaping ExecuteHandler = { toolCall, registry in
-            await ComputerUseToolExecutor.execute(toolCall, registry: registry)
-        },
+        execute: ExecuteHandler? = nil,
         recognizeScreenshotText: @escaping ScreenshotTextRecognizer = { screenshot in
             await ComputerUseScreenshotTextRecognition.recognizedText(from: screenshot)
         }
     ) {
         self.config = config
         self.maxSteps = maxSteps
-        self.timeoutSeconds = timeoutSeconds ?? TimeInterval(max(config.computerUseTimeoutSeconds, 1))
+        if let timeoutSeconds {
+            self.timeoutSeconds = timeoutSeconds
+            self.safetyLimitSeconds = max(Int(timeoutSeconds.rounded()), 1)
+        } else {
+            self.safetyLimitSeconds = AppConfig.clampedComputerUseSafetyLimitSeconds(config.computerUseTimeoutSeconds)
+            self.timeoutSeconds = TimeInterval(safetyLimitSeconds)
+        }
         self.onStatus = onStatus
         self.observe = observe
         self.plan = plan ?? { request in
             try await ComputerUsePlannerClient.planNextTool(request: request, config: config)
         }
-        self.execute = execute
+        self.execute = execute ?? { toolCall, registry in
+            await ComputerUseToolExecutor.execute(
+                toolCall,
+                registry: registry,
+                interactionMode: config.computerUseInteractionMode
+            )
+        }
         self.recognizeScreenshotText = recognizeScreenshotText
     }
 
@@ -104,17 +142,20 @@ final class ComputerUsePlannerRuntime {
         var unchangedActionCounts: [String: Int] = [:]
         var unchangedObservationCounts: [String: Int] = [:]
         var invalidToolCallRepairCount = 0
+        var readOnlyOrientationStreak = ReadOnlyOrientationStreak()
+        var forceActionOnlyTools = false
         var screenshotOCRTextByID: [String: String] = [:]
         var pendingUnverifiedTextWrites: [PendingUnverifiedTextWrite] = []
         let maxInvalidToolCallRepairs = 2
-        // V1 keeps foreground activation, but state is scoped to a target app.
-        // Later Codex-style work should replace this with background key-window tracking,
-        // synthetic focus enforcement, and user-frontmost-app preservation.
+        // The harness keeps target state scoped and marks each tool with its execution
+        // contract. Deeper Codex/trycua-style work still needs pid-routed pointer
+        // delivery and synthetic key-window focus, but foreground tools are no longer
+        // presented as equivalent to background-capable primitives.
         var currentTarget: ComputerUseObservationTarget?
 
         onStatus("Observing screen")
         var observation = observe(registry, true, currentTarget)
-        traceEvents.append(observationEvent(observation, step: nil))
+        traceEvents.append(observationEvent(observation, step: nil, currentTarget: currentTarget))
 
         var step = 1
         while true {
@@ -122,8 +163,9 @@ final class ComputerUsePlannerRuntime {
                 return cancelledResult(traceEvents: traceEvents, step: step)
             }
             if Date() >= deadline {
-                traceEvents.append(traceEvent(kind: "timed_out", title: "Timed out", body: "CUA timed out", status: "timed_out", step: step))
-                return .init(status: .timedOut, message: "CUA timed out", traceEvents: traceEvents)
+                let message = "Stopped after safety limit (\(formatDuration(safetyLimitSeconds)))."
+                traceEvents.append(traceEvent(kind: "timed_out", title: "Safety limit", body: message, status: "timed_out", step: step))
+                return .init(status: .timedOut, message: message, traceEvents: traceEvents)
             }
             if let maxSteps, step > maxSteps {
                 traceEvents.append(traceEvent(kind: "failed", title: "Failed", body: "CUA reached its step limit", status: "failed", step: maxSteps))
@@ -146,7 +188,10 @@ final class ComputerUsePlannerRuntime {
                 command: command,
                 step: step,
                 maxSteps: maxSteps,
+                safetyLimitSeconds: safetyLimitSeconds,
+                availableTools: forceActionOnlyTools ? Self.actionRequiredTools : nil,
                 latestWindowState: latestWindowState,
+                observationContext: observationContext(for: observation, currentTarget: currentTarget),
                 priorOutcomes: priorResults
             )
 
@@ -191,6 +236,34 @@ final class ComputerUsePlannerRuntime {
                 return .init(status: .failed, message: error.localizedDescription, traceEvents: traceEvents)
             }
 
+            if let availabilityFailure = response.toolAvailabilityFailure(availableTools: request.availableTools) {
+                let rawOutput = response.rawModelOutput ?? formatToolCall(response.toolCall)
+                let repairMessage = "Invalid tool call \(response.toolCall.tool.rawValue): \(availabilityFailure). Raw arguments: \(String(rawOutput.prefix(800))). Choose exactly one valid tool from the current catalog and follow that tool's schema."
+                traceEvents.append(traceEvent(
+                    kind: "planner_repair",
+                    title: "Planner schema repair",
+                    body: repairMessage,
+                    status: "repair",
+                    step: step
+                ))
+                priorResults.append(ComputerUseToolOutcome(
+                    step: step,
+                    tool: .fail,
+                    status: "invalid_schema",
+                    message: repairMessage,
+                    appName: observation.appName,
+                    bundleID: observation.bundleID,
+                    windowTitle: observation.windowTitle,
+                    snapshotID: observation.screenshot?.screenshotID
+                ))
+                invalidToolCallRepairCount += 1
+                if invalidToolCallRepairCount <= maxInvalidToolCallRepairs {
+                    continue
+                }
+                traceEvents.append(traceEvent(kind: "failed", title: "Planner failed", body: repairMessage, status: "failed", step: step))
+                return .init(status: .failed, message: repairMessage, traceEvents: traceEvents)
+            }
+
             let toolCall = response.toolCall
             invalidToolCallRepairCount = 0
             if let target = target(from: toolCall, fallback: currentTarget) {
@@ -232,26 +305,25 @@ final class ComputerUsePlannerRuntime {
             switch toolCall.tool {
             case .finish:
                 let message = toolCall.reason?.isEmpty == false ? toolCall.reason! : "Done"
-                if let pending = pendingUnverifiedTextWrites.first(where: { pending in
+                let unverifiedTextWrites = pendingUnverifiedTextWrites.filter { pending in
                     unverifiedTextWriteEvidenceSource(
                         pending,
                         observation: observation,
                         screenshotOCRTextByID: screenshotOCRTextByID
                     ) == nil
-                }) {
-                    let blockedMessage = "Text write is unverified: \(pending.toolSummary) from step \(pending.step) was not confirmed in focused/selected text or model-requested OCR evidence. Inspect the visible screenshot, call recognize_screenshot_text on the latest screenshot if useful, refocus/retry if the text is incomplete, or use fail(reason) if the write cannot be confirmed."
-                    priorResults.append(ComputerUseToolOutcome(
-                        step: step,
-                        tool: .finish,
-                        status: "unverified_text",
-                        message: blockedMessage,
-                        appName: observation.appName,
-                        bundleID: observation.bundleID,
-                        windowTitle: observation.windowTitle,
-                        snapshotID: observation.screenshot?.screenshotID
+                }
+                if !unverifiedTextWrites.isEmpty {
+                    let details = unverifiedTextWrites
+                        .map { "\($0.toolSummary) from step \($0.step)" }
+                        .joined(separator: "; ")
+                    let warning = "Finish accepted with unverified text evidence: \(details). The planner chose to finish without focused/selected text or model-requested OCR confirming every write."
+                    traceEvents.append(traceEvent(
+                        kind: "finish_warning",
+                        title: "Finish warning",
+                        body: warning,
+                        status: "warning",
+                        step: step
                     ))
-                    traceEvents.append(traceEvent(kind: "planner_repair", title: "Finish blocked", body: blockedMessage, status: "repair", step: step))
-                    continue
                 }
                 onStatus("Done")
                 if finishIndicatesFailure(message) {
@@ -267,6 +339,7 @@ final class ComputerUsePlannerRuntime {
                 traceEvents.append(traceEvent(kind: "failed", title: "Final output", body: message, status: "failed", step: step))
                 return .init(status: .failed, message: message, traceEvents: traceEvents)
             case .recognizeScreenshotText:
+                readOnlyOrientationStreak.reset()
                 onStatus("Reading")
                 let result = await recognizeScreenshotTextTool(
                     toolCall,
@@ -318,7 +391,7 @@ final class ComputerUsePlannerRuntime {
                 }
                 onStatus("Observing screen")
                 observation = observe(registry, true, currentTarget)
-                traceEvents.append(observationEvent(observation, step: step))
+                traceEvents.append(observationEvent(observation, step: step, currentTarget: currentTarget))
                 let feedback = observationToolFeedback(
                     before: beforeObservation,
                     after: observation,
@@ -334,13 +407,44 @@ final class ComputerUsePlannerRuntime {
                     observation: observation,
                     delta: nil
                 ))
+                if let feedback = readOnlyOrientationLoopFeedback(
+                    toolCall: toolCall,
+                    observation: observation,
+                    streak: &readOnlyOrientationStreak
+                ) {
+                    if !feedback.shouldStop {
+                        forceActionOnlyTools = true
+                    }
+                    priorResults.append(readOnlyOrientationOutcome(
+                        step: step,
+                        toolCall: toolCall,
+                        message: feedback.message,
+                        observation: observation
+                    ))
+                    traceEvents.append(traceEvent(
+                        kind: feedback.shouldStop ? "no_progress" : "planner_repair",
+                        title: feedback.shouldStop ? "No progress" : "Action required",
+                        body: feedback.message,
+                        status: feedback.shouldStop ? "no_progress" : "repair",
+                        step: step
+                    ))
+                    if feedback.shouldStop {
+                        return .init(status: .noProgress, message: feedback.message, traceEvents: traceEvents)
+                    }
+                }
                 if let blocked = feedback.blocked {
-                    traceEvents.append(traceEvent(kind: "failed", title: "Repeated action stopped", body: blocked, status: "failed", step: step))
-                    return .init(status: .failed, message: blocked, traceEvents: traceEvents)
+                    traceEvents.append(traceEvent(kind: "no_progress", title: "No progress", body: blocked, status: "no_progress", step: step))
+                    return .init(status: .noProgress, message: blocked, traceEvents: traceEvents)
                 }
                 continue
             default:
-                unchangedObservationCounts.removeAll()
+                if isReadOnlyOrientationTool(toolCall.tool) {
+                    unchangedActionCounts.removeAll()
+                } else {
+                    forceActionOnlyTools = false
+                    readOnlyOrientationStreak.reset()
+                    unchangedObservationCounts.removeAll()
+                }
                 onStatus(statusTitle(for: toolCall))
                 traceEvents.append(traceEvent(
                     kind: "tool_call",
@@ -355,7 +459,7 @@ final class ComputerUsePlannerRuntime {
                 traceEvents.append(traceEvent(
                     kind: "tool_result",
                     title: "Tool result",
-                    body: result.message,
+                    body: toolResultDisplayMessage(result),
                     status: "\(result.status)",
                     step: step,
                     debugPayload: encodedDebugPayload(TraceToolResultPayload(result))
@@ -374,7 +478,7 @@ final class ComputerUsePlannerRuntime {
                     if toolCall.isMutating {
                         onStatus("Observing screen")
                         observation = observe(registry, true, currentTarget)
-                        traceEvents.append(observationEvent(observation, step: step))
+                        traceEvents.append(observationEvent(observation, step: step, currentTarget: currentTarget))
                         delta = stateDelta(
                             before: beforeObservation,
                             after: observation,
@@ -384,7 +488,8 @@ final class ComputerUsePlannerRuntime {
                     }
                     let outcomeMessage = verifiedOutcomeMessage(
                         base: recoverableFallbackMessage(for: toolCall, result: result) ?? result.message,
-                        delta: delta
+                        delta: delta,
+                        transaction: result.transaction
                     )
                     priorResults.append(outcome(
                         step: step,
@@ -394,13 +499,35 @@ final class ComputerUsePlannerRuntime {
                         observation: observation,
                         delta: delta
                     ))
+                    if let feedback = readOnlyOrientationLoopFeedback(
+                        toolCall: toolCall,
+                        observation: observation,
+                        streak: &readOnlyOrientationStreak
+                    ) {
+                        priorResults.append(readOnlyOrientationOutcome(
+                            step: step,
+                            toolCall: toolCall,
+                            message: feedback.message,
+                            observation: observation
+                        ))
+                        traceEvents.append(traceEvent(
+                            kind: feedback.shouldStop ? "no_progress" : "planner_repair",
+                            title: feedback.shouldStop ? "No progress" : "Action required",
+                            body: feedback.message,
+                            status: feedback.shouldStop ? "no_progress" : "repair",
+                            step: step
+                        ))
+                        if feedback.shouldStop {
+                            return .init(status: .noProgress, message: feedback.message, traceEvents: traceEvents)
+                        }
+                    }
                     if let blocked = repeatedUnchangedMessage(
                         toolCall: toolCall,
                         delta: delta,
                         counts: &unchangedActionCounts
                     ) {
-                        traceEvents.append(traceEvent(kind: "failed", title: "Repeated action stopped", body: blocked, status: "failed", step: step))
-                        return .init(status: .failed, message: blocked, traceEvents: traceEvents)
+                        traceEvents.append(traceEvent(kind: "no_progress", title: "No progress", body: blocked, status: "no_progress", step: step))
+                        return .init(status: .noProgress, message: blocked, traceEvents: traceEvents)
                     }
                     updatePendingUnverifiedTextWrites(
                         &pendingUnverifiedTextWrites,
@@ -423,25 +550,26 @@ final class ComputerUsePlannerRuntime {
                     return .init(status: .needsConfirmation, message: result.message, traceEvents: traceEvents)
                 case .unsupported, .failed:
                     if let fallbackMessage = recoverableFallbackMessage(for: toolCall, result: result) {
-                        priorResults.append(outcome(
-                            step: step,
-                            toolCall: toolCall,
-                            result: result,
-                            message: fallbackMessage,
-                            observation: beforeObservation,
-                            delta: nil
-                        ))
-                        onStatus("Screen fallback")
-                        traceEvents.append(traceEvent(
-                            kind: "fallback",
-                            title: "Screen fallback",
-                            body: fallbackMessage,
-                            status: "fallback",
-                            step: step
+                    priorResults.append(outcome(
+                        step: step,
+                        toolCall: toolCall,
+                        result: result,
+                        message: fallbackMessage,
+                        observation: beforeObservation,
+                        delta: nil
+                    ))
+                    let fallbackTitle = recoverableFallbackTitle(for: toolCall, result: result)
+                    onStatus(fallbackTitle)
+                    traceEvents.append(traceEvent(
+                        kind: "fallback",
+                        title: fallbackTitle,
+                        body: fallbackMessage,
+                        status: "fallback",
+                        step: step
                         ))
                         onStatus("Observing screen")
                         observation = observe(registry, true, currentTarget)
-                        traceEvents.append(observationEvent(observation, step: step))
+                        traceEvents.append(observationEvent(observation, step: step, currentTarget: currentTarget))
                         continue
                     }
                     priorResults.append(outcome(
@@ -465,6 +593,14 @@ final class ComputerUsePlannerRuntime {
         var events = traceEvents
         events.append(traceEvent(kind: "cancelled", title: "Cancelled", body: "CUA cancelled", status: "cancelled", step: step))
         return .init(status: .cancelled, message: "CUA cancelled", traceEvents: events)
+    }
+
+    private func formatDuration(_ seconds: Int) -> String {
+        if seconds % 60 == 0 {
+            let minutes = seconds / 60
+            return "\(minutes) \(minutes == 1 ? "minute" : "minutes")"
+        }
+        return "\(seconds) seconds"
     }
 
     private func windowState(
@@ -532,16 +668,23 @@ final class ComputerUsePlannerRuntime {
             verificationStatus: delta?.status,
             beforeStateID: delta?.beforeStateID,
             afterStateID: delta?.afterStateID,
-            stateDelta: delta
+            stateDelta: delta,
+            transaction: result.transaction
         )
     }
 
-    private func observationEvent(_ observation: ComputerUseObservation, step: Int?) -> ComputerUseTraceEvent {
+    private func observationEvent(
+        _ observation: ComputerUseObservation,
+        step: Int?,
+        currentTarget: ComputerUseObservationTarget?
+    ) -> ComputerUseTraceEvent {
         let app = observation.appName.isEmpty ? "Unknown app" : observation.appName
-        let window = observation.windowTitle.isEmpty ? "No focused window" : observation.windowTitle
+        let window = observationWindowLabel(observation)
         var details = ["state \(observation.stateID)", "\(app) - \(window) - \(observation.elements.count) AX candidates"]
         if let screenshot = observation.screenshot {
             details.append("screenshot \(screenshot.screenshotID) \(screenshot.width)x\(screenshot.height)")
+        } else if observation.appInstructions?.contains("Visual screenshot unavailable") == true {
+            details.append("screenshot unavailable")
         }
         if let focused = observation.focusedElement {
             let text = focused.normalizedText.isEmpty ? focused.role : "\(focused.role) \(focused.normalizedText)"
@@ -559,8 +702,120 @@ final class ComputerUsePlannerRuntime {
             body: details.joined(separator: " - "),
             status: "observed",
             step: step,
-            debugPayload: encodedDebugPayload(ComputerUseWindowState(observation: observation))
+            debugPayload: encodedDebugPayload(ObservationTracePayload(
+                state: ComputerUseWindowState(observation: observation),
+                context: observationContext(for: observation, currentTarget: currentTarget)
+            ))
         )
+    }
+
+    private func observationContext(
+        for observation: ComputerUseObservation,
+        currentTarget: ComputerUseObservationTarget?
+    ) -> ComputerUseObservationContext {
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let frontmostProcessID = frontmost.map { Int($0.processIdentifier) }
+        let targetProcessID = observation.processID
+        let isFrontmostTarget = targetProcessID != nil && targetProcessID == frontmostProcessID
+        let userFrontmostState = frontmost.map {
+            ComputerUseAppContextState(
+                appName: $0.localizedName ?? "",
+                bundleID: $0.bundleIdentifier ?? "",
+                processID: Int($0.processIdentifier),
+                isTargetApp: isFrontmostTarget
+            )
+        }
+        let targetMatch = targetMatchDescription(observation: observation, currentTarget: currentTarget)
+        let hasTargetIdentity = !observation.bundleID.isEmpty || observation.processID != nil || observation.windowID != nil
+        let hasVisualOrAXState = observation.screenshot != nil || !observation.elements.isEmpty
+        let usableForActions = observation.targetMismatch == nil && hasTargetIdentity && hasVisualOrAXState
+        let keyboardFocus = keyboardFocusContext(observation: observation, isFrontmostTarget: isFrontmostTarget)
+        var notes: [String] = []
+        if config.computerUseInteractionMode == .quiet && !isFrontmostTarget && usableForActions {
+            notes.append("The target window is not frontmost because Work quietly preserves the user's active app. This is expected; do not repeat observation only to make it frontmost.")
+        }
+        if observation.windowTitle.isEmpty && observation.windowID != nil && usableForActions {
+            notes.append("The target window title is unavailable, but process_id/window_id plus screenshot/AX state identify a usable target window.")
+        }
+        if observation.targetMismatch != nil {
+            notes.append("The requested target was not matched; re-orient before mutating this window.")
+        }
+
+        return ComputerUseObservationContext(
+            controlMode: config.computerUseInteractionMode,
+            userFrontmostState: userFrontmostState,
+            targetWindowState: ComputerUseTargetContextState(
+                appName: observation.appName,
+                bundleID: observation.bundleID,
+                processID: observation.processID,
+                windowID: observation.windowID,
+                windowTitle: observation.windowTitle,
+                targetMatch: targetMatch,
+                isFrontmost: isFrontmostTarget,
+                hasScreenshot: observation.screenshot != nil,
+                hasAXCandidates: !observation.elements.isEmpty,
+                usableForActions: usableForActions
+            ),
+            keyboardFocusState: keyboardFocus,
+            notes: notes
+        )
+    }
+
+    private func targetMatchDescription(
+        observation: ComputerUseObservation,
+        currentTarget: ComputerUseObservationTarget?
+    ) -> String {
+        if observation.targetMismatch != nil {
+            return "mismatch"
+        }
+        if currentTarget?.windowID != nil {
+            return "requested_window_matched"
+        }
+        if observation.windowID != nil {
+            return "current_window_identified"
+        }
+        if observation.screenshot != nil || !observation.elements.isEmpty {
+            return "app_state_identified"
+        }
+        return "unknown"
+    }
+
+    private func keyboardFocusContext(
+        observation: ComputerUseObservation,
+        isFrontmostTarget: Bool
+    ) -> ComputerUseKeyboardFocusContext {
+        if let focused = observation.focusedElement {
+            return ComputerUseKeyboardFocusContext(
+                relationToTarget: "target_app",
+                focusedElementProcessID: focused.processID,
+                note: "Keyboard focus is inside the target app."
+            )
+        }
+        if config.computerUseInteractionMode == .quiet && !isFrontmostTarget {
+            return ComputerUseKeyboardFocusContext(
+                relationToTarget: "user_frontmost_or_unknown",
+                focusedElementProcessID: nil,
+                note: "No target-app focused element was captured. In Work quietly mode this can be expected when the user's active app remains frontmost; use pid/window-scoped tools when target_window_state.usable_for_actions is true."
+            )
+        }
+        return ComputerUseKeyboardFocusContext(
+            relationToTarget: "unknown",
+            focusedElementProcessID: nil,
+            note: "No focused element was captured for the target app."
+        )
+    }
+
+    private func observationWindowLabel(_ observation: ComputerUseObservation) -> String {
+        if !observation.windowTitle.isEmpty {
+            return observation.windowTitle
+        }
+        if let windowID = observation.windowID {
+            return "target window_id \(windowID) (title unavailable)"
+        }
+        if observation.screenshot != nil || !observation.elements.isEmpty {
+            return "target app state (no focused window title)"
+        }
+        return "No focused window"
     }
 
     private func stepLimitSuffix(_ maxSteps: Int?) -> String {
@@ -623,6 +878,9 @@ final class ComputerUsePlannerRuntime {
         let summary: String
         if status == .changed {
             summary = "Observed UI state changed after \(toolCall.summary)."
+        } else if isClickTool(toolCall.tool) {
+            let route = result.diagnostics?["click_route"].map { " via \($0)" } ?? ""
+            summary = "\(toolCall.summary) delivered\(route), but no relevant UI state change was observed. Treat this click route as ineffective for the visible target: refresh target state if stale, then use click with a different visible target or addressing mode."
         } else if toolCall.tool == .typeText || toolCall.tool == .pasteText || toolCall.tool == .setValue {
             summary = "\(toolCall.summary) executed but no focused value, selected text, or visible AX text change was observed. Inspect the latest screenshot and choose whether to finish, refocus, or retry."
         } else {
@@ -638,6 +896,10 @@ final class ComputerUsePlannerRuntime {
 
     private func isTextEntryTool(_ tool: ComputerUseToolName) -> Bool {
         tool == .typeText || tool == .pasteText
+    }
+
+    private func isClickTool(_ tool: ComputerUseToolName) -> Bool {
+        tool == .click || tool == .clickElement || tool == .clickPoint
     }
 
     private func requestedTextObservationSource(
@@ -743,9 +1005,37 @@ final class ComputerUsePlannerRuntime {
         ).joined(separator: " "))
     }
 
-    private func verifiedOutcomeMessage(base: String, delta: ComputerUseStateDelta?) -> String {
-        guard let delta else { return base }
-        return "\(base). Verification: \(delta.summary)"
+    private func verifiedOutcomeMessage(
+        base: String,
+        delta: ComputerUseStateDelta?,
+        transaction: ComputerUseActionTransaction?
+    ) -> String {
+        var message = base
+        if let transaction {
+            message += ". Delivery: \(transaction.summary)"
+            if let warning = transaction.warning {
+                message += ". Warning: \(warning)"
+            }
+            if let escalationHint = transaction.escalationHint {
+                message += ". Next hint: \(escalationHint)"
+            }
+        }
+        if let delta {
+            message += ". Verification: \(delta.summary)"
+        }
+        return message
+    }
+
+    private func toolResultDisplayMessage(_ result: ComputerUseExecutionResult) -> String {
+        guard let transaction = result.transaction else { return result.message }
+        var message = "\(result.message)\nDelivery: \(transaction.summary)"
+        if let warning = transaction.warning {
+            message += "\nWarning: \(warning)"
+        }
+        if let escalationHint = transaction.escalationHint {
+            message += "\nNext hint: \(escalationHint)"
+        }
+        return message
     }
 
     private func observationToolFeedback(
@@ -767,7 +1057,8 @@ final class ComputerUsePlannerRuntime {
 
         let count = (counts[key] ?? 0) + 1
         counts[key] = count
-        let message = "\(base). State is unchanged after \(toolCall.summary); choose a concrete action now and do not call get_app_state/get_window_state again unless the target app or window changes."
+        let screenshotGuidance = screenshotUnavailableGuidance(after)
+        let message = "\(base). State is unchanged after \(toolCall.summary); \(screenshotGuidance)choose a concrete action now and do not call get_app_state/get_window_state again unless the target app or window changes."
         guard count >= maxUnchangedObservationLoops else {
             return (message, nil)
         }
@@ -775,6 +1066,107 @@ final class ComputerUsePlannerRuntime {
             message,
             "CUA stopped repeated \(toolCall.summary) after \(maxUnchangedObservationLoops) unchanged observations with no intervening action. Choose a concrete action instead of observing again."
         )
+    }
+
+    private func readOnlyOrientationLoopFeedback(
+        toolCall: ComputerUseToolCall,
+        observation: ComputerUseObservation,
+        streak: inout ReadOnlyOrientationStreak
+    ) -> (message: String, shouldStop: Bool)? {
+        guard isReadOnlyOrientationTool(toolCall.tool) else {
+            streak.reset()
+            return nil
+        }
+        guard hasUsableOrientationTarget(observation) else {
+            streak.reset()
+            return nil
+        }
+
+        let signature = readOnlyOrientationTargetSignature(observation)
+        if streak.targetSignature == signature {
+            streak.count += 1
+        } else {
+            streak.targetSignature = signature
+            streak.count = 1
+            streak.repairCount = 0
+        }
+
+        guard streak.count >= maxReadOnlyOrientationStepsBeforeRepair else {
+            return nil
+        }
+
+        streak.repairCount += 1
+        let message = readOnlyOrientationLoopMessage(
+            toolCall: toolCall,
+            observation: observation,
+            count: streak.count
+        )
+        return (message, streak.repairCount > maxReadOnlyOrientationRepairs)
+    }
+
+    private func readOnlyOrientationOutcome(
+        step: Int,
+        toolCall: ComputerUseToolCall,
+        message: String,
+        observation: ComputerUseObservation
+    ) -> ComputerUseToolOutcome {
+        ComputerUseToolOutcome(
+            step: step,
+            tool: toolCall.tool,
+            status: "read_only_loop",
+            message: message,
+            appName: observation.appName,
+            bundleID: observation.bundleID,
+            windowTitle: observation.windowTitle,
+            snapshotID: observation.screenshot?.screenshotID
+        )
+    }
+
+    private func readOnlyOrientationLoopMessage(
+        toolCall: ComputerUseToolCall,
+        observation: ComputerUseObservation,
+        count: Int
+    ) -> String {
+        let app = observation.appName.isEmpty ? "the current app" : observation.appName
+        let window = observationWindowLabel(observation)
+        var targetDetails: [String] = []
+        if let processID = observation.processID {
+            targetDetails.append("process_id \(processID)")
+        }
+        if let windowID = observation.windowID {
+            targetDetails.append("window_id \(windowID)")
+        }
+        if let screenshotID = observation.screenshot?.screenshotID {
+            targetDetails.append("screenshot_id \(screenshotID)")
+        }
+        let targetSuffix = targetDetails.isEmpty ? "" : " (\(targetDetails.joined(separator: ", ")))"
+        let quietSuffix = config.computerUseInteractionMode == .quiet ? " If the target is not frontmost but has usable screenshot/AX state, that is expected in Work quietly mode and is not a reason to observe again." : ""
+        return "No concrete action has been taken after \(count) read-only orientation steps on \(app) - \(window)\(targetSuffix). You already have current window state.\(quietSuffix) Choose one concrete action now, such as click, paste_text, press_key, or scroll; or use finish/fail. Do not call another read-only orientation tool unless the target app/window changed or a tool result explicitly says the state is stale. Last orientation tool: \(toolCall.tool.rawValue)."
+    }
+
+    private func hasUsableOrientationTarget(_ observation: ComputerUseObservation) -> Bool {
+        let hasVisualOrAXState = observation.screenshot != nil || !observation.elements.isEmpty
+        let hasTargetIdentity = !observation.bundleID.isEmpty || observation.processID != nil || observation.windowID != nil
+        return hasVisualOrAXState && hasTargetIdentity
+    }
+
+    private func readOnlyOrientationTargetSignature(_ observation: ComputerUseObservation) -> String {
+        [
+            observation.bundleID,
+            observation.processID.map(String.init) ?? "",
+            observation.windowID.map(String.init) ?? "",
+            observation.windowTitle,
+            observation.screenshot.map { rectSignature($0.windowFrame) } ?? "",
+        ].joined(separator: "|")
+    }
+
+    private func isReadOnlyOrientationTool(_ tool: ComputerUseToolName) -> Bool {
+        switch tool {
+        case .listWindows, .listBrowserTabs, .getAppState, .getWindowState:
+            return true
+        default:
+            return false
+        }
     }
 
     private func repeatedUnchangedMessage(
@@ -796,6 +1188,15 @@ final class ComputerUsePlannerRuntime {
         counts[key] = count
         guard count >= 2 else { return nil }
         return "CUA stopped repeated \(toolCall.summary) after two unchanged attempts: no relevant UI change was observed. Choose a different strategy after running get_app_state."
+    }
+
+    private func screenshotUnavailableGuidance(_ observation: ComputerUseObservation) -> String {
+        guard observation.screenshot == nil,
+              let instructions = observation.appInstructions,
+              instructions.contains("Visual screenshot unavailable") else {
+            return ""
+        }
+        return "Visual screenshot is unavailable, so screenshot-coordinate click cannot be planned from this state. Use available AX/browser evidence if sufficient, or fail with the screenshot/Screen Recording reason; "
     }
 
     private func repeatedActionKey(_ toolCall: ComputerUseToolCall) -> String {
@@ -860,12 +1261,10 @@ final class ComputerUsePlannerRuntime {
     }
 
     private func requiresMatchedWindow(for tool: ComputerUseToolName) -> Bool {
-        switch tool {
-        case .moveCursor, .click, .clickElement, .clickPoint, .focusElement, .activateFocused, .performSecondaryAction, .setValue, .typeText, .pasteText, .pressKey, .hotkey, .scroll, .drag, .activateBrowserTab, .openNewBrowserTab, .navigateURL, .navigateActiveBrowserTab, .finish:
-            return true
-        case .launchApp, .listApps, .listWindows, .getAppState, .getWindowState, .recognizeScreenshotText, .listBrowserTabs, .pageGetText, .pageQueryDOM, .fail:
+        if tool == .fail {
             return false
         }
+        return ComputerUseToolRegistry.executionContract(for: tool).requiresMatchedVisualTarget
     }
 
     private func target(from toolCall: ComputerUseToolCall, fallback: ComputerUseObservationTarget?) -> ComputerUseObservationTarget? {
@@ -1095,12 +1494,30 @@ final class ComputerUsePlannerRuntime {
         guard result.status == .failed || result.status == .unsupported else { return nil }
         let message = result.message.trimmingCharacters(in: .whitespacesAndNewlines)
         if browserToolCanFallBackToScreen(toolCall.tool), isBrowserAutomationPermissionFailure(message) {
-            return "\(message). Continue with get_window_state and visual screenshot actions. For browser pages, prefer click_point on visible targets, plus press_key/hotkey, type_text/paste_text, and scroll. Treat AX candidates as optional hints; avoid repeated focus_element/activate_focused cycles on generic web areas, action menus, or search results. Do not retry browser page tools unless the user grants Chrome Apple Events JavaScript permission."
+            return "\(message). Continue with get_window_state and visual screenshot actions. For browser pages, use click on reliable AX candidates or visible screenshot targets, plus press_key, paste_text, and scroll. Treat generic AX candidates as optional hints; avoid repeated focus cycles on generic web areas, action menus, or search results. Do not retry browser helpers unless the user grants Chrome Apple Events JavaScript permission."
         }
         if (toolCall.tool == .typeText || toolCall.tool == .pasteText), isTextFocusFailure(message) {
-            return "\(message). Continue with get_window_state/get_app_state, then retry text entry with process_id, window_id, and element_index or element_id for the editable field, web editor, note body, or document editing area. Prefer type_text for browser editors and paste_text for Apple Notes/native rich text. Do not repeat text entry until the target changes."
+            return "\(message). Continue from the fresh screenshot/state. If the visible editor is a rich web or canvas-backed surface, use click to place the caret, then use paste_text guarded by process_id/window_id or current focus. Use AX element_index/element_id only when the editable target is clearly exposed and stable. Do not repeat the same text entry call against the same failed target."
+        }
+        if (toolCall.tool == .typeText || toolCall.tool == .pasteText), isUnconfirmedAXSelectedTextWrite(message) {
+            return "\(message). Capture fresh state and inspect the visible editor before choosing the next step. If the requested text is visible, finish. If it is absent, use a different insertion route or refocus before retrying. Do not immediately repeat the same text entry call against the same target."
+        }
+        if isStaleScopedTargetFailure(message) {
+            return "\(message). Treat the element/process/window identity as stale, not as task failure. Refresh with get_window_state for the intended app/window or list_windows if the intended window is ambiguous, then choose a target from the fresh state. Do not reuse the stale element_index, element_id, or window_id."
         }
         return nil
+    }
+
+    private func recoverableFallbackTitle(
+        for toolCall: ComputerUseToolCall,
+        result: ComputerUseExecutionResult
+    ) -> String {
+        let message = result.message.trimmingCharacters(in: .whitespacesAndNewlines)
+        if (toolCall.tool == .typeText || toolCall.tool == .pasteText),
+           isUnconfirmedAXSelectedTextWrite(message) {
+            return "Text write unverified"
+        }
+        return "Screen fallback"
     }
 
     private func browserToolCanFallBackToScreen(_ tool: ComputerUseToolName) -> Bool {
@@ -1126,6 +1543,23 @@ final class ComputerUsePlannerRuntime {
         return lowered.contains("no focused editable text target")
             || lowered.contains("not an editable text target")
             || lowered.contains("focused element no longer matches requested text target")
+            || lowered.contains("focus moved within the target process")
+            || lowered.contains("focus moved to process")
+    }
+
+    private func isUnconfirmedAXSelectedTextWrite(_ message: String) -> Bool {
+        let lowered = message.lowercased()
+        return lowered.contains("axselectedtext accepted the write")
+            && lowered.contains("readback did not confirm")
+    }
+
+    private func isStaleScopedTargetFailure(_ message: String) -> Bool {
+        let lowered = message.lowercased()
+        return lowered.contains("refresh state before using this element")
+            || lowered.contains("stale or unknown element_index")
+            || lowered.contains("stale or unknown element_id")
+            || lowered.contains("stale window_id")
+            || lowered.contains("stale process_id")
     }
 
     private func executionTraceBody(toolCall: ComputerUseToolCall, observation: ComputerUseObservation) -> String {
@@ -1172,6 +1606,7 @@ private struct TracePlannerRequestPayload: Codable {
     let maxSteps: Int?
     let toolCatalogVersion: String
     let latestWindowState: ComputerUseWindowState
+    let observationContext: ComputerUseObservationContext
     let priorOutcomes: [ComputerUseToolOutcome]
 
     enum CodingKeys: String, CodingKey {
@@ -1180,6 +1615,7 @@ private struct TracePlannerRequestPayload: Codable {
         case maxSteps = "max_steps"
         case toolCatalogVersion = "tool_catalog_version"
         case latestWindowState = "latest_window_state"
+        case observationContext = "observation_context"
         case priorOutcomes = "prior_tool_outcomes"
     }
 
@@ -1189,16 +1625,26 @@ private struct TracePlannerRequestPayload: Codable {
         maxSteps = request.maxSteps
         toolCatalogVersion = request.toolCatalogVersion
         latestWindowState = request.latestWindowState
+        observationContext = request.observationContext
         priorOutcomes = request.priorOutcomes
     }
+}
+
+private struct ObservationTracePayload: Codable {
+    let state: ComputerUseWindowState
+    let context: ComputerUseObservationContext
 }
 
 private struct TraceToolResultPayload: Codable {
     let status: String
     let message: String
+    let diagnostics: [String: String]?
+    let transaction: ComputerUseActionTransaction?
 
     init(_ result: ComputerUseExecutionResult) {
         status = "\(result.status)"
         message = result.message
+        diagnostics = result.diagnostics
+        transaction = result.transaction
     }
 }

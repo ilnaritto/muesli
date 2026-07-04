@@ -8,30 +8,51 @@ import Testing
 struct ComputerUseToolRegistryTests {
     @Test("emits schemas and descriptions for every tool")
     func emitsSchemasAndDescriptions() {
-        #expect(ComputerUseToolRegistry.definitions.count == ComputerUseToolName.allCases.count - 1)
-        #expect(ComputerUseToolRegistry.definition(for: .click) == nil)
+        let hiddenImplementationTools: Set<ComputerUseToolName> = [
+            .moveCursor,
+            .clickElement,
+            .clickPoint,
+            .focusElement,
+            .activateFocused,
+            .performSecondaryAction,
+            .setValue,
+            .typeText,
+            .hotkey,
+            .drag,
+            .listBrowserTabs,
+            .activateBrowserTab,
+            .navigateURL,
+            .pageGetText,
+            .pageQueryDOM,
+        ]
+        #expect(ComputerUseToolRegistry.definitions.count == ComputerUseToolName.allCases.count - hiddenImplementationTools.count)
+        #expect(ComputerUseToolRegistry.definition(for: .click) != nil)
+        for hidden in hiddenImplementationTools {
+            #expect(ComputerUseToolRegistry.definition(for: hidden) == nil)
+        }
         for definition in ComputerUseToolRegistry.definitions {
             #expect(!definition.description.isEmpty)
             #expect(definition.schema.type == "object")
             #expect(definition.schema.additionalProperties == false)
             #expect(definition.schema.required.contains("tool"))
             #expect(definition.schema.properties["tool"]?.enumValues == [definition.name.rawValue])
+            #expect(!definition.executionContract.rawValue.isEmpty)
         }
         let docs = ComputerUseToolRegistry.promptDocumentation()
         #expect(docs.contains("Tool: get_app_state"))
         #expect(docs.contains("Tool: get_window_state"))
         #expect(docs.contains("Tool: recognize_screenshot_text"))
-        #expect(docs.contains("Tool: click_element"))
-        #expect(docs.contains("Tool: click_point"))
-        #expect(docs.contains("primary pointer action for rich browser/web/canvas UIs"))
-        #expect(docs.contains("prefer click_point on the visible screenshot target"))
-        #expect(docs.contains("Tool: focus_element"))
-        #expect(docs.contains("Tool: activate_focused"))
-        #expect(!docs.contains("Tool: click\n"))
-        #expect(docs.contains("Tool: perform_secondary_action"))
+        #expect(docs.contains("Tool: click\n"))
+        #expect(docs.contains("Do not choose AXPress versus point routes yourself"))
+        #expect(docs.contains("Tool: paste_text"))
         #expect(docs.contains("Tool: open_new_browser_tab"))
         #expect(docs.contains("Tool: navigate_active_browser_tab"))
-        #expect(docs.contains("Tool: page_query_dom"))
+        for hidden in hiddenImplementationTools {
+            #expect(!docs.contains("Tool: \(hidden.rawValue)"))
+        }
+        #expect(docs.contains("Execution contract:"))
+        #expect(docs.contains("app_scoped_background_capable"))
+        #expect(docs.contains("Orientation only"))
     }
 
     @Test("emits native tool definitions")
@@ -40,49 +61,60 @@ struct ComputerUseToolRegistryTests {
 
         #expect(tools.count == ComputerUseToolRegistry.definitions.count)
         #expect(JSONSerialization.isValidJSONObject(tools))
-        #expect(!tools.contains { ($0["name"] as? String) == "click" })
+        #expect(tools.contains { ($0["name"] as? String) == "click" })
+        #expect(!tools.contains { ($0["name"] as? String) == "click_element" })
+        #expect(!tools.contains { ($0["name"] as? String) == "click_point" })
+        #expect(!tools.contains { ($0["name"] as? String) == "type_text" })
+        #expect(!tools.contains { ($0["name"] as? String) == "hotkey" })
         let launch = tools.first { ($0["name"] as? String) == "launch_app" }
         #expect(launch?["type"] as? String == "function")
+        #expect((launch?["description"] as? String)?.contains("Execution contract: background_capable") == true)
         let parameters = launch?["parameters"] as? [String: Any]
         let properties = parameters?["properties"] as? [String: Any]
         #expect(properties?["tool"] == nil)
         #expect(properties?["app_name"] != nil)
 
-        let hotkey = tools.first { ($0["name"] as? String) == "hotkey" }
-        let hotkeyParameters = hotkey?["parameters"] as? [String: Any]
-        let hotkeyProperties = hotkeyParameters?["properties"] as? [String: Any]
-        let modifiers = hotkeyProperties?["modifiers"] as? [String: Any]
+        let pressKey = tools.first { ($0["name"] as? String) == "press_key" }
+        let pressKeyParameters = pressKey?["parameters"] as? [String: Any]
+        let pressKeyProperties = pressKeyParameters?["properties"] as? [String: Any]
+        let modifiers = pressKeyProperties?["modifiers"] as? [String: Any]
         let modifierItems = modifiers?["items"] as? [String: Any]
         #expect(modifierItems?["enum"] as? [String] == ComputerUseKeyModifier.allCases.map(\.rawValue))
     }
 
-    @Test("planner guidance treats browser page tools as optional")
-    func plannerGuidanceTreatsBrowserPageToolsAsOptional() {
+    @Test("planner guidance describes reduced model-facing action surface")
+    func plannerGuidanceDescribesReducedModelFacingActionSurface() {
         let instructions = ComputerUsePlannerClient.instructions
 
         #expect(instructions.contains("native tool call"))
-        #expect(instructions.contains("Browser DOM/page tools are optional accelerators"))
-        #expect(instructions.contains("Chrome Apple Events JavaScript permission"))
+        #expect(instructions.contains("Look -> Act -> Verify"))
         #expect(instructions.contains("The screenshot is the source of truth"))
-        #expect(instructions.contains("Prefer visual pointer/keyboard primitives for rich web UIs"))
-        #expect(instructions.contains("AX candidates, focused_element, DOM text, and OCR are hints"))
+        #expect(instructions.contains("Use the click tool for all click-like intent"))
+        #expect(instructions.contains("Prefer element-indexed click addressing"))
+        #expect(instructions.contains("screenshot-coordinate click addressing"))
+        #expect(instructions.contains("AX candidates, focused_element, and OCR are hints"))
         #expect(instructions.contains("Use recognize_screenshot_text"))
         #expect(instructions.contains("OCR is optional and model-directed"))
-        #expect(instructions.contains("Do not use fail only because a browser DOM/page tool failed"))
+        #expect(instructions.contains("Do not use fail only because a browser helper failed"))
         #expect(instructions.contains("Scoped tools accept target identity"))
+        #expect(instructions.contains("safety_limit_seconds"))
+        #expect(instructions.contains("user-visible auto-stop safety limit"))
+        #expect(instructions.contains("Every tool description includes an execution_contract"))
+        #expect(instructions.contains("Browser tools marked app_scoped_background_capable"))
         #expect(instructions.contains("process_id/window_id"))
         #expect(instructions.contains("Keyboard focus is state"))
-        #expect(instructions.contains("Use focus_element"))
-        #expect(instructions.contains("Use activate_focused"))
-        #expect(instructions.contains("avoid it for generic web areas and rich web search results"))
         #expect(instructions.contains("press_key is ambient"))
         #expect(instructions.contains("That schema is invalid"))
         #expect(instructions.contains("Use it for Google Docs"))
         #expect(instructions.contains("Do not call get_app_state/get_window_state repeatedly"))
-        #expect(instructions.contains("do not fall into repeated AX focus/activate cycles"))
+        #expect(instructions.contains("list_windows, get_app_state, and get_window_state are orientation tools"))
+        #expect(instructions.contains("do not fall into repeated AX focus cycles"))
         #expect(instructions.contains("After open_new_browser_tab, call navigate_active_browser_tab"))
-        #expect(instructions.contains("Prefer it for Apple Notes"))
+        #expect(instructions.contains("use paste_text as the single text-entry intent"))
         #expect(instructions.contains("Use finish only when the user's command is complete and successful"))
+        for hidden in ["click_element", "click_point", "type_text", "focus_element", "activate_focused", "page_query_dom", "list_browser_tabs"] {
+            #expect(!instructions.contains(hidden))
+        }
     }
 
     @Test("planner guidance includes selected app control mode")
@@ -91,8 +123,9 @@ struct ComputerUseToolRegistryTests {
         quietConfig.computerUseInteractionMode = .quiet
         let quietInstructions = ComputerUsePlannerClient.instructions(for: quietConfig)
         #expect(quietInstructions.contains("Current app-control preference: Work quietly"))
-        #expect(quietInstructions.contains("Keep the user's current app active"))
-        #expect(quietInstructions.contains("Avoid tools marked foreground activation allowed"))
+        #expect(quietInstructions.contains("Keep the user's current app usable and active"))
+        #expect(quietInstructions.contains("pid/window-routed input"))
+        #expect(quietInstructions.contains("Avoid foreground_required tools"))
 
         var directConfig = AppConfig()
         directConfig.computerUseInteractionMode = .direct
@@ -101,11 +134,11 @@ struct ComputerUseToolRegistryTests {
         #expect(directInstructions.contains("bring target apps forward"))
     }
 
-    @Test("scoped and ambient tool schemas expose their target contract")
-    func scopedAndAmbientToolSchemasExposeTheirTargetContract() {
+    @Test("reduced action tool schemas expose their target contract")
+    func reducedActionToolSchemasExposeTheirTargetContract() {
         let tools = ComputerUseToolRegistry.nativeToolDefinitions()
 
-        for name in ["type_text", "paste_text", "focus_element"] {
+        for name in ["click", "paste_text"] {
             let tool = tools.first { ($0["name"] as? String) == name }
             let parameters = tool?["parameters"] as? [String: Any]
             let properties = parameters?["properties"] as? [String: Any]
@@ -123,21 +156,18 @@ struct ComputerUseToolRegistryTests {
         let pressKey = tools.first { ($0["name"] as? String) == "press_key" }
         let pressKeyParameters = pressKey?["parameters"] as? [String: Any]
         let pressKeyProperties = pressKeyParameters?["properties"] as? [String: Any]
-        #expect((pressKey?["description"] as? String)?.contains("never accepts element_index, element_id, or window_id") == true)
-        #expect((pressKey?["description"] as? String)?.contains("refuses stale process_id") == true)
+        #expect((pressKey?["description"] as? String)?.contains("pid/window-routed") == true)
+        #expect((pressKey?["description"] as? String)?.contains("never accepts element_index or element_id") == true)
         #expect(pressKeyProperties?["process_id"] != nil)
-        #expect(pressKeyProperties?["window_id"] == nil)
+        #expect(pressKeyProperties?["window_id"] != nil)
         #expect(pressKeyProperties?["element_index"] == nil)
         #expect(pressKeyProperties?["element_id"] == nil)
 
-        let activateFocused = tools.first { ($0["name"] as? String) == "activate_focused" }
-        let activateFocusedParameters = activateFocused?["parameters"] as? [String: Any]
-        let activateFocusedProperties = activateFocusedParameters?["properties"] as? [String: Any]
-        #expect((activateFocused?["description"] as? String)?.contains("ambient current-focus action") == true)
-        #expect(activateFocusedProperties?["process_id"] != nil)
-        #expect(activateFocusedProperties?["window_id"] == nil)
-        #expect(activateFocusedProperties?["element_index"] == nil)
-        #expect(activateFocusedProperties?["element_id"] == nil)
+        let click = tools.first { ($0["name"] as? String) == "click" }
+        #expect((click?["description"] as? String)?.contains("Muesli's driver selects and reports the concrete route") == true)
+
+        let pasteText = tools.first { ($0["name"] as? String) == "paste_text" }
+        #expect((pasteText?["description"] as? String)?.contains("driver chooses the safest available text route") == true)
     }
 }
 
@@ -171,10 +201,10 @@ struct ComputerUsePlannerResponseTests {
     @Test("decodes wrapped tool call")
     func decodesWrappedToolCall() throws {
         let response = try ComputerUsePlannerResponse.decodeJSON(
-            from: #"{"tool_call":{"tool":"hotkey","modifiers":["command"],"key":"l"}}"#
+            from: #"{"tool_call":{"tool":"press_key","modifiers":["command"],"key":"l"}}"#
         )
 
-        #expect(response.toolCall.tool == .hotkey)
+        #expect(response.toolCall.tool == .pressKey)
         #expect(response.toolCall.modifiers == [.command])
         #expect(response.toolCall.key == "l")
     }
@@ -182,7 +212,7 @@ struct ComputerUsePlannerResponseTests {
     @Test("decodes modifier aliases")
     func decodesModifierAliases() throws {
         let response = try ComputerUsePlannerResponse.decodeNativeToolCall(
-            name: "hotkey",
+            name: "press_key",
             arguments: #"{"modifiers":["cmd","ctrl","alt","fn"],"key":"t"}"#
         )
 
@@ -203,23 +233,20 @@ struct ComputerUsePlannerResponseTests {
         #expect(!response.toolCall.requiresConfirmation)
     }
 
-    @Test("decodes split click tools")
-    func decodesSplitClickTools() throws {
-        let element = try ComputerUsePlannerResponse.decodeNativeToolCall(
-            name: "click_element",
-            arguments: #"{"element_index":12,"label":"Tweet composer"}"#
-        )
-        let point = try ComputerUsePlannerResponse.decodeNativeToolCall(
-            name: "click_point",
-            arguments: #"{"screenshot_id":"s1","x":120,"y":240,"label":"fallback target"}"#
-        )
-
-        #expect(element.toolCall.tool == .clickElement)
-        #expect(element.toolCall.elementIndex == 12)
-        #expect(element.toolCall.x == nil)
-        #expect(point.toolCall.tool == .clickPoint)
-        #expect(point.toolCall.screenshotID == "s1")
-        #expect(point.toolCall.elementIndex == nil)
+    @Test("rejects hidden split click implementation routes")
+    func rejectsHiddenSplitClickImplementationRoutes() {
+        #expect(throws: Error.self) {
+            _ = try ComputerUsePlannerResponse.decodeNativeToolCall(
+                name: "click_element",
+                arguments: #"{"element_index":12,"label":"Tweet composer"}"#
+            )
+        }
+        #expect(throws: Error.self) {
+            _ = try ComputerUsePlannerResponse.decodeNativeToolCall(
+                name: "click_point",
+                arguments: #"{"screenshot_id":"s1","x":120,"y":240,"label":"fallback target"}"#
+            )
+        }
     }
 
     @Test("coordinate clicks require screenshot id")
@@ -281,15 +308,13 @@ struct ComputerUsePlannerResponseTests {
         }
     }
 
-    @Test("decodes move cursor tool calls")
-    func decodesMoveCursorToolCalls() throws {
-        let response = try ComputerUsePlannerResponse.decodeJSON(
-            from: #"{"tool":"move_cursor","screenshot_id":"s1","x":120,"y":240,"label":"Search"}"#
-        )
-
-        #expect(response.toolCall.tool == .moveCursor)
-        #expect(response.toolCall.screenshotID == "s1")
-        #expect(response.toolCall.summary == "move cursor to 120,240")
+    @Test("rejects hidden visual feedback tool calls")
+    func rejectsHiddenVisualFeedbackToolCalls() {
+        #expect(throws: Error.self) {
+            _ = try ComputerUsePlannerResponse.decodeJSON(
+                from: #"{"tool":"move_cursor","screenshot_id":"s1","x":120,"y":240,"label":"Search"}"#
+            )
+        }
     }
 
     @Test("decodes native tool call arguments")
@@ -304,16 +329,16 @@ struct ComputerUsePlannerResponseTests {
         #expect(response.rawModelOutput?.contains(#""tool":"launch_app""#) == true)
     }
 
-    @Test("decodes app scoped type text tool calls")
-    func decodesAppScopedTypeTextToolCalls() throws {
+    @Test("decodes app scoped paste text tool calls")
+    func decodesAppScopedPasteTextToolCalls() throws {
         let response = try ComputerUsePlannerResponse.decodeJSON(
-            from: #"{"tool":"type_text","app_bundle_id":"com.apple.Notes","element_index":12,"text":"this has been created using computer use","label":"note body"}"#
+            from: #"{"tool":"paste_text","app_bundle_id":"com.apple.Notes","element_index":12,"text":"this has been created using computer use","label":"note body"}"#
         )
 
-        #expect(response.toolCall.tool == .typeText)
+        #expect(response.toolCall.tool == .pasteText)
         #expect(response.toolCall.canonicalBundleID == "com.apple.Notes")
         #expect(response.toolCall.elementIndex == 12)
-        #expect(response.toolCall.summary == "type this has been created using computer use")
+        #expect(response.toolCall.summary == "paste this has been created using computer use")
     }
 
     @Test("decodes paste text tool calls")
@@ -353,27 +378,27 @@ struct ComputerUsePlannerResponseTests {
         #expect(appState.toolCall.canonicalBundleID == windowState.toolCall.canonicalBundleID)
     }
 
-    @Test("decodes focus focused activation secondary action and element scroll")
-    func decodesFocusFocusedActivationSecondaryActionAndElementScroll() throws {
-        let focus = try ComputerUsePlannerResponse.decodeJSON(
-            from: #"{"tool":"focus_element","process_id":123,"element_id":"e4","label":"Search"}"#
-        )
-        let focused = try ComputerUsePlannerResponse.decodeJSON(
-            from: #"{"tool":"activate_focused","process_id":123,"label":"Play"}"#
-        )
-        let secondary = try ComputerUsePlannerResponse.decodeJSON(
-            from: #"{"tool":"perform_secondary_action","element_index":3,"action_name":"AXShowMenu","label":"More"}"#
-        )
+    @Test("rejects hidden focus activation and secondary routes but decodes element scroll")
+    func rejectsHiddenFocusActivationAndSecondaryRoutesButDecodesElementScroll() throws {
+        #expect(throws: Error.self) {
+            _ = try ComputerUsePlannerResponse.decodeJSON(
+                from: #"{"tool":"focus_element","process_id":123,"element_id":"e4","label":"Search"}"#
+            )
+        }
+        #expect(throws: Error.self) {
+            _ = try ComputerUsePlannerResponse.decodeJSON(
+                from: #"{"tool":"activate_focused","process_id":123,"label":"Play"}"#
+            )
+        }
+        #expect(throws: Error.self) {
+            _ = try ComputerUsePlannerResponse.decodeJSON(
+                from: #"{"tool":"perform_secondary_action","element_index":3,"action_name":"AXShowMenu","label":"More"}"#
+            )
+        }
         let scroll = try ComputerUsePlannerResponse.decodeJSON(
             from: #"{"tool":"scroll","element_id":"e7","direction":"down","pages":1}"#
         )
 
-        #expect(focus.toolCall.tool == .focusElement)
-        #expect(focus.toolCall.elementID == "e4")
-        #expect(focused.toolCall.tool == .activateFocused)
-        #expect(focused.toolCall.processID == 123)
-        #expect(secondary.toolCall.tool == .performSecondaryAction)
-        #expect(secondary.toolCall.actionName == "AXShowMenu")
         #expect(scroll.toolCall.tool == .scroll)
         #expect(scroll.toolCall.elementID == "e7")
     }
@@ -382,16 +407,27 @@ struct ComputerUsePlannerResponseTests {
     func decodesBrowserIntentTools() throws {
         let newTab = try ComputerUsePlannerResponse.decodeNativeToolCall(
             name: "open_new_browser_tab",
-            arguments: #"{"app_bundle_id":"com.google.Chrome"}"#
+            arguments: #"{"app_bundle_id":"com.google.Chrome","process_id":1234,"window_id":88}"#
         )
         let navigate = try ComputerUsePlannerResponse.decodeNativeToolCall(
             name: "navigate_active_browser_tab",
-            arguments: #"{"app_bundle_id":"com.google.Chrome","url":"https://twitter.com/compose/tweet"}"#
+            arguments: #"{"app_bundle_id":"com.google.Chrome","url":"https://twitter.com/compose/tweet","process_id":1234,"window_id":88}"#
+        )
+        let pressKey = try ComputerUsePlannerResponse.decodeNativeToolCall(
+            name: "press_key",
+            arguments: #"{"app_name":"Google Chrome","app_bundle_id":"com.google.Chrome","key":"enter","modifiers":[],"process_id":1234,"window_id":88}"#
         )
 
         #expect(newTab.toolCall.tool == .openNewBrowserTab)
+        #expect(newTab.toolCall.processID == 1234)
+        #expect(newTab.toolCall.windowID == 88)
         #expect(navigate.toolCall.tool == .navigateActiveBrowserTab)
         #expect(navigate.toolCall.url == "https://twitter.com/compose/tweet")
+        #expect(navigate.toolCall.processID == 1234)
+        #expect(navigate.toolCall.windowID == 88)
+        #expect(pressKey.toolCall.tool == .pressKey)
+        #expect(pressKey.toolCall.processID == 1234)
+        #expect(pressKey.toolCall.windowID == 88)
     }
 
     @Test("native tool call rejects unsupported fields")
@@ -441,17 +477,17 @@ struct ComputerUsePlannerResponseTests {
     @Test("unsafe URLs fail validation")
     func unsafeURLsFailValidation() {
         #expect(throws: Error.self) {
-            _ = try ComputerUsePlannerResponse.decodeJSON(from: #"{"tool":"navigate_url","app_bundle_id":"com.google.Chrome","url":"javascript:alert(1)"}"#)
+            _ = try ComputerUsePlannerResponse.decodeJSON(from: #"{"tool":"navigate_active_browser_tab","app_bundle_id":"com.google.Chrome","url":"javascript:alert(1)"}"#)
         }
     }
 
     @Test("safe URLs allow query parameters")
     func safeURLsAllowQueryParameters() throws {
         let response = try ComputerUsePlannerResponse.decodeJSON(
-            from: #"{"tool":"navigate_url","app_bundle_id":"com.google.Chrome","url":"https://www.google.com/search?q=hello&hl=en"}"#
+            from: #"{"tool":"navigate_active_browser_tab","app_bundle_id":"com.google.Chrome","url":"https://www.google.com/search?q=hello&hl=en"}"#
         )
         let semicolonResponse = try ComputerUsePlannerResponse.decodeJSON(
-            from: #"{"tool":"navigate_url","app_bundle_id":"com.google.Chrome","url":"https://example.com/path;param=value?x=1;y=2"}"#
+            from: #"{"tool":"navigate_active_browser_tab","app_bundle_id":"com.google.Chrome","url":"https://example.com/path;param=value?x=1;y=2"}"#
         )
 
         #expect(response.toolCall.url == "https://www.google.com/search?q=hello&hl=en")
@@ -462,13 +498,11 @@ struct ComputerUsePlannerResponseTests {
     func riskyToolCallsRequireConfirmation() throws {
         let click = try ComputerUsePlannerResponse.decodeJSON(from: #"{"tool":"click","element_id":"e2","label":"Send"}"#)
         let unlabeledPoint = try ComputerUsePlannerResponse.decodeJSON(from: #"{"tool":"click","screenshot_id":"s1","x":120,"y":240}"#)
-        let key = try ComputerUsePlannerResponse.decodeJSON(from: #"{"tool":"hotkey","modifiers":["command"],"key":"q"}"#)
-        let activation = try ComputerUsePlannerResponse.decodeJSON(from: #"{"tool":"activate_focused","label":"Continue"}"#)
+        let key = try ComputerUsePlannerResponse.decodeJSON(from: #"{"tool":"press_key","modifiers":["command"],"key":"q"}"#)
 
         #expect(click.toolCall.requiresConfirmation)
         #expect(unlabeledPoint.toolCall.requiresConfirmation)
         #expect(key.toolCall.requiresConfirmation)
-        #expect(activation.toolCall.requiresConfirmation)
     }
 }
 
@@ -525,6 +559,7 @@ struct ComputerUsePlannerRequestTests {
             command: "click search",
             step: 1,
             maxSteps: 100,
+            safetyLimitSeconds: 120,
             latestWindowState: ComputerUseWindowState(
                 observation: ComputerUsePlannerRuntimeTests.observation(screenshot: ComputerUsePlannerRuntimeTests.screenshot()),
                 screenshotOCRText: "Visible OCR text"
@@ -538,6 +573,10 @@ struct ComputerUsePlannerRequestTests {
         #expect(text.contains("s1"))
         #expect(text.contains("screenshot_ocr_text"))
         #expect(text.contains("Visible OCR text"))
+        #expect(text.contains("safety_limit_seconds"))
+        #expect(text.contains("observation_context"))
+        #expect(text.contains("target_window_state"))
+        #expect(text.contains("usable_for_actions"))
         #expect(!text.contains("data:image"))
         #expect(text.contains(ComputerUseToolRegistry.catalogVersion))
     }
@@ -557,8 +596,9 @@ struct ComputerUseTraceFormatterTests {
     @Test("formats final CUA status buckets")
     func formatsFinalStatusBuckets() {
         #expect(ComputerUseTraceFormatter.displayFinalStatus("done") == "done")
-        #expect(ComputerUseTraceFormatter.displayFinalStatus("timedout") == "timed_out")
+        #expect(ComputerUseTraceFormatter.displayFinalStatus("timedout") == "safety_limit")
         #expect(ComputerUseTraceFormatter.displayFinalStatus("fail") == "failed")
+        #expect(ComputerUseTraceFormatter.displayFinalStatus("no_progress") == "no_progress")
     }
 }
 
@@ -567,10 +607,15 @@ struct ComputerUsePlannerRuntimeTests {
     @Test("finishes after finish tool")
     @MainActor
     func finishesAfterFinishTool() async {
+        var config = AppConfig()
+        config.computerUseTimeoutSeconds = 300
         let runtime = ComputerUsePlannerRuntime(
-            config: AppConfig(),
+            config: config,
             observe: { _, _, _ in Self.observation() },
-            plan: { _ in ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done")) },
+            plan: { request in
+                #expect(request.safetyLimitSeconds == 300)
+                return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
+            },
             execute: { _, _ in .executed("unexpected") }
         )
 
@@ -598,9 +643,9 @@ struct ComputerUsePlannerRuntimeTests {
         #expect(result.message == "blocked")
     }
 
-    @Test("timeout produces timed out runtime result")
+    @Test("safety limit produces auto-stopped runtime result")
     @MainActor
-    func timeoutProducesTimedOutResult() async {
+    func safetyLimitProducesAutoStoppedRuntimeResult() async {
         let runtime = ComputerUsePlannerRuntime(
             config: AppConfig(),
             timeoutSeconds: -1,
@@ -612,8 +657,8 @@ struct ComputerUsePlannerRuntimeTests {
         let result = await runtime.run(command: "do something")
 
         #expect(result.status == ComputerUsePlannerRuntimeResult.Status.timedOut)
-        #expect(result.message == "CUA timed out")
-        #expect(result.traceEvents.contains { $0.kind == "timed_out" && $0.status == "timed_out" })
+        #expect(result.message.contains("Stopped after safety limit"))
+        #expect(result.traceEvents.contains { $0.kind == "timed_out" && $0.title == "Safety limit" && $0.status == "timed_out" })
     }
 
     @Test("cancelled executor result produces cancelled runtime result")
@@ -670,6 +715,163 @@ struct ComputerUsePlannerRuntimeTests {
         #expect(result.message == "CUA reached its step limit")
     }
 
+    @Test("read-only orientation loop sends planner repair without choosing an action")
+    @MainActor
+    func readOnlyOrientationLoopSendsPlannerRepairWithoutChoosingAction() async {
+        let runtime = ComputerUsePlannerRuntime(
+            config: AppConfig(),
+            maxSteps: 10,
+            observe: { _, _, _ in
+                Self.observation(
+                    appName: "Google Chrome",
+                    bundleID: "com.google.Chrome",
+                    processID: 40712,
+                    windowID: 93801,
+                    windowTitle: "Home / X",
+                    screenshot: Self.screenshot()
+                )
+            },
+            plan: { request in
+                if request.priorOutcomes.last?.status == "read_only_loop" {
+                    let message = request.priorOutcomes.last?.message ?? ""
+                    #expect(message.contains("No concrete action has been taken"))
+                    #expect(message.contains("Choose one concrete action now"))
+                    #expect(message.contains("finish/fail"))
+                    #expect(request.availableTools?.contains(.click) == true)
+                    #expect(request.availableTools?.contains(.pasteText) == true)
+                    #expect(request.availableTools?.contains(.finish) == true)
+                    #expect(request.availableTools?.contains(.fail) == true)
+                    #expect(request.availableTools?.contains(.getWindowState) == false)
+                    #expect(request.availableTools?.contains(.listWindows) == false)
+                    #expect(request.toolCatalog.contains("Tool: click"))
+                    #expect(!request.toolCatalog.contains("Tool: get_window_state"))
+                    #expect(!request.toolCatalog.contains("Tool: list_windows"))
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "handled repair"))
+                }
+                switch request.step {
+                case 1:
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .listWindows, appBundleID: "com.google.Chrome"))
+                case 2:
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .getWindowState, appBundleID: "com.google.Chrome", processID: 40712, windowID: 93801))
+                case 3:
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .listBrowserTabs, appBundleID: "com.google.Chrome"))
+                default:
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .getWindowState, appBundleID: "com.google.Chrome", processID: 40712, windowID: 93801))
+                }
+            },
+            execute: { toolCall, _ in
+                switch toolCall.tool {
+                case .listWindows:
+                    return .executed("93801: Google Chrome - Home / X")
+                case .listBrowserTabs:
+                    return .executed("No browser tabs")
+                default:
+                    return .executed("Captured target state")
+                }
+            }
+        )
+
+        let result = await runtime.run(command: "post a tweet")
+
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(result.message == "handled repair")
+        #expect(result.traceEvents.contains { $0.kind == "planner_repair" && $0.title == "Action required" })
+    }
+
+    @Test("masked tools are rejected before execution")
+    @MainActor
+    func maskedToolsAreRejectedBeforeExecution() async {
+        var actionRepairSeen = false
+        var maskedToolExecuted = false
+        let runtime = ComputerUsePlannerRuntime(
+            config: AppConfig(),
+            maxSteps: 12,
+            observe: { _, _, _ in
+                Self.observation(
+                    appName: "Google Chrome",
+                    bundleID: "com.google.Chrome",
+                    processID: 40712,
+                    windowID: 93801,
+                    windowTitle: "Home / X",
+                    screenshot: Self.screenshot()
+                )
+            },
+            plan: { request in
+                if request.priorOutcomes.last?.status == "invalid_schema" {
+                    let message = request.priorOutcomes.last?.message ?? ""
+                    #expect(message.contains("get_window_state is not available in this planner turn"))
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "recovered"))
+                }
+                if request.priorOutcomes.last?.status == "read_only_loop" {
+                    actionRepairSeen = true
+                    #expect(request.availableTools?.contains(.getWindowState) == false)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .getWindowState, appBundleID: "com.google.Chrome", processID: 40712, windowID: 93801))
+                }
+                switch request.step {
+                case 1:
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .listWindows, appBundleID: "com.google.Chrome"))
+                case 2:
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .getWindowState, appBundleID: "com.google.Chrome", processID: 40712, windowID: 93801))
+                case 3:
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .listBrowserTabs, appBundleID: "com.google.Chrome"))
+                default:
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .getWindowState, appBundleID: "com.google.Chrome", processID: 40712, windowID: 93801))
+                }
+            },
+            execute: { toolCall, _ in
+                if actionRepairSeen, toolCall.tool == .getWindowState {
+                    maskedToolExecuted = true
+                }
+                switch toolCall.tool {
+                case .listWindows:
+                    return .executed("93801: Google Chrome - Home / X")
+                case .listBrowserTabs:
+                    return .executed("No browser tabs")
+                default:
+                    return .executed("Captured target state")
+                }
+            }
+        )
+
+        let result = await runtime.run(command: "post a tweet")
+
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(result.message == "recovered")
+        #expect(maskedToolExecuted == false)
+        #expect(result.traceEvents.contains { $0.kind == "planner_repair" && $0.title == "Planner schema repair" })
+    }
+
+    @Test("ignored read-only orientation repair stops as no progress")
+    @MainActor
+    func ignoredReadOnlyOrientationRepairStopsAsNoProgress() async {
+        let runtime = ComputerUsePlannerRuntime(
+            config: AppConfig(),
+            maxSteps: 20,
+            timeoutSeconds: 300,
+            observe: { _, _, _ in
+                Self.observation(
+                    appName: "Google Chrome",
+                    bundleID: "com.google.Chrome",
+                    processID: 40712,
+                    windowID: 93801,
+                    windowTitle: "Home / X",
+                    screenshot: Self.screenshot()
+                )
+            },
+            plan: { _ in
+                ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .listWindows, appBundleID: "com.google.Chrome"))
+            },
+            execute: { _, _ in .executed("93801: Google Chrome - Home / X") }
+        )
+
+        let result = await runtime.run(command: "post a tweet")
+
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.noProgress)
+        #expect(result.message.contains("No concrete action has been taken"))
+        #expect(result.traceEvents.contains { $0.kind == "planner_repair" && $0.title == "Action required" })
+        #expect(result.traceEvents.contains { $0.kind == "no_progress" && $0.title == "No progress" })
+    }
+
     @Test("stops after one repeated no-op tool call")
     @MainActor
     func stopsRepeatedNoOpToolCalls() async {
@@ -692,10 +894,10 @@ struct ComputerUsePlannerRuntimeTests {
 
         let result = await runtime.run(command: "search in chrome")
 
-        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.failed)
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.noProgress)
         #expect(result.message.contains("repeated click Address and search bar after two unchanged attempts"))
         #expect(executionCount == 2)
-        #expect(result.traceEvents.contains { $0.title == "Repeated action stopped" })
+        #expect(result.traceEvents.contains { $0.title == "No progress" && $0.status == "no_progress" })
     }
 
     @Test("repeated get window state gives planner feedback before stopping")
@@ -744,7 +946,7 @@ struct ComputerUsePlannerRuntimeTests {
 
         #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
         #expect(executionCount == 2)
-        #expect(!result.traceEvents.contains { $0.title == "Repeated action stopped" })
+        #expect(!result.traceEvents.contains { $0.title == "No progress" })
     }
 
     @Test("stops observation-only loops after larger budget")
@@ -783,10 +985,10 @@ struct ComputerUsePlannerRuntimeTests {
 
         let result = await runtime.run(command: "use the visible page")
 
-        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.failed)
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.noProgress)
         #expect(result.message.contains("repeated get window state after 4 unchanged observations"))
         #expect(executionCount == 4)
-        #expect(result.traceEvents.contains { $0.title == "Repeated action stopped" })
+        #expect(result.traceEvents.contains { $0.title == "No progress" && $0.status == "no_progress" })
     }
 
     @Test("stops on confirmation-required action")
@@ -1040,9 +1242,26 @@ struct ComputerUsePlannerRuntimeTests {
                 #expect(outcome?.beforeStateID == "state-before")
                 #expect(outcome?.afterStateID == "state-after")
                 #expect(outcome?.stateDelta?.summary.contains("Observed UI state changed") == true)
+                #expect(outcome?.transaction?.path == "window_point_skylight")
+                #expect(outcome?.transaction?.posted == true)
+                #expect(outcome?.transaction?.verified == false)
                 return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
             },
-            execute: { _, _ in .executed("Clicked") }
+            execute: { _, _ in
+                .executed(
+                    "Clicked",
+                    transaction: ComputerUseActionTransaction(
+                        path: "window_point_skylight",
+                        route: "window_point_skylight",
+                        posted: true,
+                        verified: false,
+                        effect: .unverifiable,
+                        targetStable: true,
+                        processID: 123,
+                        windowID: 456
+                    )
+                )
+            }
         )
 
         let result = await runtime.run(command: "click search")
@@ -1090,6 +1309,63 @@ struct ComputerUsePlannerRuntimeTests {
         #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
     }
 
+    @Test("unconfirmed AXSelectedText write is recoverable feedback")
+    @MainActor
+    func unconfirmedAXSelectedTextWriteIsRecoverableFeedback() async {
+        var observeCount = 0
+        var planSteps: [Int] = []
+        let runtime = ComputerUsePlannerRuntime(
+            config: AppConfig(),
+            observe: { _, _, _ in
+                observeCount += 1
+                if observeCount == 1 {
+                    return Self.observation(stateID: "state-before", screenshot: Self.screenshot(id: "before"))
+                }
+                return Self.observation(
+                    stateID: "state-after",
+                    screenshot: Self.screenshot(id: "after"),
+                    focusedValue: "hello from computer use"
+                )
+            },
+            plan: { request in
+                planSteps.append(request.step)
+                if request.step == 1 {
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .pasteText, text: "hello from computer use"))
+                }
+                let outcome = request.priorOutcomes.last
+                #expect(outcome?.status == "failed")
+                #expect(outcome?.transaction?.path == "ax_selected_text")
+                #expect(outcome?.transaction?.posted == true)
+                #expect(outcome?.transaction?.verified == false)
+                #expect(outcome?.message.contains("Do not immediately repeat") == true)
+                #expect(request.latestWindowState.observation.focusedElement?.value == "hello from computer use")
+                return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
+            },
+            execute: { _, _ in
+                .failed(
+                    "AXSelectedText accepted the write, but AX readback did not confirm insertion. Refresh target state before retrying text entry; retrying blindly may duplicate text if the AX write already landed.",
+                    transaction: ComputerUseActionTransaction(
+                        path: "ax_selected_text",
+                        posted: true,
+                        verified: false,
+                        effect: .unverifiable,
+                        targetStable: true,
+                        requestedTextSample: "hello from computer use",
+                        escalationHint: "Inspect the post-action screenshot/AX state before retrying; retrying blindly may duplicate text if the AX write landed but AX readback lagged.",
+                        warning: "AXSelectedText accepted the write, but readback did not prove insertion."
+                    )
+                )
+            }
+        )
+
+        let result = await runtime.run(command: "write hello from computer use")
+
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(planSteps == [1, 2])
+        #expect(observeCount == 2)
+        #expect(result.traceEvents.contains { $0.title == "Text write unverified" })
+    }
+
     @Test("text action verifies requested text before finish")
     @MainActor
     func textActionVerifiesRequestedTextBeforeFinish() async {
@@ -1123,9 +1399,9 @@ struct ComputerUsePlannerRuntimeTests {
         #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
     }
 
-    @Test("pre-existing focused text does not verify a text action")
+    @Test("pre-existing focused text leaves completion decision to planner")
     @MainActor
-    func preExistingFocusedTextDoesNotVerifyTextAction() async {
+    func preExistingFocusedTextLeavesCompletionDecisionToPlanner() async {
         let requestedText = "hello from computer use"
         let runtime = ComputerUsePlannerRuntime(
             config: AppConfig(),
@@ -1147,17 +1423,6 @@ struct ComputerUsePlannerRuntimeTests {
                     #expect(outcome?.verificationStatus == .unchanged)
                     #expect(outcome?.message.contains("AX did not expose newly confirmed requested text") == true)
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
-                case 3:
-                    #expect(request.priorOutcomes.last?.status == "unverified_text")
-                    #expect(request.priorOutcomes.last?.message.contains("Text write is unverified") == true)
-                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .recognizeScreenshotText, screenshotID: "s1"))
-                case 4:
-                    #expect(request.latestWindowState.screenshotOCRText == requestedText)
-                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
-                case 5:
-                    #expect(request.priorOutcomes.last?.status == "unverified_text")
-                    #expect(request.priorOutcomes.last?.message.contains("Text write is unverified") == true)
-                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Text existed before the write and was not newly confirmed."))
                 default:
                     Issue.record("unexpected planner step \(request.step)")
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Unexpected step."))
@@ -1169,8 +1434,9 @@ struct ComputerUsePlannerRuntimeTests {
 
         let result = await runtime.run(command: "write hello")
 
-        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.failed)
-        #expect(result.message == "Text existed before the write and was not newly confirmed.")
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(result.message == "done")
+        #expect(result.traceEvents.contains { $0.kind == "finish_warning" })
     }
 
     @Test("post-only OCR can verify text absent from pre-action visible evidence")
@@ -1212,6 +1478,46 @@ struct ComputerUsePlannerRuntimeTests {
 
         #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
         #expect(result.message == "done")
+    }
+
+    @Test("quiet mode marks non-frontmost target window as usable")
+    @MainActor
+    func quietModeMarksNonFrontmostTargetWindowAsUsable() async {
+        var config = AppConfig()
+        config.computerUseInteractionMode = .quiet
+        let runtime = ComputerUsePlannerRuntime(
+            config: config,
+            observe: { _, _, _ in
+                Self.observation(
+                    appName: "Google Chrome",
+                    bundleID: "com.google.Chrome",
+                    processID: 999_999,
+                    windowID: 55,
+                    windowTitle: "",
+                    screenshot: Self.screenshot()
+                )
+            },
+            plan: { request in
+                #expect(request.observationContext.controlMode == .quiet)
+                #expect(request.observationContext.targetWindowState.windowID == 55)
+                #expect(request.observationContext.targetWindowState.isFrontmost == false)
+                #expect(request.observationContext.targetWindowState.hasScreenshot == true)
+                #expect(request.observationContext.targetWindowState.hasAXCandidates == true)
+                #expect(request.observationContext.targetWindowState.usableForActions == true)
+                #expect(request.observationContext.keyboardFocusState.relationToTarget == "user_frontmost_or_unknown")
+                #expect(request.observationContext.notes.contains { $0.contains("Work quietly preserves the user's active app") })
+                return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "context clear"))
+            },
+            execute: { _, _ in .executed("unexpected") }
+        )
+
+        let result = await runtime.run(command: "open twitter")
+        let observationPayload = result.traceEvents.first { $0.kind == "observation" }?.debugPayload ?? ""
+
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(observationPayload.contains(#""context""#))
+        #expect(observationPayload.contains(#""usable_for_actions":true"#))
+        #expect(result.traceEvents.first { $0.kind == "observation" }?.body.contains("target window_id 55") == true)
     }
 
     @Test("OCR delta can verify text even when unrelated AX text existed before")
@@ -1261,9 +1567,9 @@ struct ComputerUsePlannerRuntimeTests {
         #expect(result.message == "done")
     }
 
-    @Test("post-only OCR does not verify text that existed only in unrelated AX text")
+    @Test("post-only OCR uncertainty is warning-only when planner finishes")
     @MainActor
-    func postOnlyOCRDoesNotVerifyTextThatExistedOnlyInUnrelatedAXText() async {
+    func postOnlyOCRUncertaintyIsWarningOnlyWhenPlannerFinishes() async {
         let requestedText = "hello from computer use"
         let runtime = ComputerUsePlannerRuntime(
             config: AppConfig(),
@@ -1287,10 +1593,6 @@ struct ComputerUsePlannerRuntimeTests {
                 case 3:
                     #expect(request.latestWindowState.screenshotOCRText == requestedText)
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
-                case 4:
-                    #expect(request.priorOutcomes.last?.status == "unverified_text")
-                    #expect(request.priorOutcomes.last?.message.contains("Text write is unverified") == true)
-                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Text already existed in visible AX evidence."))
                 default:
                     Issue.record("unexpected planner step \(request.step)")
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Unexpected step."))
@@ -1302,13 +1604,14 @@ struct ComputerUsePlannerRuntimeTests {
 
         let result = await runtime.run(command: "write hello")
 
-        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.failed)
-        #expect(result.message == "Text already existed in visible AX evidence.")
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(result.message == "done")
+        #expect(result.traceEvents.contains { $0.kind == "finish_warning" })
     }
 
-    @Test("unrelated element text does not verify a text action")
+    @Test("unrelated element text leaves completion decision to planner")
     @MainActor
-    func unrelatedElementTextDoesNotVerifyTextAction() async {
+    func unrelatedElementTextLeavesCompletionDecisionToPlanner() async {
         let requestedText = "hello from computer use"
         var observeCount = 0
         let runtime = ComputerUsePlannerRuntime(
@@ -1336,8 +1639,8 @@ struct ComputerUsePlannerRuntimeTests {
                     #expect(outcome?.message.contains("AX did not expose newly confirmed requested text") == true)
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
                 default:
-                    #expect(request.priorOutcomes.last?.status == "unverified_text")
-                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Text insertion was not confirmed."))
+                    Issue.record("unexpected planner step \(request.step)")
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Unexpected step."))
                 }
             },
             execute: { _, _ in .executed("Pasted text") }
@@ -1345,13 +1648,14 @@ struct ComputerUsePlannerRuntimeTests {
 
         let result = await runtime.run(command: "write hello")
 
-        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.failed)
-        #expect(result.message == "Text insertion was not confirmed.")
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(result.message == "done")
+        #expect(result.traceEvents.contains { $0.kind == "finish_warning" })
     }
 
-    @Test("later verified text write does not clear earlier pending write")
+    @Test("later verified text write does not block finish for earlier pending write")
     @MainActor
-    func laterVerifiedTextWriteDoesNotClearEarlierPendingWrite() async {
+    func laterVerifiedTextWriteDoesNotBlockFinishForEarlierPendingWrite() async {
         var observeCount = 0
         let runtime = ComputerUsePlannerRuntime(
             config: AppConfig(),
@@ -1388,9 +1692,8 @@ struct ComputerUsePlannerRuntimeTests {
                     #expect(request.priorOutcomes.last?.verificationStatus == .changed)
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
                 default:
-                    #expect(request.priorOutcomes.last?.status == "unverified_text")
-                    #expect(request.priorOutcomes.last?.message.contains("from step 1") == true)
-                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "First write was not confirmed."))
+                    Issue.record("unexpected planner step \(request.step)")
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Unexpected step."))
                 }
             },
             execute: { _, _ in .executed("Pasted text") }
@@ -1398,8 +1701,9 @@ struct ComputerUsePlannerRuntimeTests {
 
         let result = await runtime.run(command: "write two snippets")
 
-        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.failed)
-        #expect(result.message == "First write was not confirmed.")
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(result.message == "done")
+        #expect(result.traceEvents.contains { $0.kind == "finish_warning" && $0.body.contains("step 1") })
     }
 
     @Test("target mismatch blocks current-window mutation")
@@ -1424,14 +1728,14 @@ struct ComputerUsePlannerRuntimeTests {
                 case 1:
                     #expect(request.latestWindowState.targetMismatch?.requestedWindowID == 111)
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(
-                        tool: .clickPoint,
+                        tool: .click,
                         screenshotID: "s1",
                         x: 10,
                         y: 10
                     ))
                 case 2:
                     #expect(request.priorOutcomes.last?.status == "target_mismatch")
-                    #expect(request.priorOutcomes.last?.message.contains("Cannot run click_point") == true)
+                    #expect(request.priorOutcomes.last?.message.contains("Cannot run click") == true)
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Need matched window."))
                 default:
                     Issue.record("unexpected planner step \(request.step)")
@@ -1451,23 +1755,27 @@ struct ComputerUsePlannerRuntimeTests {
         #expect(executeCalls == 0)
     }
 
-    @Test("target mismatch blocks active browser mutation")
+    @Test("target mismatch allows app scoped browser mutation")
     @MainActor
-    func targetMismatchBlocksActiveBrowserMutation() async {
+    func targetMismatchAllowsAppScopedBrowserMutation() async {
         var executeCalls = 0
+        var observeCalls = 0
         let runtime = ComputerUsePlannerRuntime(
             config: AppConfig(),
             observe: { _, _, _ in
-                Self.observation(
+                observeCalls += 1
+                return Self.observation(
                     appName: "Chrome",
                     bundleID: "com.google.Chrome",
                     windowTitle: "Fallback",
                     screenshot: Self.screenshot(),
-                    targetMismatch: ComputerUseTargetMismatch(
-                        requestedWindowID: 111,
-                        actualWindowID: 222,
-                        message: "Requested window_id 111 could not be matched; this state fell back to focused window_id 222."
-                    )
+                    targetMismatch: observeCalls == 1
+                        ? ComputerUseTargetMismatch(
+                            requestedWindowID: 111,
+                            actualWindowID: 222,
+                            message: "Requested window_id 111 could not be matched; this state fell back to focused window_id 222."
+                        )
+                        : nil
                 )
             },
             plan: { request in
@@ -1480,9 +1788,9 @@ struct ComputerUsePlannerRuntimeTests {
                         url: "https://example.com"
                     ))
                 case 2:
-                    #expect(request.priorOutcomes.last?.status == "target_mismatch")
-                    #expect(request.priorOutcomes.last?.message.contains("Cannot run navigate_active_browser_tab") == true)
-                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Need matched browser window."))
+                    #expect(request.priorOutcomes.last?.tool == .navigateActiveBrowserTab)
+                    #expect(request.priorOutcomes.last?.status == "executed")
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "navigated"))
                 default:
                     Issue.record("unexpected planner step \(request.step)")
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Unexpected step."))
@@ -1496,9 +1804,9 @@ struct ComputerUsePlannerRuntimeTests {
 
         let result = await runtime.run(command: "open example")
 
-        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.failed)
-        #expect(result.message == "Need matched browser window.")
-        #expect(executeCalls == 0)
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(result.message == "navigated")
+        #expect(executeCalls == 1)
     }
 
     @Test("target mismatch blocks finish")
@@ -1569,14 +1877,9 @@ struct ComputerUsePlannerRuntimeTests {
                     #expect(outcome?.message.contains("AX did not expose newly confirmed requested text") == true)
                     #expect(outcome?.message.contains("Inspect the latest screenshot") == true)
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
-                case 4:
-                    #expect(request.priorOutcomes.last?.status == "unverified_text")
-                    #expect(request.priorOutcomes.last?.message.contains("Text write is unverified") == true)
-                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .recognizeScreenshotText, screenshotID: "after"))
                 default:
-                    #expect(request.latestWindowState.screenshotOCRText?.contains("Computer Use as the Future") == true)
-                    #expect(request.latestWindowState.screenshotOCRText?.contains("Computer use is becoming") == true)
-                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
+                    Issue.record("unexpected planner step \(request.step)")
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Unexpected step."))
                 }
             },
             execute: { _, _ in .executed("Pasted text") },
@@ -1588,6 +1891,7 @@ struct ComputerUsePlannerRuntimeTests {
         let result = await runtime.run(command: "write about computer use")
 
         #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(result.traceEvents.contains { $0.kind == "finish_warning" })
     }
 
     @Test("runtime exposes screenshot OCR text after OCR tool")
@@ -1671,9 +1975,9 @@ struct ComputerUsePlannerRuntimeTests {
         #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
     }
 
-    @Test("text action UI change without requested text blocks finish")
+    @Test("text action UI change without requested text allows planner finish")
     @MainActor
-    func textActionUIChangeWithoutRequestedTextBlocksFinish() async {
+    func textActionUIChangeWithoutRequestedTextAllowsPlannerFinish() async {
         var observeCount = 0
         let runtime = ComputerUsePlannerRuntime(
             config: AppConfig(),
@@ -1694,9 +1998,8 @@ struct ComputerUsePlannerRuntimeTests {
                     #expect(outcome?.message.contains("AX did not expose newly confirmed requested text") == true)
                     return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "done"))
                 default:
-                    #expect(request.priorOutcomes.last?.status == "unverified_text")
-                    #expect(request.priorOutcomes.last?.message.contains("Text write is unverified") == true)
-                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Text insertion was not confirmed."))
+                    Issue.record("unexpected planner step \(request.step)")
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Unexpected step."))
                 }
             },
             execute: { _, _ in .executed("Typed text") }
@@ -1704,8 +2007,9 @@ struct ComputerUsePlannerRuntimeTests {
 
         let result = await runtime.run(command: "write hello")
 
-        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.failed)
-        #expect(result.message == "Text insertion was not confirmed.")
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(result.message == "done")
+        #expect(result.traceEvents.contains { $0.kind == "finish_warning" })
     }
 
     @Test("changed action clears previous unchanged action counts")
@@ -1741,6 +2045,108 @@ struct ComputerUsePlannerRuntimeTests {
 
         #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
         #expect(observeCount == 4)
+    }
+
+    @Test("unchanged click feedback includes route and asks for different strategy")
+    @MainActor
+    func unchangedClickFeedbackIncludesRouteAndDifferentStrategy() async {
+        var observeCount = 0
+        let runtime = ComputerUsePlannerRuntime(
+            config: AppConfig(),
+            observe: { _, _, _ in
+                observeCount += 1
+                return Self.observation(
+                    stateID: "state-\(observeCount)",
+                    appName: "Google Chrome",
+                    bundleID: "com.google.Chrome",
+                    processID: 4321,
+                    windowID: 88,
+                    windowTitle: "YouTube",
+                    screenshot: Self.screenshot(id: "shot-\(observeCount)")
+                )
+            },
+            plan: { request in
+                switch request.step {
+                case 1:
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(
+                        tool: .clickPoint,
+                        processID: 4321,
+                        windowID: 88,
+                        screenshotID: "shot-1",
+                        label: "YouTube search result",
+                        x: 20,
+                        y: 20
+                    ))
+                case 2:
+                    let outcome = request.priorOutcomes.last
+                    #expect(outcome?.verificationStatus == .unchanged)
+                    #expect(outcome?.message.contains("window_point_skylight") == true)
+                    #expect(outcome?.message.contains("use click with a different visible target or addressing mode") == true)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "route feedback observed"))
+                default:
+                    Issue.record("unexpected planner step \(request.step)")
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Unexpected step."))
+                }
+            },
+            execute: { _, _ in
+                .executed("Clicked YouTube search result [route=window_point_skylight pid=4321 window_id=88 point=120,220 posted=true]", diagnostics: [
+                    "click_route": "window_point_skylight",
+                    "process_id": "4321",
+                    "window_id": "88",
+                ])
+            }
+        )
+
+        let result = await runtime.run(command: "play a YouTube result")
+
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(result.message == "route feedback observed")
+    }
+
+    @Test("screenshot unavailable state gives concrete fallback instead of blind observe loop")
+    @MainActor
+    func screenshotUnavailableStateGivesConcreteFallbackInsteadOfBlindObserveLoop() async {
+        let runtime = ComputerUsePlannerRuntime(
+            config: AppConfig(),
+            observe: { _, _, _ in
+                Self.observation(
+                    appName: "Google Chrome",
+                    bundleID: "com.google.Chrome",
+                    processID: 4321,
+                    windowID: 88,
+                    windowTitle: "",
+                    screenshot: nil,
+                    appInstructions: "Visual screenshot unavailable: Screen Recording permission is not granted to Muesli. Do not repeat get_window_state waiting for a screenshot; use available AX/browser tools if sufficient, or fail with a clear Screen Recording permission reason when visual interaction is required."
+                )
+            },
+            plan: { request in
+                switch request.step {
+                case 1:
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(
+                        tool: .getWindowState,
+                        appBundleID: "com.google.Chrome",
+                        processID: 4321,
+                        windowID: 88
+                    ))
+                case 2:
+                    let outcome = request.priorOutcomes.last
+                    #expect(outcome?.message.contains("Visual screenshot is unavailable") == true)
+                    #expect(outcome?.message.contains("screenshot-coordinate click cannot be planned") == true)
+                    #expect(outcome?.message.contains("Screen Recording") == true)
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Screen Recording permission is required for visual YouTube clicking."))
+                default:
+                    Issue.record("unexpected planner step \(request.step)")
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .fail, reason: "Unexpected step."))
+                }
+            },
+            execute: { _, _ in .executed("Captured target state without foreground activation request") }
+        )
+
+        let result = await runtime.run(command: "play a YouTube video")
+
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.failed)
+        #expect(result.message.contains("Screen Recording permission is required"))
+        #expect(result.traceEvents.contains { $0.kind == "observation" && $0.body.contains("screenshot unavailable") })
     }
 
     @Test("finish with incomplete language becomes failed")
@@ -1812,8 +2218,8 @@ struct ComputerUsePlannerRuntimeTests {
                 #expect(request.priorOutcomes.last?.tool == .pageGetText)
                 #expect(request.priorOutcomes.last?.status == "failed")
                 #expect(request.priorOutcomes.last?.message.contains("Continue with get_window_state and visual screenshot actions") == true)
-                #expect(request.priorOutcomes.last?.message.contains("prefer click_point on visible targets") == true)
-                #expect(request.priorOutcomes.last?.message.contains("avoid repeated focus_element/activate_focused cycles") == true)
+                #expect(request.priorOutcomes.last?.message.contains("use click on reliable AX candidates or visible screenshot targets") == true)
+                #expect(request.priorOutcomes.last?.message.contains("avoid repeated focus cycles") == true)
                 return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "used screen fallback"))
             },
             execute: { toolCall, _ in
@@ -1826,6 +2232,56 @@ struct ComputerUsePlannerRuntimeTests {
 
         #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
         #expect(result.message == "used screen fallback")
+        #expect(observeCount == 2)
+        #expect(result.traceEvents.contains { $0.title == "Screen fallback" })
+    }
+
+    @Test("stale element window id refreshes state instead of failing task")
+    @MainActor
+    func staleElementWindowIDRefreshesStateInsteadOfFailingTask() async {
+        var observeCount = 0
+        let runtime = ComputerUsePlannerRuntime(
+            config: AppConfig(),
+            observe: { _, _, _ in
+                observeCount += 1
+                return Self.observation(
+                    appName: "Google Chrome",
+                    bundleID: "com.google.Chrome",
+                    processID: 40712,
+                    windowID: 93784,
+                    windowTitle: "YouTube",
+                    screenshot: Self.screenshot(),
+                    elementValue: "Twitter/X tab labeled pHequals7"
+                )
+            },
+            plan: { request in
+                if request.step == 1 {
+                    return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(
+                        tool: .clickElement,
+                        appBundleID: "com.google.Chrome",
+                        processID: 40712,
+                        windowID: 93784,
+                        elementID: "e1",
+                        elementIndex: 1,
+                        label: "Twitter/X tab labeled pHequals7"
+                    ))
+                }
+                #expect(request.priorOutcomes.last?.tool == .clickElement)
+                #expect(request.priorOutcomes.last?.status == "failed")
+                #expect(request.priorOutcomes.last?.message.contains("identity as stale") == true)
+                #expect(request.priorOutcomes.last?.message.contains("Do not reuse the stale") == true)
+                return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "refreshed and retried"))
+            },
+            execute: { toolCall, _ in
+                #expect(toolCall.tool == .clickElement)
+                return .failed("Stale window_id 93784; element target is in window_id 93801. Refresh state before using this element.")
+            }
+        )
+
+        let result = await runtime.run(command: "switch Twitter profile")
+
+        #expect(result.status == ComputerUsePlannerRuntimeResult.Status.done)
+        #expect(result.message == "refreshed and retried")
         #expect(observeCount == 2)
         #expect(result.traceEvents.contains { $0.title == "Screen fallback" })
     }
@@ -1921,8 +2377,8 @@ struct ComputerUsePlannerRuntimeTests {
                 }
                 #expect(request.priorOutcomes.last?.tool == .typeText)
                 #expect(request.priorOutcomes.last?.status == "failed")
-                #expect(request.priorOutcomes.last?.message.contains("process_id, window_id, and element_index") == true)
-                #expect(request.priorOutcomes.last?.message.contains("Prefer type_text for browser editors") == true)
+                #expect(request.priorOutcomes.last?.message.contains("fresh screenshot/state") == true)
+                #expect(request.priorOutcomes.last?.message.contains("use click to place the caret") == true)
                 return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "focused fallback available"))
             },
             execute: { toolCall, _ in
@@ -1963,13 +2419,13 @@ struct ComputerUsePlannerRuntimeTests {
                 }
                 #expect(request.priorOutcomes.last?.tool == .pasteText)
                 #expect(request.priorOutcomes.last?.status == "failed")
-                #expect(request.priorOutcomes.last?.message.contains("process_id, window_id, and element_index") == true)
-                #expect(request.priorOutcomes.last?.message.contains("paste_text for Apple Notes") == true)
+                #expect(request.priorOutcomes.last?.message.contains("fresh screenshot/state") == true)
+                #expect(request.priorOutcomes.last?.message.contains("same failed target") == true)
                 return ComputerUsePlannerResponse(toolCall: ComputerUseToolCall(tool: .finish, reason: "focused fallback available"))
             },
             execute: { toolCall, _ in
                 #expect(toolCall.tool == .pasteText)
-                return .failed("Focused element no longer matches requested text target. Refresh state before using paste_text.")
+                return .failed("Focus moved within the target process, but not to the intended element. Refresh state before typing.")
             }
         )
 
@@ -2062,16 +2518,21 @@ struct ComputerUsePlannerRuntimeTests {
         stateID: String = ComputerUseObservation.newStateID(),
         appName: String = "Test",
         bundleID: String = "com.example.Test",
+        processID: Int? = nil,
+        windowID: Int? = nil,
         windowTitle: String = "Window",
         screenshot: ComputerUseScreenshotObservation? = nil,
         focusedValue: String = "",
         elementValue: String = "",
+        appInstructions: String? = nil,
         targetMismatch: ComputerUseTargetMismatch? = nil
     ) -> ComputerUseObservation {
         ComputerUseObservation(
             stateID: stateID,
             appName: appName,
             bundleID: bundleID,
+            processID: processID,
+            windowID: windowID,
             windowTitle: windowTitle,
             windowFrame: nil,
             screenshot: screenshot,
@@ -2084,6 +2545,7 @@ struct ComputerUsePlannerRuntimeTests {
                 frame: nil,
                 processID: nil
             ),
+            appInstructions: appInstructions,
             targetMismatch: targetMismatch,
             elements: [
                 ComputerUseObservationCapture.candidateForTests(

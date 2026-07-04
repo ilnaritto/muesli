@@ -226,6 +226,44 @@ struct IndicatorFrameSizeTests {
         #expect(size.width <= 860)
         #expect(size.height >= 44)
     }
+
+    @Test("CUA result pill wraps model final explanations")
+    @MainActor
+    func computerUseResultPillWrapsModelFinalExplanations() {
+        let short = FloatingIndicatorController.computerUseResultPillSizeForTesting(
+            message: "Could not complete the task.",
+            screenWidth: 1200
+        )
+        let long = FloatingIndicatorController.computerUseResultPillSizeForTesting(
+            message: "I could not complete the task because the target page asked for account verification before allowing the post composer to open. I did not continue because posting would require a user decision.",
+            screenWidth: 420
+        )
+
+        #expect(short.width >= 300)
+        #expect(short.height >= 44)
+        #expect(long.width <= 372)
+        #expect(long.height > short.height)
+    }
+
+    @Test("CUA terminal status pill does not collapse iconless messages")
+    @MainActor
+    func computerUseTerminalStatusPillDoesNotCollapseIconlessMessages() {
+        let done = FloatingIndicatorController.computerUseResultPillSizeForTesting(
+            message: "Done",
+            icon: "",
+            screenWidth: 1200
+        )
+        let cancelled = FloatingIndicatorController.computerUseResultPillSizeForTesting(
+            message: "Cancelled by user",
+            icon: "",
+            screenWidth: 1200
+        )
+
+        #expect(done.width >= 120)
+        #expect(done.height >= 44)
+        #expect(cancelled.width >= done.width)
+        #expect(cancelled.height >= 44)
+    }
 }
 
 // MARK: - OpenAI Logo Shape

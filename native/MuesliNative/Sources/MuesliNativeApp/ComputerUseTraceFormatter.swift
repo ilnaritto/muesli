@@ -55,9 +55,11 @@ enum ComputerUseTraceFormatter {
         case "done":
             return "done"
         case "timed_out", "timedout":
-            return "timed_out"
+            return "safety_limit"
         case "failed", "fail":
             return "failed"
+        case "no_progress", "noprogress":
+            return "no_progress"
         case "confirm", "needsconfirmation", "needs_confirmation":
             return "confirm"
         case "cancelled", "canceled":

@@ -432,6 +432,7 @@ enum ComputerUseObservationCapture {
         }
 
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        ComputerUseAccessibilityKeepAlive.assertForSnapshot(processID: app.processIdentifier, root: axApp)
         let targetWindowFrame = targetWindowFrame(for: target, app: app)
         let matchedTargetWindow = targetWindow(in: axApp, targetFrame: targetWindowFrame)
         let window = matchedTargetWindow ?? focusedWindow(in: axApp)
@@ -439,7 +440,7 @@ enum ComputerUseObservationCapture {
         let windowTitle = window.map { axString($0, kAXTitleAttribute) } ?? ""
         let windowFrame = window.flatMap(rect) ?? targetWindowFrame
         let resolvedTargetWindowID = matchedTargetWindow == nil ? nil : target?.windowID
-        let windowID = resolvedTargetWindowID ?? matchedWindowID(for: app, frame: windowFrame)
+        let windowID = resolvedTargetWindowID ?? window.flatMap(axWindowID) ?? matchedWindowID(for: app, frame: windowFrame)
         let screenshot = includeScreenshot ? captureScreenshot(for: app, targetWindowID: windowID, fallbackFrame: windowFrame) : nil
         registry.registerScreenshot(screenshot)
         let focusedElementSnapshot = focusedElementSnapshot(requiredPID: app.processIdentifier)
@@ -466,6 +467,7 @@ enum ComputerUseObservationCapture {
         let appInstructions = combinedAppInstructions([
             baseAppInstructions,
             targetMismatch?.message,
+            screenshotUnavailableInstruction(includeScreenshot: includeScreenshot, screenshot: screenshot),
         ])
 
         var candidates: [ComputerUseElementCandidate] = []
@@ -505,6 +507,17 @@ enum ComputerUseObservationCapture {
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
         return combined.isEmpty ? nil : combined
+    }
+
+    private static func screenshotUnavailableInstruction(
+        includeScreenshot: Bool,
+        screenshot: ComputerUseScreenshotObservation?
+    ) -> String? {
+        guard includeScreenshot, screenshot == nil else { return nil }
+        if !CGPreflightScreenCaptureAccess() {
+            return "Visual screenshot unavailable: Screen Recording permission is not granted to Muesli. Do not repeat get_window_state waiting for a screenshot; use available AX/browser tools if sufficient, or fail with a clear Screen Recording permission reason when visual interaction is required."
+        }
+        return "Visual screenshot unavailable: Muesli could not capture a usable target window/display image. Do not repeat get_window_state waiting for a screenshot; refresh the target window only if it changed, otherwise use available AX/browser tools or fail with a clear visual capture reason."
     }
 
     nonisolated static func candidateForTests(
@@ -812,7 +825,7 @@ enum ComputerUseObservationCapture {
     }
 
     private static func matchedWindowID(for app: NSRunningApplication, frame: CGRect?) -> Int? {
-        let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[CFString: Any]] ?? []
+        let windowList = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[CFString: Any]] ?? []
         let appWindows = windowList.filter { dict in
             guard let ownerPID = dict[kCGWindowOwnerPID] as? Int32, ownerPID == app.processIdentifier else { return false }
             guard let layer = dict[kCGWindowLayer] as? Int, layer == 0 else { return false }
@@ -820,6 +833,14 @@ enum ComputerUseObservationCapture {
         }
         let match = preferredScreenshotWindow(from: appWindows, fallbackFrame: frame)
         return match?[kCGWindowNumber] as? Int
+    }
+
+    private static func axWindowID(_ element: AXUIElement) -> Int? {
+        var windowID = CGWindowID(0)
+        guard AXWindowIDResolver.getWindowID(element, &windowID), windowID > 0 else {
+            return nil
+        }
+        return Int(windowID)
     }
 
     private static func screenshotObservation(image: CGImage, frame: CGRect) -> ComputerUseScreenshotObservation {
@@ -929,7 +950,7 @@ enum ComputerUseAppInstructionProvider {
     static func instructions(for bundleID: String, appName: String) -> String? {
         var hints: [String] = []
         if isBrowser(bundleID: bundleID, appName: appName) {
-            hints.append("Browser hint: for a new web task, open a fresh tab with command+t, then use navigate_url on the active tab without tab indexes. Use tab listing only when continuing or finding an existing tab. If DOM/page tools fail or return nothing, continue with AX, screenshot, keyboard, and mouse control.")
+            hints.append("Browser hint: for a new web task, open a fresh tab, then use navigate_active_browser_tab on the active tab. For existing pages, continue with get_window_state plus visual click, keyboard, text, and scroll actions.")
         }
         if isNativeRichTextApp(bundleID: bundleID, appName: appName) {
             hints.append("Native rich-text hint: focus the editable title/body before insertion, prefer paste_text for multi-word text, and verify the focused value or visible AX text changed before proceeding.")

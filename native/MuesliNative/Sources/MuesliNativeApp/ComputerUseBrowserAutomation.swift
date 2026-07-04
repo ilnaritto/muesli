@@ -1,7 +1,15 @@
+import AppKit
+import ApplicationServices
 import Foundation
 
 enum ComputerUseBrowserAutomation {
     static var runAppleScriptForTests: ((String) throws -> String)?
+    static var runBackgroundCommandForTests: ((BackgroundBrowserCommand) async -> ComputerUseExecutionResult)?
+
+    enum BackgroundBrowserCommand: Equatable {
+        case openNewTab(processID: Int, windowID: Int?)
+        case navigate(url: String, processID: Int, windowID: Int?)
+    }
 
     static func listTabs(appBundleID: String) async -> ComputerUseExecutionResult {
         guard supportsBrowser(appBundleID) else {
@@ -38,20 +46,32 @@ enum ComputerUseBrowserAutomation {
         }
     }
 
-    static func activateTab(appBundleID: String, windowIndex: Int, tabIndex: Int) async -> ComputerUseExecutionResult {
+    static func activateTab(appBundleID: String, windowIndex: Int, tabIndex: Int, allowActivation: Bool = true) async -> ComputerUseExecutionResult {
         guard supportsBrowser(appBundleID) else {
             return .unsupported("Browser tools currently support Google Chrome only")
         }
+        let activationLine = allowActivation ? "  activate\n" : ""
+        let windowOrderingLine = allowActivation ? "  set index of window \(max(1, windowIndex)) to 1\n" : ""
         let script = """
         tell application id "\(appleScriptString(appBundleID))"
-          activate
+        \(activationLine)\
           set active tab index of window \(max(1, windowIndex)) to \(max(1, tabIndex))
-          set index of window \(max(1, windowIndex)) to 1
+        \(windowOrderingLine)\
         end tell
         """
         do {
             _ = try await runAppleScript(script)
-            return .executed("Activated browser tab \(windowIndex):\(tabIndex)")
+            return .executed(
+                "Activated browser tab \(windowIndex):\(tabIndex)",
+                transaction: browserTransaction(
+                    path: "browser_applescript_activate_tab",
+                    posted: true,
+                    effect: .unverifiable,
+                    processID: nil,
+                    windowID: nil,
+                    warning: "AppleScript accepted tab activation, but this does not prove the page is ready."
+                )
+            )
         } catch is CancellationError {
             return .cancelled()
         } catch {
@@ -59,25 +79,61 @@ enum ComputerUseBrowserAutomation {
         }
     }
 
-    static func openNewTab(appBundleID: String) async -> ComputerUseExecutionResult {
+    static func openNewTab(
+        appBundleID: String,
+        allowActivation: Bool = true,
+        processID: pid_t? = nil,
+        windowID: CGWindowID? = nil
+    ) async -> ComputerUseExecutionResult {
         guard supportsBrowser(appBundleID) else {
             return .unsupported("Browser tools currently support Google Chrome only")
         }
+        if !allowActivation {
+            guard let processID, processID > 0 else {
+                return .needsConfirmation("Quiet new-tab creation requires process_id and window_id from the latest browser window state. Launch the browser, capture get_window_state, then call open_new_browser_tab with that target.")
+            }
+            guard let windowID, windowID > 0 else {
+                return .needsConfirmation("Quiet new-tab creation requires a nonzero window_id from the latest browser window state. Refresh get_window_state for the browser before opening a tab.")
+            }
+            if let runBackgroundCommandForTests {
+                return await runBackgroundCommandForTests(.openNewTab(processID: Int(processID), windowID: Int(windowID)))
+            }
+            return await openNewTabInBackground(processID: processID, windowID: windowID)
+        }
+        let activationLine = allowActivation ? "  activate\n" : ""
+        let windowReference = allowActivation ? "front window" : "window 1"
+        let emptyWindowAction = allowActivation
+            ? "make new window"
+            : "return \"No browser window is available for quiet new-tab creation\""
+        let windowOrderingLine = allowActivation ? "    set index of front window to 1\n" : ""
         let script = """
         tell application id "\(appleScriptString(appBundleID))"
-          activate
+        \(activationLine)\
           if (count of windows) is 0 then
-            make new window
+            \(emptyWindowAction)
           else
-            set index of front window to 1
-            tell front window to make new tab
-            set active tab index of front window to (count of tabs of front window)
+        \(windowOrderingLine)\
+            tell \(windowReference) to make new tab
+            set active tab index of \(windowReference) to (count of tabs of \(windowReference))
           end if
         end tell
         """
         do {
-            _ = try await runAppleScript(script)
-            return .executed("Opened new browser tab")
+            let output = try await runAppleScript(script)
+            if output.contains("No browser window is available") {
+                return .needsConfirmation("Opening a new browser window requires direct app control.")
+            }
+            return .executed(
+                "Opened new browser tab",
+                transaction: browserTransaction(
+                    path: "browser_applescript_new_tab",
+                    posted: true,
+                    effect: .unverifiable,
+                    processID: nil,
+                    windowID: nil,
+                    warning: "AppleScript accepted new-tab creation, but this does not prove the tab is ready."
+                )
+            )
         } catch is CancellationError {
             return .cancelled()
         } catch {
@@ -85,23 +141,58 @@ enum ComputerUseBrowserAutomation {
         }
     }
 
-    static func navigate(appBundleID: String, windowIndex: Int?, tabIndex: Int?, url: String) async -> ComputerUseExecutionResult {
+    static func navigate(
+        appBundleID: String,
+        windowIndex: Int?,
+        tabIndex: Int?,
+        url: String,
+        allowActivation: Bool = true,
+        processID: pid_t? = nil,
+        windowID: CGWindowID? = nil
+    ) async -> ComputerUseExecutionResult {
         guard supportsBrowser(appBundleID) else {
             return .unsupported("Browser tools currently support Google Chrome only")
         }
         guard let safeURL = ComputerUseToolInvocation.safeHTTPURL(url) else {
             return .needsConfirmation("Confirm: unsafe navigation URL")
         }
+        if !allowActivation {
+            guard let processID, processID > 0 else {
+                return .needsConfirmation("Quiet browser navigation requires process_id and window_id from the latest browser window state. Launch the browser, capture get_window_state, then route navigation to that target.")
+            }
+            guard let windowID, windowID > 0 else {
+                return .needsConfirmation("Quiet browser navigation requires a nonzero window_id from the latest browser window state. Refresh get_window_state for the browser before navigating.")
+            }
+            if let runBackgroundCommandForTests {
+                return await runBackgroundCommandForTests(.navigate(url: safeURL.absoluteString, processID: Int(processID), windowID: Int(windowID)))
+            }
+            return await navigateInBackground(url: safeURL.absoluteString, processID: processID, windowID: windowID)
+        }
         let script = navigateScript(
             appBundleID: appBundleID,
             windowIndex: windowIndex,
             tabIndex: tabIndex,
-            url: safeURL.absoluteString
+            url: safeURL.absoluteString,
+            allowActivation: allowActivation
         )
         do {
             let output = try await runAppleScript(script)
+            if output.contains("No browser window is available") {
+                return .needsConfirmation("Opening a browser window requires direct app control.")
+            }
             let suffix = output.isEmpty ? "" : " (\(output))"
-            return .executed("Navigated to \(safeURL.absoluteString)\(suffix)")
+            return .executed(
+                "Navigated to \(safeURL.absoluteString)\(suffix)",
+                transaction: browserTransaction(
+                    path: "browser_applescript_navigate",
+                    posted: true,
+                    effect: .unverifiable,
+                    processID: nil,
+                    windowID: nil,
+                    requestedURL: safeURL.absoluteString,
+                    warning: "AppleScript accepted navigation, but this does not prove the page loaded or became usable."
+                )
+            )
         } catch is CancellationError {
             return .cancelled()
         } catch {
@@ -109,15 +200,202 @@ enum ComputerUseBrowserAutomation {
         }
     }
 
-    static func navigateScript(appBundleID: String, windowIndex: Int?, tabIndex: Int?, url: String) -> String {
+    private static func openNewTabInBackground(processID: pid_t, windowID: CGWindowID?) async -> ComputerUseExecutionResult {
+        let priorFrontmost = NSWorkspace.shared.frontmostApplication
+        if let windowID {
+            _ = ComputerUseBackgroundDriver.focusWithoutRaise(processID: processID, windowID: windowID)
+        }
+        guard postKey("t", modifiers: .maskCommand, processID: processID, attachAuthMessage: false) else {
+            return .failed(
+                "Could not post background Cmd-T to browser process \(processID).",
+                transaction: browserTransaction(
+                    path: "browser_background_cmd_t",
+                    posted: false,
+                    effect: .blocked,
+                    processID: Int(processID),
+                    windowID: windowID.map(Int.init),
+                    warning: "Cmd-T was not posted to the browser process."
+                )
+            )
+        }
+        restoreFrontmost(priorFrontmost, targetProcessID: processID)
+        do {
+            try await Task.sleep(nanoseconds: 300_000_000)
+        } catch is CancellationError {
+            return .cancelled()
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+        return .executed(
+            "Opened new browser tab in target window",
+            transaction: browserTransaction(
+                path: "browser_background_cmd_t",
+                posted: true,
+                effect: .unverifiable,
+                processID: Int(processID),
+                windowID: windowID.map(Int.init),
+                warning: "Cmd-T was posted, but this does not prove the new tab is ready."
+            )
+        )
+    }
+
+    private static func navigateInBackground(url: String, processID: pid_t, windowID: CGWindowID?) async -> ComputerUseExecutionResult {
+        let priorFrontmost = NSWorkspace.shared.frontmostApplication
+        if let windowID {
+            _ = ComputerUseBackgroundDriver.focusWithoutRaise(processID: processID, windowID: windowID)
+        }
+        guard postKey("l", modifiers: .maskCommand, processID: processID, attachAuthMessage: false) else {
+            return .failed(
+                "Could not post background Cmd-L to browser process \(processID).",
+                transaction: browserTransaction(
+                    path: "browser_background_cmd_l_paste_enter",
+                    posted: false,
+                    effect: .blocked,
+                    processID: Int(processID),
+                    windowID: windowID.map(Int.init),
+                    requestedURL: url,
+                    warning: "Cmd-L was not posted to the browser process."
+                )
+            )
+        }
+        restoreFrontmost(priorFrontmost, targetProcessID: processID)
+        do {
+            try await Task.sleep(nanoseconds: 120_000_000)
+        } catch is CancellationError {
+            return .cancelled()
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+        if let windowID {
+            _ = ComputerUseBackgroundDriver.focusWithoutRaise(processID: processID, windowID: windowID)
+        }
+        PasteController.paste(text: url, processID: processID)
+        restoreFrontmost(priorFrontmost, targetProcessID: processID)
+        do {
+            try await Task.sleep(nanoseconds: 250_000_000)
+        } catch is CancellationError {
+            return .cancelled()
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+        if let windowID {
+            _ = ComputerUseBackgroundDriver.focusWithoutRaise(processID: processID, windowID: windowID)
+        }
+        guard postKey("enter", processID: processID) else {
+            return .failed(
+                "Could not post background Enter to browser process \(processID).",
+                transaction: browserTransaction(
+                    path: "browser_background_cmd_l_paste_enter",
+                    posted: false,
+                    effect: .blocked,
+                    processID: Int(processID),
+                    windowID: windowID.map(Int.init),
+                    requestedURL: url,
+                    warning: "Enter was not posted to the browser process."
+                )
+            )
+        }
+        restoreFrontmost(priorFrontmost, targetProcessID: processID)
+        do {
+            try await Task.sleep(nanoseconds: 700_000_000)
+        } catch is CancellationError {
+            return .cancelled()
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+        return .executed(
+            "Navigated target browser tab to \(url)",
+            transaction: browserTransaction(
+                path: "browser_background_cmd_l_paste_enter",
+                posted: true,
+                effect: .unverifiable,
+                processID: Int(processID),
+                windowID: windowID.map(Int.init),
+                requestedURL: url,
+                warning: "Navigation keystrokes were posted, but this does not prove the page loaded or became usable."
+            )
+        )
+    }
+
+    private static func browserTransaction(
+        path: String,
+        posted: Bool,
+        effect: ComputerUseActionEffect,
+        processID: Int?,
+        windowID: Int?,
+        requestedURL: String? = nil,
+        warning: String
+    ) -> ComputerUseActionTransaction {
+        ComputerUseActionTransaction(
+            path: path,
+            posted: posted,
+            verified: false,
+            effect: effect,
+            targetStable: true,
+            processID: processID,
+            windowID: windowID,
+            requestedURL: requestedURL,
+            escalationHint: "Use the post-action get_window_state/screenshot to verify the tab URL, page load, and available controls before continuing or finishing.",
+            warning: warning
+        )
+    }
+
+    private static func restoreFrontmost(_ priorFrontmost: NSRunningApplication?, targetProcessID: pid_t) {
+        guard let priorFrontmost,
+              !priorFrontmost.isTerminated,
+              priorFrontmost.processIdentifier != targetProcessID
+        else { return }
+        priorFrontmost.activate(options: [])
+    }
+
+    private static func postKey(
+        _ key: String,
+        modifiers: CGEventFlags = [],
+        processID: pid_t,
+        attachAuthMessage: Bool = true
+    ) -> Bool {
+        guard let keyCode = browserKeyCode(for: key),
+              let source = CGEventSource(stateID: .combinedSessionState),
+              let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
+        else { return false }
+        down.flags = modifiers
+        up.flags = modifiers
+        let postedDown = ComputerUseBackgroundDriver.postKeyEvent(
+            down,
+            to: processID,
+            attachAuthMessage: attachAuthMessage
+        )
+        let postedUp = ComputerUseBackgroundDriver.postKeyEvent(
+            up,
+            to: processID,
+            attachAuthMessage: attachAuthMessage
+        )
+        return postedDown && postedUp
+    }
+
+    private static func browserKeyCode(for key: String) -> CGKeyCode? {
+        switch key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "t": return 17
+        case "l": return 37
+        case "enter", "return": return 36
+        default: return nil
+        }
+    }
+
+    static func navigateScript(appBundleID: String, windowIndex: Int?, tabIndex: Int?, url: String, allowActivation: Bool = true) -> String {
         let requestedWindow = max(1, windowIndex ?? 1)
         let requestedTab = max(1, tabIndex ?? 1)
         let hasWindowHint = windowIndex != nil
         let hasTabHint = tabIndex != nil
+        let activationLine = allowActivation ? "  activate\n" : ""
+        let emptyWindowAction = allowActivation
+            ? "make new window"
+            : "return \"No browser window is available for quiet navigation\""
         return """
         tell application id "\(appleScriptString(appBundleID))"
-          activate
-          if (count of windows) is 0 then make new window
+        \(activationLine)\
+          if (count of windows) is 0 then \(emptyWindowAction)
           set targetWindow to front window
           set usedFallback to false
           if \(appleScriptBool(hasWindowHint)) then

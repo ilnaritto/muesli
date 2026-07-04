@@ -330,6 +330,7 @@ final class MuesliController: NSObject {
     private var computerUseLastFloatingStatus = ""
     private var computerUseTranscriptVisible = false
     private var computerUseTranscriptDwellUntil = Date.distantPast
+    private var lastComputerUseScreenRecordingPromptAt = Date.distantPast
     private let computerUseFloatingStatusMinimumDwell: TimeInterval = 0.85
     private var _streamingDictationController: Any?  // StreamingDictationController (macOS 15+)
     private var isNemotron35Streaming = false
@@ -1002,6 +1003,7 @@ final class MuesliController: NSObject {
         config.hotkeyTriggerThresholdMS = HotkeyTriggerTiming.clampedMilliseconds(config.hotkeyTriggerThresholdMS)
         config.computerUseHotkeyTriggerThresholdMS = HotkeyTriggerTiming.clampedMilliseconds(config.computerUseHotkeyTriggerThresholdMS)
         config.meetingRecordingHotkeyTriggerThresholdMS = HotkeyTriggerTiming.clampedMilliseconds(config.meetingRecordingHotkeyTriggerThresholdMS)
+        config.computerUseTimeoutSeconds = AppConfig.clampedComputerUseSafetyLimitSeconds(config.computerUseTimeoutSeconds)
         let hotkeyTriggerThresholdChanged = config.hotkeyTriggerThresholdMS != previousHotkeyTriggerThresholdMS
             || config.computerUseHotkeyTriggerThresholdMS != previousComputerUseHotkeyTriggerThresholdMS
             || config.meetingRecordingHotkeyTriggerThresholdMS != previousMeetingRecordingHotkeyTriggerThresholdMS
@@ -6085,6 +6087,7 @@ final class MuesliController: NSObject {
 
     private func handleComputerUsePrepare() {
         guard canPrepareComputerUseCommand else { return }
+        guard ensureComputerUseScreenRecordingPermission() else { return }
         fputs("[cua] prepare\n", stderr)
         computerUseCommandPreparedAt = Date()
         if computerUseLatencyTraceID == nil {
@@ -6099,6 +6102,11 @@ final class MuesliController: NSObject {
 
     private func handleComputerUseStart() {
         guard canStartComputerUseCommand else { return }
+        guard ensureComputerUseScreenRecordingPermission() else {
+            computerUseHotkeyMonitor.cancelToggleMode()
+            indicator.isToggleDictation = false
+            return
+        }
         fputs("[cua] recording start\n", stderr)
         let now = Date()
         computerUseCommandPreparedAt = computerUseCommandPreparedAt ?? now
@@ -6119,6 +6127,11 @@ final class MuesliController: NSObject {
     private func handleComputerUseToggleStart() {
         guard canStartComputerUseCommand else {
             computerUseHotkeyMonitor.cancelToggleMode()
+            return
+        }
+        guard ensureComputerUseScreenRecordingPermission() else {
+            computerUseHotkeyMonitor.cancelToggleMode()
+            indicator.isToggleDictation = false
             return
         }
         fputs("[cua] toggle command start\n", stderr)
@@ -6151,7 +6164,7 @@ final class MuesliController: NSObject {
         resetComputerUseFloatingStatus()
         setState(.idle)
         if hadInFlightCommand {
-            indicator.showWarning("CUA cancelled", icon: "!")
+            indicator.showComputerUseResultMessage("CUA cancelled", icon: "!", duration: 3.0)
         }
         meetingMonitor.resumeAfterCooldown()
     }
@@ -6299,6 +6312,35 @@ final class MuesliController: NSObject {
             && computerUseCommandStartedAt == nil
             && !isNemotron35Streaming
             && (dictationState == .idle || dictationState == .preparing)
+    }
+
+    private func ensureComputerUseScreenRecordingPermission() -> Bool {
+        let permissions = ComputerUsePermissionSnapshot(
+            screenRecording: CGPreflightScreenCaptureAccess()
+        )
+        guard ComputerUsePermissionGate.canStartComputerUse(permissions) else {
+            let message = ComputerUsePermissionGate.missingPermissionMessage(permissions)
+                ?? "Screen Recording required for Computer Use"
+            fputs("[cua] blocked start: \(message)\n", stderr)
+            setState(.idle)
+            indicator.showWarning(message, icon: "!", duration: 4.0)
+            promptForComputerUseScreenRecordingPermission()
+            return false
+        }
+        return true
+    }
+
+    private func promptForComputerUseScreenRecordingPermission() {
+        let now = Date()
+        guard now.timeIntervalSince(lastComputerUseScreenRecordingPromptAt) > 3 else { return }
+        lastComputerUseScreenRecordingPromptAt = now
+        _ = CGRequestScreenCaptureAccess()
+        openComputerUseScreenRecordingPrivacyPane()
+    }
+
+    private func openComputerUseScreenRecordingPrivacyPane() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     @MainActor
@@ -6565,6 +6607,8 @@ final class MuesliController: NSObject {
             return "confirm"
         case .failed:
             return "failed"
+        case .noProgress:
+            return "no_progress"
         case .cancelled:
             return "cancelled"
         }
@@ -6573,32 +6617,47 @@ final class MuesliController: NSObject {
     private func presentComputerUseRuntimeResult(_ result: ComputerUsePlannerRuntimeResult) {
         setState(.idle)
         let message: String
-        let floatingMessage: String
+        let floatingMessage: String?
+        let detailedFloatingMessage: String?
         let icon: String
         switch result.status {
         case .done:
             message = result.message.hasPrefix("Done") ? result.message : "Done: \(result.message)"
-            floatingMessage = "Done"
+            floatingMessage = nil
+            detailedFloatingMessage = message
             icon = ""
         case .timedOut:
             message = result.message
-            floatingMessage = "Timed out"
+            floatingMessage = nil
+            detailedFloatingMessage = result.message
             icon = "!"
         case .needsConfirmation:
             message = result.message.hasPrefix("Confirm") ? result.message : "Confirm: \(result.message)"
-            floatingMessage = "Confirm"
+            floatingMessage = nil
+            detailedFloatingMessage = message
             icon = "!"
         case .failed:
             message = result.message
-            floatingMessage = "Failed"
+            floatingMessage = nil
+            detailedFloatingMessage = result.message
+            icon = "!"
+        case .noProgress:
+            message = result.message
+            floatingMessage = nil
+            detailedFloatingMessage = result.message
             icon = "!"
         case .cancelled:
             message = result.message
-            floatingMessage = "Cancelled"
+            floatingMessage = nil
+            detailedFloatingMessage = message
             icon = ""
         }
         statusBarController?.setStatus(message)
-        indicator.showWarning(floatingMessage, icon: icon, duration: 3.0)
+        if let detailedFloatingMessage {
+            indicator.showComputerUseResultMessage(detailedFloatingMessage, icon: icon, duration: 5.0)
+        } else if let floatingMessage {
+            indicator.showWarning(floatingMessage, icon: icon, duration: 3.0)
+        }
     }
 
     /// Streaming RNNT dictation backend (handsfree live text at cursor).

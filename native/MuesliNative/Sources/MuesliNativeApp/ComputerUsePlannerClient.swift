@@ -39,37 +39,42 @@ enum ComputerUsePlannerClient {
     \(interactionModeInstructions(for: config.computerUseInteractionMode))
 
     Rules:
+    - Use a Look -> Act -> Verify loop: inspect the current app/window state, take one concrete action, then inspect the post-action state before deciding whether to continue, finish, or fail. Computer use is an action loop, not an indefinite observation loop.
     - Only use element_index or element_id values present in latest_window_state. Element references expire after each new get_app_state/get_window_state or refreshed state. They are snapshot addresses, not persistent focus handles.
-    - Tools have two execution contracts. Scoped tools accept target identity such as process_id, window_id, element_index/element_id, or screenshot_id and Muesli refuses the action if the live target no longer matches. Ambient tools act on current app/focus and say so in their schema; use them only after you intentionally established current focus.
+    - Every tool description includes an execution_contract. Work quietly means non-disruptive execution: the user should be able to keep using their current app while Muesli operates on a target app/window. Prefer tools that take process_id/window_id from the latest target snapshot; Muesli can use pid/window-routed input and focus-without-raise for those actions.
+    - Prefer background_capable, app_scoped_background_capable, safe_read_only, and scoped_window_action tools before foreground_required tools. In Work quietly mode, use foreground_required tools only when no background-capable or scoped alternative can accomplish the requested task.
+    - Scoped tools accept target identity such as process_id, window_id, element_index/element_id, or screenshot_id and Muesli refuses the action if the live target no longer matches. Ambient tools act on current app/focus and say so in their schema; use them only after you intentionally established current focus.
+    - Use the click tool for all click-like intent. You may address the target by element_index/element_id when an AX candidate clearly matches the visible target, or by screenshot_id plus x/y when the target is visual/canvas-like. Do not choose AXPress versus point routing yourself; Muesli's driver chooses and reports the concrete route.
     - Never invent AppleScript, shell commands, code, URLs, or tools.
     - For app launch/navigation, use launch_app with the requested app name or app bundle id. Do not substitute another app because it is frontmost, visible, or present in examples.
     - After launch_app, Muesli will refresh the requested app's state automatically. If the next state is not the requested app, call get_window_state or get_app_state for that app before using fail.
+    - In Work quietly mode, browser mutation is target-scoped too: launch the browser if needed, call get_window_state for the browser, then call open_new_browser_tab and navigate_active_browser_tab with process_id/window_id from that target state. Do not call quiet browser mutation tools without process_id/window_id.
     - Use get_window_state as the canonical observe step once you have process_id/window_id for the target. Include those IDs so Muesli can keep the refreshed snapshot on the intended process/window. Use get_app_state only when the current state is insufficient, appears to be for the wrong app, or you do not yet know the target window.
+    - The request includes observation_context. Use observation_context.target_window_state to decide whether the target is matched and usable, and observation_context.user_frontmost_state only to understand what the user is currently doing. In Work quietly mode, target_window_state.is_frontmost=false is expected and does not mean the target is invalid when target_window_state.usable_for_actions=true.
+    - Do not confuse keyboard focus with target validity. observation_context.keyboard_focus_state may say focus is in the user's frontmost app while Muesli still has a usable pid/window-scoped target for click, paste_text, press_key, or scroll.
+    - list_windows, get_app_state, and get_window_state are orientation tools. Once latest_window_state already contains a usable target window and screenshot/AX state, do not call another orientation tool unless a tool result says the target changed, the state is stale, or an action needs verification. Choose click, paste_text, press_key, scroll, finish, or fail.
     - If latest_window_state.target_mismatch is present, the requested window was not refreshed. Do not act or finish from that state; re-orient with list_windows/get_window_state for the intended or actual visible window first.
-    - The screenshot is the source of truth for visual web and canvas UIs. AX candidates, focused_element, DOM text, and OCR are hints that help you choose actions, not proof that a semantic task succeeded.
+    - The screenshot is the source of truth for visual web and canvas UIs. AX candidates, focused_element, and OCR are hints that help you choose actions, not proof that a semantic task succeeded.
     - Use recognize_screenshot_text when visible text in the latest screenshot would materially help interpret the UI. OCR is optional and model-directed; do not call it on every step by default.
-    - Prefer visual pointer/keyboard primitives for rich web UIs such as YouTube, Google Docs, Google Sheets, X/Twitter, and other browser apps: click_point, move_cursor, scroll, press_key, type_text, paste_text, and hotkey. Use click_point with screenshot_id for visible video results, buttons, menus, canvas editors, and visually obvious targets.
-    - Use click_element/set_value/focus_element/activate_focused mainly for native macOS controls, dialogs, menus, standard text fields, or clearly exposed AX elements. Do not tab through or AX-activate generic web areas, action menus, or ambiguous links when the visible target can be clicked by screenshot coordinate.
-    - Keyboard focus is state. latest_window_state.focused_element describes the control that currently receives keyboard input. press_key is ambient: it always sends a key to current focus, accepts process_id as a focused-process guard, and never accepts window_id, element_index, or element_id.
-    - Use focus_element to move focus to a specific AX candidate before press_key or text entry when that AX candidate is a reliable native/editable target. Use activate_focused when the focused_element is already the intended native button, menu item, dialog control, or explicit focused web control; avoid it for generic web areas and rich web search results.
+    - Prefer element-indexed click addressing when the AX element label/role/frame clearly matches the visible target. Use screenshot-coordinate click addressing when AX is generic, ambiguous, missing the visible target, or the surface is canvas-like. In Work quietly mode include process_id/window_id so Muesli can attempt scoped delivery.
+    - Mutating tool results include transaction evidence: path/route says how the driver attempted delivery, posted says whether the primitive was sent, verified says whether the tool itself proved the intended low-level effect, effect says confirmed/unverifiable/blocked/unknown, and target_stable says whether the target identity was still usable at dispatch time. Use this evidence when deciding the next step.
+    - executed means the harness completed the primitive call. It does not mean the target app consumed the event or that the user's semantic task is complete. If transaction.verified=false or effect=unverifiable, inspect the post-action screenshot/AX state before finishing.
+    - Click results include route diagnostics and transaction evidence. If a click is posted but verification says state is unchanged, treat that target/route as ineffective: refresh state if needed, then choose a different visible target or a different click addressing mode.
+    - Keyboard focus is state. latest_window_state.focused_element describes the target app's focused receiver. In Work quietly mode, press_key can be pid/window-routed when you include process_id and window_id from the latest target snapshot. In direct/current-focus mode, press_key is ambient and process_id is a focused-process guard.
     - Do not simulate focus by passing stale element fields to press_key. That schema is invalid. After Tab, Shift-Tab, arrow-key navigation, or a click that moves focus, use press_key directly to preserve the current focus.
-    - For coordinate click/drag, use screenshot pixel coordinates from the current screenshot, not global screen coordinates.
-    - Include screenshot_id from latest_window_state when using screenshot-coordinate tools.
+    - For coordinate click, use screenshot pixel coordinates from the current screenshot, not global screen coordinates. Include screenshot_id from latest_window_state when using screenshot-coordinate click addressing.
     - latest_window_state.screenshot_ocr_text appears only after you explicitly call recognize_screenshot_text for the current screenshot_id. Treat it as imperfect visual evidence to help interpret the screenshot, not as a deterministic validation result. You still decide whether the visible UI satisfies the task.
-    - Use click_point for screenshot coordinates and click_element only for reliable AX candidates. Never use legacy click unless it appears in an old prior trace.
-    - For new or separate browser tasks, prefer open_new_browser_tab and then navigate_active_browser_tab. Use list_browser_tabs and activate_browser_tab only when the user asks to continue, find, or reuse an existing tab.
-    - Browser DOM/page tools are optional accelerators. Use page_get_text/page_query_dom when useful, but do not depend on them as the control path.
-    - If page_get_text, page_query_dom, or list_browser_tabs fails, is blocked by Chrome Apple Events JavaScript permission, returns insufficient content, or returns no tabs, immediately continue with get_window_state and visual screenshot actions. For browser pages, prefer click_point on visible targets over AX focus/activation loops; use AX only as a hint or for a clearly exposed native/editable control.
-    - For text entry, prefer scoped calls: include process_id, window_id, and element_index/element_id when an editable target or web editor surface is visible in the latest state. If no element is available, type_text/paste_text act on the focused editable target and any supplied process_id/window_id must match that live focus target.
-    - type_text focuses the requested element, tries AXSelectedText insertion, and falls back to targeted key events. Use it for Google Docs, browser text editors, and normal text fields.
-    - paste_text uses the same target contract and may fall back to clipboard paste with restoration. Prefer it for Apple Notes and native rich-text editors when multi-word insertion by paste is likely more reliable.
-    - Do not use fail only because a browser DOM/page tool failed. Use fail only after trying the available visual screenshot fallback path, or when the requested task is unsafe or truly unsupported.
+    - Browser tools marked app_scoped_background_capable are scoped to the browser app/tab rather than latest_window_state.window_id. They may proceed through a visual target_mismatch, but you must still inspect the next get_window_state/screenshot before deciding the semantic task is done.
+    - For new or separate browser tasks, prefer open_new_browser_tab and then navigate_active_browser_tab. For existing tabs or pages, use get_window_state and visual click/key/text actions instead of browser automation tab tools.
+    - The request includes safety_limit_seconds. This is a user-visible auto-stop safety limit, not a target duration. Finish, fail, or ask for confirmation/input as soon as the task state warrants it.
+    - For text entry, use paste_text as the single text-entry intent. Include process_id, window_id, and element_index/element_id when an editable target or web editor surface is visible in the latest state. If no element is available, paste_text acts on the focused editable target and any supplied process_id/window_id must match that live focus target.
+    - paste_text may use AX insertion, pid/window-routed key events, or clipboard paste while preserving previous clipboard contents. Use it for Google Docs, browser text editors, Apple Notes, native rich-text editors, and normal text fields. In Work quietly mode, include process_id/window_id/element_index so text can be routed to the target without foregrounding it when possible.
+    - Do not use fail only because a browser helper failed. Use fail only after trying the available visual screenshot fallback path, or when the requested task is unsafe or truly unsupported.
     - After get_window_state/get_app_state returns a fresh state, act on the visible AX/screenshot evidence. Do not call get_app_state/get_window_state repeatedly unless a tool result indicates the app/window changed or a previous action needs verification.
-    - Tool results report primitive actions such as clicked, typed, pasted, pressed, or sent activation. They do not prove the user's semantic task is complete. Inspect the next screenshot/state yourself before deciding whether to continue or finish.
-    - Every mutating action result includes a post-action observation and screenshot when available. For text entry, AX may not expose canvas-backed editors such as Google Docs; if the prior outcome says AX did not expose the requested text, inspect the latest screenshot and screenshot_ocr_text yourself. If the requested text/edit is visibly present, finish. If it is not visible, choose a different target, different text primitive, keyboard navigation, or get_window_state before retrying.
-    - If browser page tools are blocked, use the screenshot to click_point, type, press keys, hotkey, or scroll; do not loop on observation waiting for DOM access to appear, and do not fall into repeated AX focus/activate cycles on web content.
-    - navigate_url and navigate_active_browser_tab may only use http or https URLs. Never output javascript:, file:, data:, shell text, or arbitrary code.
-    - For navigate_url, include window_index/tab_index only when they came from a recent list_browser_tabs result. After open_new_browser_tab, call navigate_active_browser_tab.
+    - Every mutating action result includes a post-action observation and screenshot when available. For text entry, AX may not expose canvas-backed editors such as Google Docs; if transaction.verified=false or the prior outcome says AX did not expose the requested text, inspect the latest screenshot and screenshot_ocr_text yourself. If the requested text/edit is visibly present, finish. If it is absent, partial, or duplicated, choose a different target, use keyboard navigation, or get_window_state before retrying.
+    - If browser helpers are blocked, use the screenshot to click, paste_text, press_key, or scroll; do not loop on observation waiting for browser automation access to appear, and do not fall into repeated AX focus cycles on web content.
+    - navigate_active_browser_tab may only use http or https URLs. Never output javascript:, file:, data:, shell text, or arbitrary code.
+    - After open_new_browser_tab, call navigate_active_browser_tab.
     - max_steps is a high safety ceiling, not a target. Use as few steps as needed.
     - Use finish only when the user's command is complete and successful. For writing/editing tasks, finish only after you have inspected the latest AX state/screenshot and the requested text or edit is visible, or a prior outcome verified it. If the task could not be completed, is blocked, is unsafe, or needs missing permission/confirmation, use fail(reason); never put blocked or incomplete language in finish.
     - Risky actions are locally blocked by Muesli; do not try to bypass confirmation.
@@ -81,7 +86,7 @@ enum ComputerUsePlannerClient {
         case .direct:
             return "The user allows Muesli to bring target apps forward when a tool needs direct app control."
         case .quiet:
-            return "Keep the user's current app active whenever the available tools support it. Prefer process/window-scoped observation and target-scoped actions. Avoid tools marked foreground activation allowed unless the requested task has no viable quiet path, and inspect the resulting state before continuing."
+            return "Keep the user's current app usable and active. Prefer execution_contract values background_capable, app_scoped_background_capable, safe_read_only, and scoped_window_action. For visual and browser actions include process_id/window_id from the latest target state so Muesli can use pid/window-routed input. Avoid foreground_required tools unless the requested task has no viable quiet path, and inspect the resulting state before continuing."
         }
     }
 
@@ -94,6 +99,7 @@ enum ComputerUsePlannerClient {
                 systemPrompt: instructions(for: config),
                 userPrompt: requestPrompt(for: request),
                 imageDataURL: request.latestWindowState.screenshot?.imageDataURL,
+                availableTools: request.availableTools,
                 model: plannerModel(for: config)
             )
         } catch ChatGPTAuthError.notAuthenticated {
@@ -123,6 +129,7 @@ enum ComputerUsePlannerClient {
         systemPrompt: String,
         userPrompt: String,
         imageDataURL: String?,
+        availableTools: [ComputerUseToolName]?,
         model: String
     ) async throws -> ComputerUsePlannerResponse {
         let (token, accountId) = try await ChatGPTAuthManager.shared.validAccessToken()
@@ -137,7 +144,7 @@ enum ComputerUsePlannerClient {
             "store": false,
             "stream": true,
             "instructions": systemPrompt,
-            "tools": ComputerUseToolRegistry.nativeToolDefinitions(),
+            "tools": ComputerUseToolRegistry.nativeToolDefinitions(allowedTools: availableTools.map { Set($0) }),
             "tool_choice": "required",
             "parallel_tool_calls": false,
             "input": [
@@ -193,10 +200,20 @@ enum ComputerUsePlannerClient {
 
         if let nativeToolCall = parsedNativeToolCall {
             do {
-                return try ComputerUsePlannerResponse.decodeNativeToolCall(
+                let response = try ComputerUsePlannerResponse.decodeNativeToolCall(
                     name: nativeToolCall.name,
                     arguments: nativeToolCall.arguments
                 )
+                if let failure = response.toolAvailabilityFailure(availableTools: availableTools) {
+                    throw ComputerUsePlannerError.invalidToolCall(
+                        name: response.toolCall.tool.rawValue,
+                        arguments: nativeToolCall.arguments,
+                        message: failure
+                    )
+                }
+                return response
+            } catch let error as ComputerUsePlannerError {
+                throw error
             } catch {
                 throw ComputerUsePlannerError.invalidToolCall(
                     name: nativeToolCall.name,

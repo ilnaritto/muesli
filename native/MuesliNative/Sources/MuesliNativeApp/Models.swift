@@ -1014,6 +1014,10 @@ struct AppConfig: Codable {
     var contributionTweetClicked: Bool = false
     var contributionLinkedInClicked: Bool = false
 
+    static func clampedComputerUseSafetyLimitSeconds(_ seconds: Int) -> Int {
+        min(max(seconds, 1), 600)
+    }
+
     enum CodingKeys: String, CodingKey {
         case dictationHotkey = "dictation_hotkey"
         case computerUseHotkey = "computer_use_hotkey"
@@ -1131,7 +1135,9 @@ struct AppConfig: Codable {
         enableMeetingRecordingHotkey = (try? c.decode(Bool.self, forKey: .enableMeetingRecordingHotkey)) ?? defaults.enableMeetingRecordingHotkey
         enableComputerUsePlanner = (try? c.decode(Bool.self, forKey: .enableComputerUsePlanner)) ?? defaults.enableComputerUsePlanner
         computerUsePlannerModel = (try? c.decode(String.self, forKey: .computerUsePlannerModel)) ?? defaults.computerUsePlannerModel
-        computerUseTimeoutSeconds = (try? c.decode(Int.self, forKey: .computerUseTimeoutSeconds)) ?? defaults.computerUseTimeoutSeconds
+        computerUseTimeoutSeconds = Self.clampedComputerUseSafetyLimitSeconds(
+            (try? c.decode(Int.self, forKey: .computerUseTimeoutSeconds)) ?? defaults.computerUseTimeoutSeconds
+        )
         computerUseInteractionMode =
             (try? c.decode(ComputerUseInteractionMode.self, forKey: .computerUseInteractionMode))
             ?? ComputerUseInteractionMode.resolved(try? c.decode(String.self, forKey: .computerUseInteractionMode))
