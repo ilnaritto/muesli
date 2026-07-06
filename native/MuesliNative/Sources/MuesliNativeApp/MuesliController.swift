@@ -5198,8 +5198,21 @@ final class MuesliController: NSObject {
 
     func openDiagnosticIncidentIssue(_ incident: DiagnosticIncident) {
         let url = incident.githubIssueURL ?? DiagnosticIncident.githubIssueFallbackURL
-        NSWorkspace.shared.open(url)
         diagnosticIncidentReporter.dismissCurrentPrompt()
+        DispatchQueue.main.async {
+            guard let applicationURL = NSWorkspace.shared.urlForApplication(toOpen: url) else {
+                NSWorkspace.shared.open(url)
+                return
+            }
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            NSWorkspace.shared.open([url], withApplicationAt: applicationURL, configuration: configuration) { _, error in
+                if let error {
+                    fputs("[muesli-native] failed to open diagnostic issue URL with activation: \(error)\n", stderr)
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        }
     }
 
     @discardableResult
