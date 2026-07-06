@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/Muesli-HQ/muesli"><img src="https://img.shields.io/badge/форк-Muesli--HQ%2Fmuesli-8A5CF6?logo=github&logoColor=white" alt="Форк Muesli-HQ/muesli" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/дизайн-все%20права%20защищены-red.svg" alt="Дизайн — все права защищены" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/дизайн-свободно%2C%20без%20перепродажи-orange.svg" alt="Дизайн — свободно, без перепродажи" /></a>
   <img src="https://img.shields.io/badge/platform-macOS%2014.2%2B-lightgrey?logo=apple" alt="macOS 14.2+" />
   <img src="https://img.shields.io/badge/язык-RU%20%C2%B7%20EN-success" alt="RU / EN" />
 </p>
@@ -118,8 +118,8 @@
 В этом репозитории — две части под разными условиями:
 
 - **Оригинальный код Muesli** — © Pranav Hari, лицензия **[MIT](LICENSE.upstream-MIT)**. Свободно, как и было.
-- **Дизайн, визуальные ассеты и новый код этого форка** — © ilnaritto, **все права защищены**. Репозиторий открыт для просмотра и как портфолио, но использовать, копировать, продавать или делать производные работы из дизайна без письменного разрешения нельзя.
+- **Дизайн, визуальные ассеты и новый код этого форка** — © ilnaritto. **Можно свободно использовать, изменять и делиться — но не продавать.** Перепродажа или продажа дизайна в составе платного продукта — только с письменного разрешения.
 
-Коммерческое лицензирование дизайна возможно **только совместно с автором оригинального Muesli**. По вопросам — pixpluss@gmail.com
+Право на продажу дизайна предоставляется **только совместно с автором оригинального Muesli**. По вопросам — pixpluss@gmail.com
 
 Полные условия — в файле **[LICENSE](LICENSE)**.

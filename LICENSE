@@ -19,39 +19,42 @@ Those MIT terms continue to apply to the original code and to any unmodified
 portions of it, exactly as granted by the original author.
 
 ===============================================================================
-2. CONTRIBUTIONS INTRODUCED IN THIS FORK  —  All Rights Reserved
+2. CONTRIBUTIONS INTRODUCED IN THIS FORK  —  Free Use, No Resale
 ===============================================================================
 
 All original contributions introduced in this fork are the copyrighted work
-of ilnaritto and are NOT licensed under the MIT License. This includes, without
-limitation:
+of ilnaritto. This includes, without limitation:
 
   - the user interface and user experience design;
   - visual design, layout, composition, and iconography;
   - image, graphic, and animation assets (including files under assets/redesign/);
   - newly authored source code and the modifications made to existing files.
 
-All rights to these contributions are reserved. This repository is made public
-for viewing, evaluation, and portfolio reference only.
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+these contributions, to use, copy, modify, merge, publish, and distribute them,
+and to permit other people to do the same, subject to the following conditions:
 
-Without prior written permission from the copyright holder, you may NOT:
+  (a) ATTRIBUTION. The above copyright notice and this permission notice shall
+      be included in all copies or substantial portions of the contributions.
 
-  - use these contributions or assets, in whole or in part, in any product,
-    project, or service, whether free or commercial;
-  - copy, redistribute, sublicense, sell, or offer them for sale;
-  - create derivative works based on them.
+  (b) NO RESALE. You may NOT sell, resell, rent, sublicense for a fee, or offer
+      for sale these contributions or any design derived from them — whether on
+      their own or bundled into a larger product or service offered for a fee —
+      without prior written permission from the copyright holder.
 
-The permissions granted by the MIT License in Section 1 cover ONLY the original
-Muesli code. They do not extend to, and must not be construed as granting any
-rights over, the contributions described in this Section 2.
+In short: you may freely use, modify, and share this work; you may not sell it
+or make money from selling it.
+
+The MIT permissions in Section 1 cover ONLY the original Muesli code. The terms
+of this Section 2 govern the fork's contributions described above.
 
 ===============================================================================
 3. COMMERCIAL USE
 ===============================================================================
 
-Commercial licensing of the design and contributions in this fork is offered
-only jointly with the original author of Muesli. For licensing inquiries,
-contact: pixpluss@gmail.com
+The right to sell or resell the fork's contributions (see Section 2(b)) is
+offered only jointly with the original author of Muesli. For resale or other
+commercial-sale inquiries, contact: pixpluss@gmail.com
 
 ===============================================================================
 4. NO WARRANTY
