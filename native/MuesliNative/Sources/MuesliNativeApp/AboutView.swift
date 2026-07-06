@@ -3,7 +3,7 @@ import MuesliCore
 
 struct AboutView: View {
     let appState: AppState
-    let controller: MuesliController
+    let onOpenManualDiagnosticReport: () -> Void
 
     private let githubURL = "https://github.com/Muesli-HQ/muesli"
     private let donateURL = "https://buymeacoffee.com/phequals7"
@@ -83,7 +83,7 @@ struct AboutView: View {
 
                     aboutRow("Report a Problem") {
                         actionButton("Open Report", icon: "exclamationmark.bubble") {
-                            controller.openManualDiagnosticReport()
+                            onOpenManualDiagnosticReport()
                         }
                     }
                 }
