@@ -323,7 +323,7 @@ struct SettingsView: View {
         case .shortcuts:
             ShortcutsView(appState: appState, controller: controller)
         case .about:
-            AboutView(appState: appState)
+            AboutView(appState: appState, onOpenManualDiagnosticReport: { controller.openManualDiagnosticReport() })
         case .templates:
             // No outer ScrollView: the manager scrolls its own list.
             MeetingTemplatesManagerView(

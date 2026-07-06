@@ -158,7 +158,7 @@ struct ModelsView: View {
                                 .foregroundStyle(MuesliTheme.textSecondary)
                         }
 
-                        Text(tr("SenseVoice, Qwen, Canary, and legacy streaming backends. Hidden by default because these are still slower and less polished.", "SenseVoice, Qwen, Canary и устаревшие потоковые движки. Скрыты по умолчанию: они пока медленнее и менее отточены."))
+                        Text(tr("SenseVoice, Qwen, Indic ASR, and legacy streaming backends. Hidden by default because these are still slower and less polished.", "SenseVoice, Qwen, Indic ASR и устаревшие потоковые движки. Скрыты по умолчанию: они пока медленнее и менее отточены."))
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(MuesliTheme.textPrimary)
                             .opacity(0.8)
@@ -582,7 +582,6 @@ struct ModelsView: View {
         case "cohere": return "cohere-logo"
         case "qwen": return "qwen-logo"
         case "nemotron35": return "nvidia-logo"
-        case "canary": return "qwen-logo"
         case "indicasr": return "ai4bharat-logo"
         case "sensevoice": return "qwen-logo"
         default: return nil
@@ -1098,8 +1097,6 @@ struct ModelsView: View {
             let path = fm.homeDirectoryForCurrentUser
                 .appendingPathComponent(".cache/muesli/models/nemotron35-multilingual-2240ms")
             try removeItemIfPresent(at: path, fileManager: fm)
-        case "canary":
-            try removeItemIfPresent(at: CanaryQwenModelStore.cacheDirectory(), fileManager: fm)
         case "cohere":
             try removeItemIfPresent(at: CohereTranscribeModelStore.cacheDirectory(), fileManager: fm)
         case "indicasr":
@@ -1193,8 +1190,6 @@ struct ModelsView: View {
                 .appendingPathComponent("Library/Application Support/FluidAudio/Models/qwen3-asr-0.6b-coreml")
             return fm.fileExists(atPath: supportDir.appendingPathComponent("int8/vocab.json").path)
                 || fm.fileExists(atPath: supportDir.appendingPathComponent("f32/vocab.json").path)
-        case "canary":
-            return CanaryQwenModelStore.isAvailableLocally()
         case "cohere":
             return CohereTranscribeModelStore.isAvailableLocally()
         case "indicasr":

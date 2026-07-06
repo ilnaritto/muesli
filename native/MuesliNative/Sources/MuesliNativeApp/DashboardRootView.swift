@@ -55,6 +55,18 @@ struct DashboardRootView: View {
         .onChange(of: appState.contributionMilestonePrompt?.id) { _, _ in
             controller.recordContributionMilestonePromptSeen()
         }
+        .sheet(
+            item: Binding<DiagnosticIncident?>(
+                get: { appState.pendingDiagnosticIncident },
+                set: { if $0 == nil { controller.dismissDiagnosticIncidentPrompt() } }
+            )
+        ) { incident in
+            DiagnosticIncidentReportView(
+                incident: incident,
+                onOpenIssue: { controller.openDiagnosticIncidentIssue(incident) },
+                onDismiss: { controller.dismissDiagnosticIncidentPrompt() }
+            )
+        }
     }
 
     @ViewBuilder

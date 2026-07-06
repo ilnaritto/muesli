@@ -102,7 +102,7 @@ struct HomeView: View {
         case .functions:
             functionsContent
         case .about:
-            AboutView(appState: appState)
+            AboutView(appState: appState, onOpenManualDiagnosticReport: { controller.openManualDiagnosticReport() })
         }
     }
 

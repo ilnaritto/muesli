@@ -3,9 +3,11 @@ import MuesliCore
 
 struct AboutView: View {
     let appState: AppState
+    let onOpenManualDiagnosticReport: () -> Void
 
     private let githubURL = "https://github.com/Muesli-HQ/muesli"
     private let donateURL = "https://buymeacoffee.com/phequals7"
+    private let actionButtonWidth: CGFloat = 136
 
     private var version: String {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.2.0"
@@ -62,6 +64,7 @@ struct AboutView: View {
                             .foregroundStyle(.white)
                             .padding(.horizontal, MuesliTheme.spacing20)
                             .padding(.vertical, MuesliTheme.spacing8)
+                            .frame(width: actionButtonWidth)
                             .background(MuesliTheme.success)
                             .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
                         }
@@ -73,6 +76,14 @@ struct AboutView: View {
                     aboutRow(tr("Source Code", "Исходный код")) {
                         actionButton(tr("View on GitHub", "Открыть на GitHub"), icon: "arrow.up.right.square") {
                             if let url = URL(string: githubURL) { NSWorkspace.shared.open(url) }
+                        }
+                    }
+
+                    Divider().background(MuesliTheme.surfaceBorder)
+
+                    aboutRow(tr("Report a Problem", "Сообщить о проблеме")) {
+                        actionButton(tr("Open Report", "Открыть отчёт"), icon: "exclamationmark.bubble") {
+                            onOpenManualDiagnosticReport()
                         }
                     }
                 }
@@ -305,6 +316,7 @@ struct AboutView: View {
             .foregroundStyle(MuesliTheme.textPrimary)
             .padding(.horizontal, MuesliTheme.spacing16)
             .padding(.vertical, MuesliTheme.spacing8)
+            .frame(width: actionButtonWidth)
             .background(MuesliTheme.surfacePrimary)
             .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
             .overlay(
