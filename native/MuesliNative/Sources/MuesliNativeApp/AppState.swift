@@ -3,6 +3,7 @@ import Observation
 import MuesliCore
 
 enum DashboardTab: String, CaseIterable {
+    case home
     case dictations
     case meetings
     case dictionary
@@ -10,6 +11,54 @@ enum DashboardTab: String, CaseIterable {
     case shortcuts
     case settings
     case about
+}
+
+enum SettingsSection: String, CaseIterable, Identifiable {
+    case general
+    case sync
+    case dictation
+    case computerUse
+    case meetings
+    case templates
+    case appearance
+    case dictionary
+    case models
+    case shortcuts
+    case about
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general: return tr("General", "Общие")
+        case .sync: return tr("Sync", "Синхронизация")
+        case .dictation: return tr("Dictation", "Диктовка")
+        case .computerUse: return tr("Computer Use", "Компьютер")
+        case .meetings: return tr("Meetings", "Встречи")
+        case .templates: return tr("Templates", "Шаблоны")
+        case .appearance: return tr("Appearance", "Оформление")
+        case .dictionary: return tr("Dictionary", "Словарь")
+        case .models: return tr("Models", "Модели")
+        case .shortcuts: return tr("Shortcuts", "Горячие клавиши")
+        case .about: return tr("About", "О программе")
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .general: return "gearshape"
+        case .sync: return "arrow.triangle.2.circlepath.icloud"
+        case .dictation: return "mic"
+        case .computerUse: return "desktopcomputer"
+        case .meetings: return "person.2"
+        case .templates: return "square.text.square"
+        case .appearance: return "paintbrush"
+        case .dictionary: return "character.book.closed"
+        case .models: return "square.and.arrow.down"
+        case .shortcuts: return "keyboard"
+        case .about: return "info.circle"
+        }
+    }
 }
 
 enum MeetingsNavigationState: Equatable {
@@ -65,6 +114,7 @@ final class AppState {
     var selectedFolderID: Int64?  // nil = "All Meetings"
     var meetingsNavigationState: MeetingsNavigationState = .browser
     var isMeetingTemplatesManagerPresented: Bool = false
+    var meetingTemplatesManagerStartsCreating: Bool = false
     var dictationStats: DictationStats = DictationStats(
         totalWords: 0, totalSessions: 0, averageWordsPerSession: 0,
         averageWPM: 0, currentStreakDays: 0, longestStreakDays: 0
@@ -144,7 +194,8 @@ final class AppState {
     var isSearchActive: Bool { !searchQuery.isEmpty }
 
     // Navigation
-    var selectedTab: DashboardTab = .dictations
+    var selectedTab: DashboardTab = .home
+    var settingsSection: SettingsSection = .general
 
     // Computed
     var selectedMeeting: MeetingRecord? {

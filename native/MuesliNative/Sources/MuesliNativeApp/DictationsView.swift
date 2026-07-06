@@ -1,7 +1,5 @@
 import AppKit
-import CoreImage.CIFilterBuiltins
 import SwiftUI
-import TelemetryDeck
 import MuesliCore
 
 enum DictationFilter: Hashable {
@@ -9,12 +7,12 @@ enum DictationFilter: Hashable {
 
     var label: String {
         switch self {
-        case .all: return "All time"
-        case .last2Days: return "Last 2 days"
-        case .lastWeek: return "Last week"
-        case .last2Weeks: return "Last 2 weeks"
-        case .lastMonth: return "Last month"
-        case .last3Months: return "Last 3 months"
+        case .all: return tr("All time", "Всё время")
+        case .last2Days: return tr("Last 2 days", "Последние 2 дня")
+        case .lastWeek: return tr("Last week", "Последняя неделя")
+        case .last2Weeks: return tr("Last 2 weeks", "Последние 2 недели")
+        case .lastMonth: return tr("Last month", "Последний месяц")
+        case .last3Months: return tr("Last 3 months", "Последние 3 месяца")
         }
     }
 }
@@ -23,8 +21,21 @@ struct DictationsView: View {
     let appState: AppState
     let controller: MuesliController
     @State private var selectedFilter: DictationFilter = .all
-    @State private var bridgePromptSeen = false
-    @State private var isBridgeQRCodePresented = false
+    @State private var selectedDictationID: Int64?
+    @State private var searchQuery = ""
+    @State private var showDeleteConfirmation = false
+    @FocusState private var isSearchFocused: Bool
+
+    private var visibleDictations: [DictationRecord] {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return appState.dictationRows }
+        return appState.dictationRows.filter { $0.rawText.localizedCaseInsensitiveContains(query) }
+    }
+
+    private var selectedDictation: DictationRecord? {
+        guard let id = selectedDictationID else { return nil }
+        return appState.dictationRows.first(where: { $0.id == id })
+    }
 
     private var groupedDictations: [(header: String, records: [DictationRecord])] {
         let calendar = Calendar.current
@@ -44,7 +55,7 @@ struct DictationsView: View {
         var currentRecords: [DictationRecord] = []
         var currentHeader = ""
 
-        for record in appState.dictationRows {
+        for record in visibleDictations {
             let date = parseDate(record.timestamp) ?? now
             let dayStart = calendar.startOfDay(for: date)
 
@@ -56,9 +67,9 @@ struct DictationsView: View {
                 currentRecords = []
 
                 if dayStart == today {
-                    currentHeader = "TODAY"
+                    currentHeader = tr("TODAY", "СЕГОДНЯ")
                 } else if dayStart == yesterday {
-                    currentHeader = "YESTERDAY"
+                    currentHeader = tr("YESTERDAY", "ВЧЕРА")
                 } else {
                     currentHeader = dateHeaderFormatter.string(from: date).uppercased()
                 }
@@ -73,360 +84,360 @@ struct DictationsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            StatsHeaderView(
-                dictationStats: appState.dictationStats,
-                meetingStats: appState.meetingStats
-            )
-
-            if appState.config.showIOSCompanionPrompt {
-                iPhoneBridgeCard
-                    .padding(.horizontal, MuesliTheme.spacing24)
-                    .padding(.bottom, MuesliTheme.spacing12)
+        HStack(spacing: 5) {
+            PrimaryColumn(appState: appState, title: tr("Dictations", "Диктовки")) {
+                dictationsColumn
+            } trailing: {
+                dateFilterButton
             }
 
-            if appState.config.resolvedOnboardingUseCase.includesVoiceNotes {
-                HStack {
-                    Spacer()
+            detailPane
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .onChange(of: appState.focusSearchField) { _, shouldFocus in
+            if shouldFocus, appState.selectedTab == .dictations {
+                isSearchFocused = true
+                appState.focusSearchField = false
+            }
+        }
+    }
+
+    // MARK: - Left column
+
+    @ViewBuilder
+    private var dictationsColumn: some View {
+        VStack(spacing: 0) {
+            // Pinned header: the search field stays put, the list scrolls below.
+            searchBar
+                .padding(.horizontal, 10)
+                .padding(.top, MuesliTheme.spacing12)
+                .padding(.bottom, MuesliTheme.spacing8)
+
+            Rectangle()
+                .fill(MuesliTheme.surfaceBorder.opacity(0.7))
+                .frame(height: 1)
+
+            scrollingList
+        }
+    }
+
+    @ViewBuilder
+    private var scrollingList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+                if appState.config.resolvedOnboardingUseCase.includesVoiceNotes {
                     voiceNoteButton
                 }
-                .padding(.horizontal, MuesliTheme.spacing24)
-                .padding(.bottom, MuesliTheme.spacing12)
-            }
 
-            if appState.dictationRows.isEmpty {
-                Spacer()
-                VStack(spacing: MuesliTheme.spacing12) {
-                    Image(systemName: "mic.badge.plus")
-                        .font(.system(size: 40, weight: .thin))
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                    Text("No dictations yet")
-                        .font(MuesliTheme.title3())
-                        .foregroundStyle(MuesliTheme.textSecondary)
-                    Text(emptyStateInstruction)
-                        .font(MuesliTheme.callout())
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                }
-                Spacer()
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: MuesliTheme.spacing20) {
-                        ForEach(Array(groupedDictations.enumerated()), id: \.element.header) { index, group in
-                            VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-                                HStack {
-                                    Text(group.header)
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(MuesliTheme.textTertiary)
-                                        .padding(.leading, MuesliTheme.spacing4)
+                if visibleDictations.isEmpty {
+                    columnEmptyState
+                } else {
+                    ForEach(Array(groupedDictations.enumerated()), id: \.element.header) { _, group in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(group.header)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(MuesliTheme.textTertiary)
+                                .padding(.leading, MuesliTheme.spacing4)
+                                .padding(.top, MuesliTheme.spacing8)
 
-                                    Spacer()
-
-                                    // Filter button on the first group header
-                                    if index == 0 {
-                                        dateFilterButton
+                            VStack(spacing: 0) {
+                                let lastID = group.records.last?.id
+                                ForEach(group.records) { record in
+                                    dictationCompactRow(record)
+                                    if record.id != lastID {
+                                        Rectangle()
+                                            .fill(MuesliTheme.surfaceBorder.opacity(0.7))
+                                            .frame(height: 1)
+                                            .padding(.leading, MuesliTheme.spacing12)
                                     }
                                 }
-
-                                VStack(spacing: 1) {
-                                    ForEach(group.records) { record in
-                                        DictationRowView(
-                                            record: record,
-                                            timeOnly: formatTimeOnly(record.timestamp),
-                                            onCopy: {
-                                                controller.copyToClipboard(record.rawText)
-                                            },
-                                            onCopyTrace: record.computerUseTrace == nil ? nil : {
-                                                controller.copyToClipboard(ComputerUseTraceFormatter.debugText(for: record))
-                                            },
-                                            onDelete: {
-                                                controller.deleteDictation(id: record.id)
-                                            }
-                                        )
-                                        .contextMenu {
-                                            Button {
-                                                controller.copyToClipboard(record.rawText)
-                                            } label: {
-                                                Label("Copy", systemImage: "doc.on.doc")
-                                            }
-                                            if record.computerUseTrace != nil {
-                                                Button {
-                                                    controller.copyToClipboard(ComputerUseTraceFormatter.debugText(for: record))
-                                                } label: {
-                                                    Label("Copy CUA Trace", systemImage: "list.bullet.clipboard")
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
-                                        .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
-                                )
                             }
                         }
-
-                        // Infinite scroll trigger
-                        if appState.hasMoreDictations {
-                            Color.clear
-                                .frame(height: 1)
-                                .onAppear {
-                                    controller.loadMoreDictations()
-                                }
-                        }
                     }
-                    .padding(.horizontal, MuesliTheme.spacing24)
-                    .padding(.bottom, MuesliTheme.spacing24)
+
+                    // Infinite scroll trigger
+                    if appState.hasMoreDictations {
+                        Color.clear
+                            .frame(height: 1)
+                            .onAppear {
+                                controller.loadMoreDictations()
+                            }
+                    }
                 }
             }
-        }
-        .sheet(isPresented: $isBridgeQRCodePresented) {
-            IPhoneBridgeQRCodeSheet(
-                deepLinkURL: IPhoneBridgeLinks.iOSSyncDeepLinkURL,
-                installURL: IPhoneBridgeLinks.installURL
-            )
+            .padding(.horizontal, 10)
+            .padding(.vertical, MuesliTheme.spacing12)
         }
     }
 
-    private var bridgeState: ICloudBridgeState {
-        appState.iCloudBridgeState
-    }
-
-    private var iPhoneBridgeCard: some View {
-        HStack(alignment: .center, spacing: MuesliTheme.spacing12) {
-            BridgeSyncIcon(
-                systemName: bridgeIcon,
-                isAnimating: bridgeSyncIconIsAnimating,
-                font: .system(size: 18, weight: .semibold)
-            )
-                .foregroundStyle(bridgeIconColor)
-                .frame(width: 28)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(bridgeTitle)
-                    .font(MuesliTheme.body())
-                    .foregroundStyle(MuesliTheme.textPrimary)
-                Text(bridgeSubtitle)
-                    .font(MuesliTheme.caption())
-                    .foregroundStyle(MuesliTheme.textTertiary)
-                    .lineLimit(2)
-            }
-
-            Spacer(minLength: MuesliTheme.spacing12)
-
-            if shouldShowBridgeHandoffButton {
+    @ViewBuilder
+    private var searchBar: some View {
+        HStack(spacing: MuesliTheme.spacing8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundStyle(MuesliTheme.textTertiary)
+            TextField(tr("Search...", "Поиск..."), text: $searchQuery)
+                .font(MuesliTheme.callout())
+                .textFieldStyle(.plain)
+                .focused($isSearchFocused)
+            if !searchQuery.isEmpty {
                 Button {
-                    isBridgeQRCodePresented = true
-                    TelemetryDeck.signal("bridge_qr_shown", parameters: ["platform": "macos"])
+                    searchQuery = ""
+                    isSearchFocused = false
                 } label: {
-                    Image(systemName: "qrcode")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(MuesliTheme.textPrimary)
-                        .frame(width: 28, height: 28)
-                        .background(MuesliTheme.surfacePrimary)
-                        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(MuesliTheme.textTertiary)
                 }
                 .buttonStyle(.plain)
-                .help("Show iPhone setup QR")
             }
-
-            Button {
-                bridgePrimaryAction()
-            } label: {
-                HStack(spacing: 6) {
-                    Text(bridgeButtonTitle)
-                    BridgeSyncIcon(
-                        systemName: bridgeButtonIcon,
-                        isAnimating: bridgeButtonIconIsAnimating,
-                        font: .system(size: 12, weight: .semibold)
-                    )
-                }
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .frame(height: 28)
-                    .background(MuesliTheme.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-            }
-            .buttonStyle(.plain)
-            .disabled(bridgeActionDisabled)
-            .help(bridgeButtonHelp)
-
-            Button {
-                controller.updateConfig { $0.showIOSCompanionPrompt = false }
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(MuesliTheme.textTertiary)
-                    .frame(width: 28, height: 28)
-                    .background(MuesliTheme.surfacePrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-            }
-            .buttonStyle(.plain)
-            .help("Hide iOS companion prompt")
         }
-        .padding(MuesliTheme.spacing12)
-        .background(MuesliTheme.backgroundRaised)
-        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
         .overlay(
-            RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
-                .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                .strokeBorder(MuesliTheme.surfaceBorder.opacity(0.7), lineWidth: 1)
         )
-        .onAppear {
-            guard !bridgePromptSeen else { return }
-            bridgePromptSeen = true
-            TelemetryDeck.signal("bridge_prompt_seen", parameters: ["platform": "macos"])
-        }
     }
 
-    private var shouldShowBridgeHandoffButton: Bool {
-        guard appState.config.iCloudSyncEnabled else { return false }
-        switch bridgeState {
-        case .needsICloud, .error:
-            return false
-        case .active:
-            return appState.iCloudBridgeCompanionDeviceName == nil
-        case .notConfigured, .checkingICloud, .syncing:
-            return false
-        }
-    }
-
-    private var bridgeSyncIconIsAnimating: Bool {
-        isBridgeSyncWorking && bridgeIcon == "arrow.triangle.2.circlepath"
-    }
-
-    private var bridgeButtonIconIsAnimating: Bool {
-        isBridgeSyncWorking && bridgeButtonIcon == "arrow.triangle.2.circlepath"
-    }
-
-    private var isBridgeSyncWorking: Bool {
-        bridgeState == .checkingICloud || bridgeState == .syncing
-    }
-
-    private var bridgeIcon: String {
-        switch bridgeState {
-        case .active:
-            return "checkmark.icloud"
-        case .checkingICloud, .syncing:
-            return "arrow.triangle.2.circlepath"
-        case .needsICloud, .error:
-            return "exclamationmark.icloud"
-        case .notConfigured:
-            return "iphone.gen3"
-        }
-    }
-
-    private var bridgeIconColor: Color {
-        switch bridgeState {
-        case .active:
-            return MuesliTheme.success
-        case .needsICloud, .error:
-            return MuesliTheme.transcribing
-        default:
-            return MuesliTheme.accent
-        }
-    }
-
-    private var bridgeTitle: String {
-        switch bridgeState {
-        case .active:
-            guard let deviceName = appState.iCloudBridgeCompanionDeviceName else {
-                if let lastSyncedAt = appState.iCloudLastSyncedAt {
-                    return "iCloud sync active · \(relativeSyncTime(lastSyncedAt))"
+    @ViewBuilder
+    private func dictationCompactRow(_ record: DictationRecord) -> some View {
+        let isSelected = selectedDictationID == record.id
+        Button {
+            selectedDictationID = record.id
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: MuesliTheme.spacing8) {
+                    Text(formatTimeOnly(record.timestamp))
+                        .font(.system(size: 10, weight: .medium).monospacedDigit())
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                    if record.source == "cua" {
+                        Text("CUA")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(MuesliTheme.accent)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(MuesliTheme.accent.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
+                    if let badge = SyncOriginDisplay.badgeLabel(forDictationSource: record.source) {
+                        SyncOriginBadge(label: badge)
+                    }
+                    Spacer(minLength: 0)
                 }
-                return "iCloud sync active"
+                Text(record.rawText.isEmpty ? tr("(empty)", "(пусто)") : record.rawText)
+                    .font(MuesliTheme.caption())
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
             }
-            if let lastSyncedAt = appState.iCloudLastSyncedAt {
-                return "Synced with \(deviceName) · \(relativeSyncTime(lastSyncedAt))"
+            .padding(MuesliTheme.spacing12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                // Inset vertically so the selection fill never touches the
+                // hairline separators between rows.
+                RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                    .fill(isSelected ? MuesliTheme.surfaceSelected : Color.clear)
+                    .padding(.vertical, 3)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                controller.copyToClipboard(record.rawText)
+            } label: {
+                Label(tr("Copy", "Копировать"), systemImage: "doc.on.doc")
             }
-            return "Synced with \(deviceName)"
-        case .checkingICloud, .syncing:
-            return "Setting up private iCloud sync"
-        case .needsICloud:
-            return "Sign in to iCloud to sync"
-        case .error:
-            return "iPhone sync needs attention"
-        case .notConfigured:
-            return "Use Muesli on iPhone"
-        }
-    }
-
-    private var bridgeSubtitle: String {
-        switch bridgeState {
-        case .active:
-            if let deviceName = appState.iCloudBridgeCompanionDeviceName {
-                return "Private iCloud text sync is on with \(deviceName). Audio stays local."
+            if record.computerUseTrace != nil {
+                Button {
+                    controller.copyToClipboard(ComputerUseTraceFormatter.debugText(for: record))
+                } label: {
+                    Label(tr("Copy CUA Trace", "Копировать трассировку CUA"), systemImage: "list.bullet.clipboard")
+                }
             }
-            return "Scan the QR code to connect your iPhone. Audio stays local."
-        case .checkingICloud:
-            return "Checking this Mac's iCloud account..."
-        case .syncing:
-            return "Creating the sync channel and pulling your latest text records."
-        case .needsICloud, .error:
-            return appState.iCloudBridgeMessage ?? "Open iCloud settings, then try again."
-        case .notConfigured:
-            return "Your Muesli history follows you through private iCloud. Audio stays local."
+            Divider()
+            Button(role: .destructive) {
+                if selectedDictationID == record.id {
+                    selectedDictationID = nil
+                }
+                controller.deleteDictation(id: record.id)
+            } label: {
+                Label(tr("Delete", "Удалить"), systemImage: "trash")
+            }
         }
     }
 
-    private var bridgeButtonTitle: String {
-        switch bridgeState {
-        case .active:
-            return "Sync"
-        case .checkingICloud, .syncing:
-            return "Syncing"
-        case .needsICloud, .error:
-            return "Try again"
-        case .notConfigured:
-            return "Set up private iCloud sync"
+    @ViewBuilder
+    private var columnEmptyState: some View {
+        VStack(alignment: .center, spacing: MuesliTheme.spacing8) {
+            Image(systemName: "mic.badge.plus")
+                .font(.system(size: 24, weight: .thin))
+                .foregroundStyle(MuesliTheme.textTertiary)
+            Text(tr("No dictations yet", "Диктовок пока нет"))
+                .font(MuesliTheme.headline())
+                .foregroundStyle(MuesliTheme.textSecondary)
+            Text(emptyStateInstruction)
+                .font(MuesliTheme.caption())
+                .foregroundStyle(MuesliTheme.textTertiary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(MuesliTheme.spacing16)
+        .frame(maxWidth: .infinity)
+        .padding(.top, MuesliTheme.spacing8)
+    }
+
+    // MARK: - Detail pane
+
+    @ViewBuilder
+    private var detailPane: some View {
+        if let record = selectedDictation {
+            ScrollView {
+                VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
+                    Text(formatFullDate(record.timestamp))
+                        .font(MuesliTheme.title2())
+                        .foregroundStyle(MuesliTheme.textPrimary)
+
+                    HStack(spacing: MuesliTheme.spacing8) {
+                        metaChip(icon: "clock", text: formatDuration(record.durationSeconds))
+                        metaChip(icon: "text.word.spacing", text: tr("words: \(record.wordCount)", "слов: \(record.wordCount)"))
+                        if record.durationSeconds > 1 {
+                            let wpm = Int((Double(record.wordCount) / (record.durationSeconds / 60)).rounded())
+                            metaChip(icon: "gauge.with.needle", text: tr("\(wpm) WPM", "\(wpm) слов/мин"))
+                        }
+                        if !record.appContext.isEmpty {
+                            metaChip(icon: "macwindow", text: record.appContext)
+                        }
+                        Spacer()
+                    }
+
+                    HStack(spacing: MuesliTheme.spacing8) {
+                        Button {
+                            controller.copyToClipboard(record.rawText)
+                        } label: {
+                            Label(tr("Copy", "Копировать"), systemImage: "doc.on.doc")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(MuesliTheme.textPrimary)
+                                .padding(.horizontal, MuesliTheme.spacing12)
+                                .padding(.vertical, 7)
+                                .background(MuesliTheme.surfacePrimary)
+                                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            showDeleteConfirmation = true
+                        } label: {
+                            Label(tr("Delete", "Удалить"), systemImage: "trash")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(MuesliTheme.recording)
+                                .padding(.horizontal, MuesliTheme.spacing12)
+                                .padding(.vertical, 7)
+                                .background(MuesliTheme.recording.opacity(0.1))
+                                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    Divider().overlay(MuesliTheme.surfaceBorder)
+
+                    Text(record.rawText)
+                        .font(MuesliTheme.body())
+                        .foregroundStyle(MuesliTheme.textPrimary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if record.computerUseTrace != nil {
+                        VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+                            Text(tr("Computer Use trace", "Трассировка Computer Use"))
+                                .font(MuesliTheme.headline())
+                                .foregroundStyle(MuesliTheme.textSecondary)
+                            Text(ComputerUseTraceFormatter.debugText(for: record))
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(MuesliTheme.textSecondary)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(MuesliTheme.spacing12)
+                                .background(MuesliTheme.backgroundRaised)
+                                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                        }
+                    }
+                }
+                .padding(MuesliTheme.spacing32)
+                .frame(maxWidth: 980, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .alert(tr("Delete Dictation", "Удалить диктовку"), isPresented: $showDeleteConfirmation) {
+                Button(tr("Delete", "Удалить"), role: .destructive) {
+                    selectedDictationID = nil
+                    controller.deleteDictation(id: record.id)
+                }
+                Button(tr("Cancel", "Отмена"), role: .cancel) {}
+            } message: {
+                Text(tr("This dictation will be permanently removed.", "Эта диктовка будет удалена навсегда."))
+            }
+        } else {
+            VStack(spacing: MuesliTheme.spacing12) {
+                Image(systemName: "mic")
+                    .font(.system(size: 42, weight: .thin))
+                    .foregroundStyle(MuesliTheme.textTertiary)
+                Text(tr("Select a dictation", "Выберите диктовку"))
+                    .font(MuesliTheme.title3())
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                Text(tr("Choose a record from the list to see the full text.", "Выберите запись из списка, чтобы увидеть полный текст."))
+                    .font(MuesliTheme.callout())
+                    .foregroundStyle(MuesliTheme.textTertiary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
-    private var bridgeButtonIcon: String {
-        switch bridgeState {
-        case .notConfigured:
-            return "icloud"
-        default:
-            return "arrow.triangle.2.circlepath"
+    @ViewBuilder
+    private func metaChip(icon: String, text: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .medium))
+            Text(text)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
         }
+        .foregroundStyle(MuesliTheme.textSecondary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(MuesliTheme.surfacePrimary)
+        .clipShape(Capsule())
     }
 
-    private var bridgeActionDisabled: Bool {
-        bridgeState == .checkingICloud || bridgeState == .syncing
-    }
-
-    private var bridgeButtonHelp: String {
-        switch bridgeState {
-        case .active:
-            return "Sync text with iCloud"
-        case .checkingICloud, .syncing:
-            return "Sync setup is in progress"
-        default:
-            return "Set up private iCloud text sync"
+    private func formatDuration(_ seconds: Double) -> String {
+        let rounded = Int(seconds.rounded())
+        if rounded >= 60 {
+            let m = rounded / 60
+            let s = rounded % 60
+            return s == 0 ? tr("\(m)m", "\(m) мин") : tr("\(m)m \(s)s", "\(m) мин \(s) с")
         }
+        return tr("\(rounded)s", "\(rounded) с")
     }
 
-    private func bridgePrimaryAction() {
-        switch bridgeState {
-        case .active:
-            controller.performICloudSync()
-        case .checkingICloud, .syncing:
-            break
-        default:
-            controller.enableIPhoneBridgeSync()
-        }
-    }
+    private static let fullDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale.current
+        f.dateStyle = .long
+        f.timeStyle = .short
+        return f
+    }()
 
-    private func relativeSyncTime(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter.localizedString(for: date, relativeTo: Date())
+    private func formatFullDate(_ raw: String) -> String {
+        guard let date = parseDate(raw) else { return raw }
+        return Self.fullDateFormatter.string(from: date)
     }
 
     private var emptyStateInstruction: String {
         appState.config.resolvedOnboardingUseCase.includesVoiceNotes
-            ? "Click Record Voice Note to capture your first note"
-            : "Hold \(appState.config.dictationHotkey.label) to start dictating"
+            ? tr("Click Record Voice Note to capture your first note", "Нажмите «Записать голосовую заметку», чтобы создать первую заметку")
+            : tr("Hold \(appState.config.dictationHotkey.label) to start dictating", "Удерживайте \(appState.config.dictationHotkey.label), чтобы начать диктовку")
     }
 
     private var voiceNoteButton: some View {
@@ -437,7 +448,7 @@ struct DictationsView: View {
             HStack(spacing: 6) {
                 Image(systemName: isRecording ? "stop.fill" : "mic.fill")
                     .font(.system(size: 12, weight: .semibold))
-                Text(isRecording ? "Stop Voice Note" : "Record Voice Note")
+                Text(isRecording ? tr("Stop Voice Note", "Остановить голосовую заметку") : tr("Record Voice Note", "Записать голосовую заметку"))
                     .font(.system(size: 12, weight: .semibold))
             }
             .foregroundStyle(.white)
@@ -575,159 +586,6 @@ struct DictationsView: View {
             return clean.count > 5 ? String(clean.suffix(8).prefix(5)) : clean
         }
         return Self.timeFormatter.string(from: date)
-    }
-}
-
-private struct BridgeSyncIcon: View {
-    let systemName: String
-    let isAnimating: Bool
-    let font: Font
-    @State private var rotationDegrees = 0.0
-
-    var body: some View {
-        Image(systemName: systemName)
-            .font(font)
-            .symbolRenderingMode(.hierarchical)
-            .rotationEffect(.degrees(rotationDegrees))
-            .onAppear {
-                updateRotation(animated: false)
-            }
-            .onChange(of: isAnimating) { _, _ in
-                updateRotation(animated: true)
-            }
-    }
-
-    private func updateRotation(animated: Bool) {
-        guard isAnimating else {
-            if animated {
-                withAnimation(.easeOut(duration: 0.15)) {
-                    rotationDegrees = 0
-                }
-            } else {
-                rotationDegrees = 0
-            }
-            return
-        }
-
-        rotationDegrees = 0
-        withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
-            rotationDegrees = 360
-        }
-    }
-}
-
-private struct IPhoneBridgeQRCodeSheet: View {
-    let deepLinkURL: URL
-    let installURL: URL
-    @Environment(\.dismiss) private var dismiss
-    @State private var didCopySetupLink = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
-                    Text("Open Muesli on iPhone")
-                        .font(MuesliTheme.title3())
-                        .foregroundStyle(MuesliTheme.textPrimary)
-                    Text("Scan this after installing the iPhone app. The QR only opens setup; private iCloud does the actual sync.")
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer()
-
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                        .frame(width: 28, height: 28)
-                        .background(MuesliTheme.surfacePrimary)
-                        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-                }
-                .buttonStyle(.plain)
-            }
-
-            HStack(alignment: .center, spacing: MuesliTheme.spacing16) {
-                QRCodeImage(payload: deepLinkURL.absoluteString)
-                    .frame(width: 148, height: 148)
-                    .padding(MuesliTheme.spacing8)
-                    .background(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-
-                VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-                    Label("Same iCloud account", systemImage: "icloud")
-                    Label("Text sync only", systemImage: "text.badge.checkmark")
-                    Label("Audio stays local", systemImage: "lock")
-                }
-                .font(MuesliTheme.caption())
-                .foregroundStyle(MuesliTheme.textSecondary)
-            }
-
-            HStack(spacing: MuesliTheme.spacing8) {
-                Button("Open iPhone app page") {
-                    NSWorkspace.shared.open(installURL)
-                }
-                .buttonStyle(.bordered)
-
-                Button(didCopySetupLink ? "Copied!" : "Copy setup link") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(deepLinkURL.absoluteString, forType: .string)
-                    didCopySetupLink = true
-                    Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(1500))
-                        didCopySetupLink = false
-                    }
-                }
-                .buttonStyle(.bordered)
-            }
-        }
-        .padding(MuesliTheme.spacing20)
-        .frame(width: 430)
-        .background(MuesliTheme.backgroundBase)
-    }
-}
-
-private struct QRCodeImage: View {
-    let payload: String
-    @State private var cachedImage: NSImage?
-
-    var body: some View {
-        Group {
-            if let image = cachedImage {
-                Image(nsImage: image)
-                    .interpolation(.none)
-                    .resizable()
-                    .scaledToFit()
-            } else {
-                Image(systemName: "qrcode")
-                    .font(.system(size: 96, weight: .regular))
-                    .foregroundStyle(MuesliTheme.textTertiary)
-            }
-        }
-        .accessibilityLabel("iPhone sync setup QR code")
-        .onAppear {
-            if cachedImage == nil {
-                cachedImage = makeQRCodeImage(payload: payload)
-            }
-        }
-    }
-
-    private func makeQRCodeImage(payload: String) -> NSImage? {
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(payload.utf8)
-        filter.correctionLevel = "M"
-
-        guard let outputImage = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 8, y: 8)) else {
-            return nil
-        }
-
-        let representation = NSCIImageRep(ciImage: outputImage)
-        let image = NSImage(size: representation.size)
-        image.addRepresentation(representation)
-        return image
     }
 }
 

@@ -27,7 +27,7 @@ public final class DictationStore {
     t.id, t.final_status, t.final_message, t.trace_json, t.created_at
     """
     private static let meetingColumns = """
-    id, title, start_time, duration_seconds, raw_transcript, formatted_notes, word_count, folder_id, calendar_event_id, mic_audio_path, system_audio_path, saved_recording_path, meeting_status, manual_notes, selected_template_id, selected_template_name, selected_template_kind, selected_template_prompt, source
+    id, title, start_time, duration_seconds, raw_transcript, formatted_notes, word_count, folder_id, calendar_event_id, mic_audio_path, system_audio_path, saved_recording_path, meeting_status, manual_notes, selected_template_id, selected_template_name, selected_template_kind, selected_template_prompt, source, template_summaries, saved_video_path
     """
 
     public init() {
@@ -100,6 +100,8 @@ public final class DictationStore {
             selected_template_name TEXT,
             selected_template_kind TEXT,
             selected_template_prompt TEXT,
+            template_summaries TEXT NOT NULL DEFAULT '{}',
+            saved_video_path TEXT,
             source TEXT NOT NULL DEFAULT 'meeting',
             updated_at REAL NOT NULL DEFAULT 0,
             deleted_at REAL,
@@ -194,7 +196,9 @@ public final class DictationStore {
             "ALTER TABLE meetings ADD COLUMN cloud_change_tag TEXT",
             "ALTER TABLE meetings ADD COLUMN cloud_transcript_record_name TEXT",
             "ALTER TABLE meetings ADD COLUMN last_synced_at REAL",
-            "ALTER TABLE meetings ADD COLUMN sync_dirty INTEGER NOT NULL DEFAULT 1"
+            "ALTER TABLE meetings ADD COLUMN sync_dirty INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE meetings ADD COLUMN template_summaries TEXT NOT NULL DEFAULT '{}'",
+            "ALTER TABLE meetings ADD COLUMN saved_video_path TEXT"
         ] {
             _ = sqlite3_exec(db, sql, nil, nil, nil)
         }
@@ -808,6 +812,8 @@ public final class DictationStore {
             saved_recording_path = NULL,
             word_count = 0,
             duration_seconds = 0,
+            template_summaries = '{}',
+            saved_video_path = NULL,
             deleted_at = ?,
             updated_at = ?,
             sync_dirty = 1
@@ -916,6 +922,8 @@ public final class DictationStore {
                 saved_recording_path = NULL,
                 word_count = 0,
                 duration_seconds = 0,
+                template_summaries = '{}',
+                saved_video_path = NULL,
                 deleted_at = strftime('%s','now'),
                 updated_at = strftime('%s','now'),
                 sync_dirty = 1
@@ -928,7 +936,8 @@ public final class DictationStore {
     public func updateMeeting(id: Int64, title: String, formattedNotes: String) throws {
         let db = try openDatabase()
         defer { sqlite3_close(db) }
-        let sql = "UPDATE meetings SET title = ?, formatted_notes = ?, updated_at = ?, sync_dirty = 1 WHERE id = ?"
+        let summariesJSON = try mergedSummariesJSON(id: id, editedNotes: formattedNotes, db: db)
+        let sql = "UPDATE meetings SET title = ?, formatted_notes = ?, template_summaries = ?, updated_at = ?, sync_dirty = 1 WHERE id = ?"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
             throw lastError(db)
@@ -936,8 +945,9 @@ public final class DictationStore {
         defer { sqlite3_finalize(statement) }
         sqlite3_bind_text(statement, 1, (title as NSString).utf8String, -1, nil)
         sqlite3_bind_text(statement, 2, (formattedNotes as NSString).utf8String, -1, nil)
-        sqlite3_bind_double(statement, 3, Date().timeIntervalSince1970)
-        sqlite3_bind_int64(statement, 4, id)
+        sqlite3_bind_text(statement, 3, (summariesJSON as NSString).utf8String, -1, nil)
+        sqlite3_bind_double(statement, 4, Date().timeIntervalSince1970)
+        sqlite3_bind_int64(statement, 5, id)
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw lastError(db)
         }
@@ -946,18 +956,29 @@ public final class DictationStore {
     public func updateMeetingNotes(id: Int64, formattedNotes: String) throws {
         let db = try openDatabase()
         defer { sqlite3_close(db) }
-        let sql = "UPDATE meetings SET formatted_notes = ?, updated_at = ?, sync_dirty = 1 WHERE id = ?"
+        let summariesJSON = try mergedSummariesJSON(id: id, editedNotes: formattedNotes, db: db)
+        let sql = "UPDATE meetings SET formatted_notes = ?, template_summaries = ?, updated_at = ?, sync_dirty = 1 WHERE id = ?"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
             throw lastError(db)
         }
         defer { sqlite3_finalize(statement) }
         sqlite3_bind_text(statement, 1, (formattedNotes as NSString).utf8String, -1, nil)
-        sqlite3_bind_double(statement, 2, Date().timeIntervalSince1970)
-        sqlite3_bind_int64(statement, 3, id)
+        sqlite3_bind_text(statement, 2, (summariesJSON as NSString).utf8String, -1, nil)
+        sqlite3_bind_double(statement, 3, Date().timeIntervalSince1970)
+        sqlite3_bind_int64(statement, 4, id)
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw lastError(db)
         }
+    }
+
+    /// Manual notes edits also refresh the entry for the currently applied
+    /// template, so switching tabs and back never loses an edit.
+    private func mergedSummariesJSON(id: Int64, editedNotes: String, db: OpaquePointer?) throws -> String {
+        let current = try currentSummaryState(id: id, db: db)
+        var summaries = current.summaries
+        summaries[current.templateID] = editedNotes
+        return Self.encodeTemplateSummaries(summaries)
     }
 
     public func updateMeetingTranscript(id: Int64, rawTranscript: String) throws {
@@ -965,7 +986,8 @@ public final class DictationStore {
         defer { sqlite3_close(db) }
         let manualNotes = try manualNotesForMeeting(id: id, db: db)
         let wordCount = Self.countWords(in: rawTranscript) + Self.countWords(in: manualNotes)
-        let sql = "UPDATE meetings SET raw_transcript = ?, word_count = ?, updated_at = ?, sync_dirty = 1 WHERE id = ?"
+        // A changed transcript invalidates every cached per-template summary.
+        let sql = "UPDATE meetings SET raw_transcript = ?, word_count = ?, template_summaries = '{}', updated_at = ?, sync_dirty = 1 WHERE id = ?"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
             throw lastError(db)
@@ -1116,7 +1138,7 @@ public final class DictationStore {
         let endTime = try liveMeetingFallbackEndTime(meetingID: id, durationSeconds: durationSeconds, db: db)
         let sql = """
         UPDATE meetings
-        SET end_time = ?, duration_seconds = ?, raw_transcript = ?, formatted_notes = ?, meeting_status = ?, word_count = ?, updated_at = ?, sync_dirty = 1
+        SET end_time = ?, duration_seconds = ?, raw_transcript = ?, formatted_notes = ?, meeting_status = ?, word_count = ?, template_summaries = '{}', updated_at = ?, sync_dirty = 1
         WHERE id = ?
         """
         var statement: OpaquePointer?
@@ -1522,7 +1544,7 @@ public final class DictationStore {
     ) throws {
         let sql = """
         UPDATE meetings
-        SET start_time = ?, end_time = ?, duration_seconds = ?, raw_transcript = ?, formatted_notes = ?, meeting_status = ?, word_count = ?, updated_at = ?, sync_dirty = 1
+        SET start_time = ?, end_time = ?, duration_seconds = ?, raw_transcript = ?, formatted_notes = ?, meeting_status = ?, word_count = ?, template_summaries = '{}', updated_at = ?, sync_dirty = 1
         WHERE id = ?
         """
         var statement: OpaquePointer?
@@ -1628,9 +1650,20 @@ public final class DictationStore {
     ) throws {
         let db = try openDatabase()
         defer { sqlite3_close(db) }
+        // Keep the per-template summary dictionary in sync: preserve the summary
+        // the previously applied template produced (backfills meetings created
+        // before this column existed), then store the incoming one.
+        let current = try currentSummaryState(id: id, db: db)
+        var summaries = current.summaries
+        let previousNotes = current.formattedNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !previousNotes.isEmpty, !previousNotes.lowercased().hasPrefix("## raw transcript") {
+            summaries[current.templateID] = current.formattedNotes
+        }
+        summaries[selectedTemplateID] = formattedNotes
+        let summariesJSON = Self.encodeTemplateSummaries(summaries)
         let sql = """
         UPDATE meetings
-        SET title = ?, formatted_notes = ?, selected_template_id = ?, selected_template_name = ?, selected_template_kind = ?, selected_template_prompt = ?, updated_at = ?, sync_dirty = 1
+        SET title = ?, formatted_notes = ?, selected_template_id = ?, selected_template_name = ?, selected_template_kind = ?, selected_template_prompt = ?, template_summaries = ?, updated_at = ?, sync_dirty = 1
         WHERE id = ?
         """
         var statement: OpaquePointer?
@@ -1644,8 +1677,9 @@ public final class DictationStore {
         sqlite3_bind_text(statement, 4, (selectedTemplateName as NSString).utf8String, -1, nil)
         sqlite3_bind_text(statement, 5, (selectedTemplateKind.rawValue as NSString).utf8String, -1, nil)
         sqlite3_bind_text(statement, 6, (selectedTemplatePrompt as NSString).utf8String, -1, nil)
-        sqlite3_bind_double(statement, 7, Date().timeIntervalSince1970)
-        sqlite3_bind_int64(statement, 8, id)
+        sqlite3_bind_text(statement, 7, (summariesJSON as NSString).utf8String, -1, nil)
+        sqlite3_bind_double(statement, 8, Date().timeIntervalSince1970)
+        sqlite3_bind_int64(statement, 9, id)
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw lastError(db)
         }
@@ -1666,7 +1700,7 @@ public final class DictationStore {
         let wordCount = Self.countWords(in: rawTranscript) + Self.countWords(in: manualNotes)
         let sql = """
         UPDATE meetings
-        SET raw_transcript = ?, formatted_notes = ?, meeting_status = ?, word_count = ?, selected_template_id = ?, selected_template_name = ?, selected_template_kind = ?, selected_template_prompt = ?, updated_at = ?, sync_dirty = 1
+        SET raw_transcript = ?, formatted_notes = ?, meeting_status = ?, word_count = ?, selected_template_id = ?, selected_template_name = ?, selected_template_kind = ?, selected_template_prompt = ?, template_summaries = '{}', updated_at = ?, sync_dirty = 1
         WHERE id = ?
         """
         var statement: OpaquePointer?
@@ -2660,6 +2694,8 @@ public final class DictationStore {
             : MeetingTemplateKind(rawValue: stringColumn(statement, index: 16))
         let selectedTemplatePrompt: String? = sqlite3_column_type(statement, 17) == SQLITE_NULL ? nil : stringColumn(statement, index: 17)
         let source = MeetingSource(rawValue: stringColumn(statement, index: 18)) ?? .meeting
+        let templateSummaries = Self.decodeTemplateSummaries(stringColumn(statement, index: 19))
+        let savedVideoPath: String? = sqlite3_column_type(statement, 20) == SQLITE_NULL ? nil : stringColumn(statement, index: 20)
         return MeetingRecord(
             id: sqlite3_column_int64(statement, 0),
             title: stringColumn(statement, index: 1),
@@ -2679,8 +2715,71 @@ public final class DictationStore {
             selectedTemplateName: selectedTemplateName,
             selectedTemplateKind: selectedTemplateKind,
             selectedTemplatePrompt: selectedTemplatePrompt,
-            source: source
+            source: source,
+            templateSummaries: templateSummaries,
+            savedVideoPath: savedVideoPath
         )
+    }
+
+    public func updateMeetingVideoPath(id: Int64, path: String?) throws {
+        let db = try openDatabase()
+        defer { sqlite3_close(db) }
+        let sql = "UPDATE meetings SET saved_video_path = ?, updated_at = ? WHERE id = ?"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw lastError(db)
+        }
+        defer { sqlite3_finalize(statement) }
+        if let path {
+            sqlite3_bind_text(statement, 1, (path as NSString).utf8String, -1, nil)
+        } else {
+            sqlite3_bind_null(statement, 1)
+        }
+        sqlite3_bind_double(statement, 2, Date().timeIntervalSince1970)
+        sqlite3_bind_int64(statement, 3, id)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw lastError(db)
+        }
+    }
+
+    private static func decodeTemplateSummaries(_ json: String) -> [String: String] {
+        guard let data = json.data(using: .utf8),
+              let dict = try? JSONDecoder().decode([String: String].self, from: data) else {
+            return [:]
+        }
+        return dict
+    }
+
+    private static func encodeTemplateSummaries(_ summaries: [String: String]) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(summaries),
+              let json = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return json
+    }
+
+    /// Reads the per-template summary dictionary for a meeting together with
+    /// its currently applied template and notes, so callers can merge updates.
+    private func currentSummaryState(id: Int64, db: OpaquePointer?) throws -> (templateID: String, formattedNotes: String, summaries: [String: String]) {
+        let sql = "SELECT selected_template_id, formatted_notes, template_summaries FROM meetings WHERE id = ? LIMIT 1"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw lastError(db)
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int64(statement, 1, id)
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            throw DictationStoreError.meetingNotFound(id: id)
+        }
+        let rawTemplateID = sqlite3_column_type(statement, 0) == SQLITE_NULL ? "" : stringColumn(statement, index: 0)
+        let trimmedTemplateID = rawTemplateID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let notes = sqlite3_column_type(statement, 1) == SQLITE_NULL ? "" : stringColumn(statement, index: 1)
+        let summaries = Self.decodeTemplateSummaries(
+            sqlite3_column_type(statement, 2) == SQLITE_NULL ? "{}" : stringColumn(statement, index: 2)
+        )
+        return (trimmedTemplateID.isEmpty ? "auto" : trimmedTemplateID, notes, summaries)
     }
 
     private func openDatabase() throws -> OpaquePointer? {

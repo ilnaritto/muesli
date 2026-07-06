@@ -32,31 +32,30 @@ struct DictionaryView: View {
             .padding(MuesliTheme.spacing32)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(MuesliTheme.backgroundBase)
         .onAppear {
             controller.reconcilePendingDictionaryCorrectionAccessibilityEnable()
         }
-        .alert("Enable Accessibility?", isPresented: $isShowingAccessibilityPrompt) {
-            Button("Cancel", role: .cancel) {
+        .alert(tr("Enable Accessibility?", "Включить универсальный доступ?"), isPresented: $isShowingAccessibilityPrompt) {
+            Button(tr("Cancel", "Отмена"), role: .cancel) {
                 controller.cancelDictionaryCorrectionAccessibilityEnableRequest()
             }
-            Button("Enable") {
+            Button(tr("Enable", "Включить")) {
                 controller.requestDictionaryCorrectionAccessibilityEnable()
             }
         } message: {
-            Text("Dictionary suggestions briefly read focused app text via Accessibility after dictation. Grant access, then relaunch Muesli to turn suggestions on.")
+            Text(tr("Dictionary suggestions briefly read focused app text via Accessibility after dictation. Grant access, then relaunch Muesli to turn suggestions on.", "Предложения словаря кратко считывают текст активного приложения через универсальный доступ после диктовки. Разрешите доступ и перезапустите Muesli, чтобы включить предложения."))
         }
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
             HStack {
-                Text("Dictionary")
+                Text(tr("Dictionary", "Словарь"))
                     .font(MuesliTheme.title1())
                     .foregroundStyle(MuesliTheme.textPrimary)
                 Spacer()
                 Toggle(
-                    "Dictionary suggestions",
+                    tr("Dictionary suggestions", "Предложения словаря"),
                     isOn: Binding(
                         get: { appState.config.enableDictionaryCorrectionPrompts },
                         set: { handleDictionaryCorrectionPromptsToggle($0) }
@@ -65,7 +64,7 @@ struct DictionaryView: View {
                 .toggleStyle(.switch)
                 .font(MuesliTheme.caption())
                 .foregroundStyle(MuesliTheme.textSecondary)
-                .help("Briefly reads focused app text after dictation to detect corrections.")
+                .help(tr("Briefly reads focused app text after dictation to detect corrections.", "Кратко считывает текст активного приложения после диктовки, чтобы находить исправления."))
                 Button {
                     isAdding = true
                     newWord = ""
@@ -75,7 +74,7 @@ struct DictionaryView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "plus")
                             .font(.system(size: 11, weight: .bold))
-                        Text("Add new")
+                        Text(tr("Add new", "Добавить"))
                             .font(.system(size: 13, weight: .medium))
                     }
                     .foregroundStyle(MuesliTheme.textPrimary)
@@ -90,7 +89,7 @@ struct DictionaryView: View {
                 }
                 .buttonStyle(.plain)
             }
-            Text("Add custom words for names, brands, and domain terms, and tune how aggressively each entry should fuzzy-match transcription errors.")
+            Text(tr("Add custom words for names, brands, and domain terms, and tune how aggressively each entry should fuzzy-match transcription errors.", "Добавляйте свои слова для имён, брендов и специальных терминов и настраивайте, насколько агрессивно каждая запись должна нечётко сопоставляться с ошибками транскрипции."))
                 .font(MuesliTheme.body())
                 .foregroundStyle(MuesliTheme.textSecondary)
         }
@@ -106,10 +105,10 @@ struct DictionaryView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Suggested Corrections")
+                    Text(tr("Suggested Corrections", "Предлагаемые исправления"))
                         .font(MuesliTheme.headline())
                         .foregroundStyle(MuesliTheme.textPrimary)
-                    Text("Corrections Muesli noticed by briefly reading focused app text after dictation.")
+                    Text(tr("Corrections Muesli noticed by briefly reading focused app text after dictation.", "Исправления, которые Muesli заметил, кратко считав текст активного приложения после диктовки."))
                         .font(MuesliTheme.caption())
                         .foregroundStyle(MuesliTheme.textTertiary)
                 }
@@ -160,7 +159,7 @@ struct DictionaryView: View {
         guard count > 0 else { return "" }
         let start = boundedSuggestionPage * DictionaryRowMetrics.suggestionPageSize + 1
         let end = min(start + DictionaryRowMetrics.suggestionPageSize - 1, count)
-        return "\(start)-\(end) of \(count)"
+        return tr("\(start)-\(end) of \(count)", "\(start)-\(end) из \(count)")
     }
 
     private var suggestionPaginationControls: some View {
@@ -173,7 +172,7 @@ struct DictionaryView: View {
 
             DictionaryIconButton(
                 systemName: "chevron.left",
-                label: "Previous suggestions",
+                label: tr("Previous suggestions", "Предыдущие предложения"),
                 tint: MuesliTheme.textSecondary,
                 isDisabled: boundedSuggestionPage == 0
             ) {
@@ -182,7 +181,7 @@ struct DictionaryView: View {
 
             DictionaryIconButton(
                 systemName: "chevron.right",
-                label: "Next suggestions",
+                label: tr("Next suggestions", "Следующие предложения"),
                 tint: MuesliTheme.textSecondary,
                 isDisabled: boundedSuggestionPage >= suggestionPageCount - 1
             ) {
@@ -225,10 +224,10 @@ struct DictionaryView: View {
             Image(systemName: "character.book.closed")
                 .font(.system(size: 28))
                 .foregroundStyle(MuesliTheme.textTertiary)
-            Text("No custom words yet")
+            Text(tr("No custom words yet", "Пока нет своих слов"))
                 .font(MuesliTheme.body())
                 .foregroundStyle(MuesliTheme.textSecondary)
-            Text("Add words that transcription frequently gets wrong")
+            Text(tr("Add words that transcription frequently gets wrong", "Добавьте слова, которые транскрипция часто распознаёт неверно"))
                 .font(MuesliTheme.caption())
                 .foregroundStyle(MuesliTheme.textTertiary)
         }
@@ -238,13 +237,13 @@ struct DictionaryView: View {
 
     private var columnHeader: some View {
         HStack(spacing: MuesliTheme.spacing8) {
-            Text("Match")
+            Text(tr("Match", "Совпадение"))
                 .frame(maxWidth: .infinity, alignment: .leading)
             Color.clear
                 .frame(width: DictionaryRowMetrics.arrowWidth)
-            Text("Replace")
+            Text(tr("Replace", "Замена"))
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Text("Threshold")
+            Text(tr("Threshold", "Порог"))
                 .frame(width: DictionaryRowMetrics.thresholdWidth, alignment: .leading)
             Color.clear
                 .frame(width: DictionaryRowMetrics.actionsWidth)
@@ -257,20 +256,20 @@ struct DictionaryView: View {
 
     private var addWordRow: some View {
         HStack(spacing: MuesliTheme.spacing8) {
-            TextField("Word", text: $newWord)
+            TextField(tr("Word", "Слово"), text: $newWord)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: .infinity)
             Image(systemName: "arrow.right")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(MuesliTheme.textTertiary)
                 .frame(width: DictionaryRowMetrics.arrowWidth)
-            TextField("Replace with", text: $newReplacement)
+            TextField(tr("Replace with", "Заменить на"), text: $newReplacement)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: .infinity)
             ThresholdEditor(value: $newThreshold)
             DictionaryIconButton(
                 systemName: "checkmark",
-                label: "Add word",
+                label: tr("Add word", "Добавить слово"),
                 tint: MuesliTheme.accent,
                 isDisabled: newWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ) {
@@ -291,7 +290,7 @@ struct DictionaryView: View {
             }
             DictionaryIconButton(
                 systemName: "xmark",
-                label: "Cancel",
+                label: tr("Cancel", "Отмена"),
                 tint: MuesliTheme.textTertiary
             ) {
                 isAdding = false
@@ -333,14 +332,14 @@ private struct DictionarySuggestionRow: View {
             Spacer()
             DictionaryIconButton(
                 systemName: "checkmark",
-                label: "Add correction",
+                label: tr("Add correction", "Добавить исправление"),
                 tint: MuesliTheme.accent
             ) {
                 controller.acceptDictionarySuggestion(id: suggestion.id)
             }
             DictionaryIconButton(
                 systemName: "xmark",
-                label: "Dismiss correction",
+                label: tr("Dismiss correction", "Отклонить исправление"),
                 tint: MuesliTheme.textTertiary
             ) {
                 controller.dismissDictionarySuggestion(id: suggestion.id)
@@ -351,7 +350,7 @@ private struct DictionarySuggestionRow: View {
     }
 
     private var detailText: String {
-        var parts = ["Seen \(suggestion.occurrenceCount)x"]
+        var parts = [tr("Seen \(suggestion.occurrenceCount)x", "Замечено \(suggestion.occurrenceCount) раз")]
         if !suggestion.appDisplayName.isEmpty {
             parts.append(suggestion.appDisplayName)
         }
@@ -391,20 +390,20 @@ private struct DictionaryWordEditorRow: View {
 
     var body: some View {
         HStack(spacing: MuesliTheme.spacing8) {
-            TextField("Word", text: $draftWord)
+            TextField(tr("Word", "Слово"), text: $draftWord)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: .infinity)
             Image(systemName: "arrow.right")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(MuesliTheme.textTertiary)
                 .frame(width: DictionaryRowMetrics.arrowWidth)
-            TextField("Replace with", text: $draftReplacement)
+            TextField(tr("Replace with", "Заменить на"), text: $draftReplacement)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: .infinity)
             ThresholdEditor(value: $draftThreshold)
             DictionaryIconButton(
                 systemName: "checkmark",
-                label: "Save word",
+                label: tr("Save word", "Сохранить слово"),
                 tint: hasChanges && !trimmedWord.isEmpty ? MuesliTheme.accent : MuesliTheme.textTertiary,
                 isDisabled: trimmedWord.isEmpty || !hasChanges
             ) {
@@ -419,7 +418,7 @@ private struct DictionaryWordEditorRow: View {
             }
             DictionaryIconButton(
                 systemName: "trash",
-                label: "Delete word",
+                label: tr("Delete word", "Удалить слово"),
                 tint: MuesliTheme.recording,
                 weight: .regular
             ) {
@@ -466,8 +465,8 @@ private struct ThresholdEditor: View {
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             thresholdPopover
         }
-        .help("Matching threshold")
-        .accessibilityLabel("Matching threshold")
+        .help(tr("Matching threshold", "Порог совпадения"))
+        .accessibilityLabel(tr("Matching threshold", "Порог совпадения"))
         .accessibilityValue(Self.label(for: value))
     }
 
@@ -486,7 +485,7 @@ private struct ThresholdEditor: View {
     private var thresholdPopover: some View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
             HStack {
-                Text("Threshold")
+                Text(tr("Threshold", "Порог"))
                     .font(MuesliTheme.caption())
                     .foregroundStyle(MuesliTheme.textTertiary)
                 Spacer()
@@ -585,7 +584,7 @@ private struct ThresholdSlider: View {
         }
         .frame(height: thumbSize)
         .accessibilityElement()
-        .accessibilityLabel("Matching threshold")
+        .accessibilityLabel(tr("Matching threshold", "Порог совпадения"))
         .accessibilityValue("\(Int(round(value * 100)))%")
         .accessibilityAdjustableAction { direction in
             switch direction {

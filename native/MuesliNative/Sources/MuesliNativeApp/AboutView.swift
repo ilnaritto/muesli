@@ -19,7 +19,7 @@ struct AboutView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: MuesliTheme.spacing32) {
-                Text("About")
+                Text(tr("About", "О приложении"))
                     .font(MuesliTheme.title1())
                     .foregroundStyle(MuesliTheme.textPrimary)
 
@@ -28,9 +28,9 @@ struct AboutView: View {
                 }
 
                 // MARK: - App Info
-                sectionHeader("App Info")
+                sectionHeader(tr("App Info", "Сведения о приложении"))
                 aboutCard {
-                    aboutRow("Version") {
+                    aboutRow(tr("Version", "Версия")) {
                         Text(version)
                             .font(.system(size: 15, weight: .semibold, design: .monospaced))
                             .foregroundStyle(MuesliTheme.textPrimary)
@@ -38,7 +38,7 @@ struct AboutView: View {
 
                     Divider().background(MuesliTheme.surfaceBorder)
 
-                    aboutRow("Updates") {
+                    aboutRow(tr("Updates", "Обновления")) {
                         Text(updateRowGuidance)
                             .font(MuesliTheme.callout())
                             .foregroundStyle(MuesliTheme.textSecondary)
@@ -47,16 +47,16 @@ struct AboutView: View {
                 }
 
                 // MARK: - Support
-                sectionHeader("Support")
+                sectionHeader(tr("Support", "Поддержка"))
                 aboutCard {
-                    aboutRow("Support Development") {
+                    aboutRow(tr("Support Development", "Поддержать разработку")) {
                         Button {
                             if let url = URL(string: donateURL) { NSWorkspace.shared.open(url) }
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: "heart.fill")
                                     .font(.system(size: 12))
-                                Text("Donate")
+                                Text(tr("Donate", "Пожертвовать"))
                                     .font(.system(size: 13, weight: .semibold))
                             }
                             .foregroundStyle(.white)
@@ -70,18 +70,18 @@ struct AboutView: View {
 
                     Divider().background(MuesliTheme.surfaceBorder)
 
-                    aboutRow("Source Code") {
-                        actionButton("View on GitHub", icon: "arrow.up.right.square") {
+                    aboutRow(tr("Source Code", "Исходный код")) {
+                        actionButton(tr("View on GitHub", "Открыть на GitHub"), icon: "arrow.up.right.square") {
                             if let url = URL(string: githubURL) { NSWorkspace.shared.open(url) }
                         }
                     }
                 }
 
                 // MARK: - Data
-                sectionHeader("Data")
+                sectionHeader(tr("Data", "Данные"))
                 aboutCard {
                     VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
-                        Text("App Data Directory")
+                        Text(tr("App Data Directory", "Папка данных приложения"))
                             .font(MuesliTheme.body())
                             .foregroundStyle(MuesliTheme.textPrimary)
 
@@ -93,7 +93,7 @@ struct AboutView: View {
                                 .truncationMode(.middle)
                                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                            actionButton("Open", icon: "folder") {
+                            actionButton(tr("Open", "Открыть"), icon: "folder") {
                                 NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: appDataPath)
                             }
                         }
@@ -101,21 +101,21 @@ struct AboutView: View {
                 }
 
                 // MARK: - Acknowledgements
-                sectionHeader("Acknowledgements")
+                sectionHeader(tr("Acknowledgements", "Благодарности"))
                 aboutCard {
                     acknowledgement(
                         name: "FluidAudio by FluidInference",
-                        description: "CoreML speech stack powering Parakeet, Qwen3 ASR, Silero VAD, and speaker diarization on Apple Silicon."
+                        description: tr("CoreML speech stack powering Parakeet, Qwen3 ASR, Silero VAD, and speaker diarization on Apple Silicon.", "Речевой стек CoreML, обеспечивающий работу Parakeet, Qwen3 ASR, Silero VAD и диаризации говорящих на Apple Silicon.")
                     )
                     Divider().background(MuesliTheme.surfaceBorder)
                     acknowledgement(
                         name: "LocalVQE by localai-org",
-                        description: "On-device acoustic echo cancellation powering cleaner meeting transcription."
+                        description: tr("On-device acoustic echo cancellation powering cleaner meeting transcription.", "Акустическое эхоподавление на устройстве для более чистой транскрипции встреч.")
                     )
                     Divider().background(MuesliTheme.surfaceBorder)
                     acknowledgement(
                         name: "WhisperKit by Argmax",
-                        description: "Swift Whisper inference on CoreML/ANE powering the app's Whisper Small, Medium, and Large Turbo backends."
+                        description: tr("Swift Whisper inference on CoreML/ANE powering the app's Whisper Small, Medium, and Large Turbo backends.", "Инференс Whisper на Swift через CoreML/ANE, обеспечивающий работу бэкендов Whisper Small, Medium и Large Turbo.")
                     )
                 }
 
@@ -123,7 +123,6 @@ struct AboutView: View {
             }
             .padding(MuesliTheme.spacing32)
         }
-        .background(MuesliTheme.backgroundBase)
     }
 
     // MARK: - Components
@@ -161,15 +160,15 @@ struct AboutView: View {
     private var updateRowGuidance: String {
         switch appState.sparkleUpdateStatus {
         case .available:
-            return "Use the menu bar icon > Check for Updates..."
+            return tr("Use the menu bar icon > Check for Updates...", "Значок в строке меню > Проверить обновления...")
         case .downloaded:
-            return "Use the menu bar updater to finish installation."
+            return tr("Use the menu bar updater to finish installation.", "Завершите установку через обновление в строке меню.")
         case .checking, .busy, .installing:
-            return "Checking..."
+            return tr("Checking...", "Проверка...")
         case .failed:
-            return "Use the menu bar icon > Check for Updates..."
+            return tr("Use the menu bar icon > Check for Updates...", "Значок в строке меню > Проверить обновления...")
         case .idle, .upToDate, .disabled:
-            return "Use the menu bar icon > Check for Updates..."
+            return tr("Use the menu bar icon > Check for Updates...", "Значок в строке меню > Проверить обновления...")
         }
     }
 
@@ -180,57 +179,57 @@ struct AboutView: View {
         case .checking:
             return UpdateBanner(
                 icon: "arrow.triangle.2.circlepath",
-                title: "Checking for updates",
-                message: "Muesli is checking the appcast for the latest version.",
+                title: tr("Checking for updates", "Проверка обновлений"),
+                message: tr("Muesli is checking the appcast for the latest version.", "Muesli проверяет наличие последней версии в appcast."),
                 tint: MuesliTheme.transcribing
             )
         case .busy(let message):
             return UpdateBanner(
                 icon: "clock.arrow.circlepath",
-                title: "Updater is busy",
+                title: tr("Updater is busy", "Обновление занято"),
                 message: message,
                 tint: MuesliTheme.transcribing
             )
         case .available(let version):
             return UpdateBanner(
                 icon: "exclamationmark.triangle.fill",
-                title: "Muesli \(version) is available",
-                message: "An update is available. Use the menu bar icon > Check for Updates... to open the updater.",
+                title: tr("Muesli \(version) is available", "Доступна Muesli \(version)"),
+                message: tr("An update is available. Use the menu bar icon > Check for Updates... to open the updater.", "Доступно обновление. Откройте значок в строке меню > Проверить обновления..., чтобы запустить обновление."),
                 tint: MuesliTheme.transcribing
             )
         case .downloaded(let version):
             return UpdateBanner(
                 icon: "exclamationmark.triangle.fill",
-                title: "Muesli \(version) is ready to install",
-                message: "The update is downloaded. Use the menu bar updater to finish installation.",
+                title: tr("Muesli \(version) is ready to install", "Muesli \(version) готова к установке"),
+                message: tr("The update is downloaded. Use the menu bar updater to finish installation.", "Обновление загружено. Завершите установку через обновление в строке меню."),
                 tint: MuesliTheme.transcribing
             )
         case .installing(let version):
             return UpdateBanner(
                 icon: "arrow.down.circle.fill",
-                title: "Installing Muesli \(version)",
-                message: "Sparkle is preparing the update. Muesli may relaunch when installation finishes.",
+                title: tr("Installing Muesli \(version)", "Установка Muesli \(version)"),
+                message: tr("Sparkle is preparing the update. Muesli may relaunch when installation finishes.", "Sparkle готовит обновление. Muesli может перезапуститься после завершения установки."),
                 tint: MuesliTheme.transcribing
             )
         case .upToDate:
             return UpdateBanner(
                 icon: "checkmark.circle.fill",
-                title: "Muesli is up to date",
-                message: "No newer version was found in the appcast.",
+                title: tr("Muesli is up to date", "Установлена последняя версия Muesli"),
+                message: tr("No newer version was found in the appcast.", "Более новая версия в appcast не найдена."),
                 tint: MuesliTheme.success
             )
         case .disabled(let message):
             return UpdateBanner(
                 icon: "minus.circle.fill",
-                title: "Updates are disabled",
+                title: tr("Updates are disabled", "Обновления отключены"),
                 message: message,
                 tint: MuesliTheme.textTertiary
             )
         case .failed(let message):
             return UpdateBanner(
                 icon: "xmark.octagon.fill",
-                title: "Update check failed",
-                message: "\(message) Use the menu bar icon > Check for Updates... to try again.",
+                title: tr("Update check failed", "Не удалось проверить обновления"),
+                message: tr("\(message) Use the menu bar icon > Check for Updates... to try again.", "\(message) Откройте значок в строке меню > Проверить обновления..., чтобы повторить попытку."),
                 tint: MuesliTheme.recording
             )
         }

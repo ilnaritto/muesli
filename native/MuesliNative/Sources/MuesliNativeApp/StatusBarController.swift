@@ -113,22 +113,22 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             menu.addItem(.separator())
         }
 
-        menu.addItem(actionItem(title: "Open \(AppIdentity.displayName)", action: #selector(MuesliController.openHistoryWindow as (MuesliController) -> () -> Void)))
+        menu.addItem(actionItem(title: tr("Open \(AppIdentity.displayName)", "Открыть \(AppIdentity.displayName)"), action: #selector(MuesliController.openHistoryWindow as (MuesliController) -> () -> Void)))
         if controller.isMeetingRecording() {
-            let pauseTitle = controller.isMeetingRecordingPaused() ? "Resume Meeting Recording" : "Pause Meeting Recording"
+            let pauseTitle = controller.isMeetingRecordingPaused() ? tr("Resume Meeting Recording", "Возобновить запись встречи") : tr("Pause Meeting Recording", "Приостановить запись встречи")
             menu.addItem(actionItem(title: pauseTitle, action: #selector(MuesliController.toggleMeetingRecordingPause)))
-            menu.addItem(actionItem(title: "Stop Meeting Recording", action: #selector(MuesliController.toggleMeetingRecording)))
-            menu.addItem(actionItem(title: "Discard Meeting Recording...", action: #selector(MuesliController.discardMeetingWithConfirmation)))
+            menu.addItem(actionItem(title: tr("Stop Meeting Recording", "Остановить запись встречи"), action: #selector(MuesliController.toggleMeetingRecording)))
+            menu.addItem(actionItem(title: tr("Discard Meeting Recording...", "Удалить запись встречи..."), action: #selector(MuesliController.discardMeetingWithConfirmation)))
         } else {
-            menu.addItem(actionItem(title: "Start Meeting Recording", action: #selector(MuesliController.toggleMeetingRecording)))
+            menu.addItem(actionItem(title: tr("Start Meeting Recording", "Начать запись встречи"), action: #selector(MuesliController.toggleMeetingRecording)))
         }
         menu.addItem(.separator())
 
-        let recentItem = NSMenuItem(title: "Recent Dictations", action: nil, keyEquivalent: "")
+        let recentItem = NSMenuItem(title: tr("Recent Dictations", "Недавние диктовки"), action: nil, keyEquivalent: "")
         let recentMenu = NSMenu()
         let recentRows = controller.recentDictations()
         if recentRows.isEmpty {
-            let empty = NSMenuItem(title: "No dictations yet", action: nil, keyEquivalent: "")
+            let empty = NSMenuItem(title: tr("No dictations yet", "Диктовок пока нет"), action: nil, keyEquivalent: "")
             empty.isEnabled = false
             recentMenu.addItem(empty)
         } else {
@@ -142,7 +142,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.setSubmenu(recentMenu, for: recentItem)
         menu.addItem(recentItem)
 
-        let backendItem = NSMenuItem(title: "Transcription Backend", action: nil, keyEquivalent: "")
+        let backendItem = NSMenuItem(title: tr("Transcription Backend", "Движок транскрипции"), action: nil, keyEquivalent: "")
         let backendMenu = NSMenu()
         for option in BackendOption.downloaded {
             let prefix = controller.selectedBackend == option ? "✓ " : ""
@@ -154,7 +154,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.setSubmenu(backendMenu, for: backendItem)
         menu.addItem(backendItem)
 
-        let meetingBackendItem = NSMenuItem(title: "Meetings Backend", action: nil, keyEquivalent: "")
+        let meetingBackendItem = NSMenuItem(title: tr("Meetings Backend", "Движок встреч"), action: nil, keyEquivalent: "")
         let meetingBackendMenu = NSMenu()
         for option in MeetingSummaryBackendOption.all {
             let prefix = controller.selectedMeetingSummaryBackend == option ? "✓ " : ""
@@ -171,10 +171,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.addItem(meetingBackendItem)
 
         menu.addItem(.separator())
-        menu.addItem(actionItem(title: "Settings…", action: #selector(MuesliController.openSettingsTab)))
+        menu.addItem(actionItem(title: tr("Settings…", "Настройки…"), action: #selector(MuesliController.openSettingsTab)))
         menu.addItem(checkForUpdatesItem())
         menu.addItem(.separator())
-        menu.addItem(actionItem(title: "Quit", action: #selector(MuesliController.quitApp)))
+        menu.addItem(actionItem(title: tr("Quit", "Завершить"), action: #selector(MuesliController.quitApp)))
     }
 
     private func addUpcomingEventsSection(_ events: [UnifiedCalendarEvent]) {
@@ -193,7 +193,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             let firstEvent = nextUpEvents[0]
             let minutesUntil = Int(ceil(firstEvent.startDate.timeIntervalSince(now) / 60))
             addUpcomingEventGroup(
-                title: "Starts in \(formatTimeUntil(minutesUntil))",
+                title: tr("Starts in \(formatTimeUntil(minutesUntil))", "Начнётся через \(formatTimeUntil(minutesUntil))"),
                 events: nextUpEvents,
                 timeFormatter: timeFormatter
             )
@@ -256,10 +256,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     private func upcomingMenuHeader(for day: Date, calendar: Calendar) -> String {
         if calendar.isDateInToday(day) {
-            return "Today"
+            return tr("Today", "Сегодня")
         }
         if calendar.isDateInTomorrow(day) {
-            return "Tomorrow"
+            return tr("Tomorrow", "Завтра")
         }
         let formatter = DateFormatter()
         formatter.dateFormat = "EEE, MMM d"
@@ -268,14 +268,14 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     private func formatTimeUntil(_ minutes: Int) -> String {
         if minutes < 60 {
-            return "\(minutes)m"
+            return tr("\(minutes)m", "\(minutes) мин")
         }
         let hours = minutes / 60
         let remainingMinutes = minutes % 60
         if remainingMinutes == 0 {
-            return "\(hours)h"
+            return tr("\(hours)h", "\(hours) ч")
         }
-        return "\(hours)h \(remainingMinutes)m"
+        return tr("\(hours)h \(remainingMinutes)m", "\(hours) ч \(remainingMinutes) мин")
     }
 
     private func actionItem(title: String, action: Selector) -> NSMenuItem {
@@ -286,7 +286,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     private func checkForUpdatesItem() -> NSMenuItem {
         let item = NSMenuItem(
-            title: "Check for Updates…",
+            title: tr("Check for Updates…", "Проверить обновления…"),
             action: #selector(MuesliController.checkForUpdates),
             keyEquivalent: ""
         )

@@ -92,6 +92,8 @@ struct MeetingSessionResult {
     let retainedRecordingError: Error?
     let systemRecordingURL: URL?
     let templateSnapshot: MeetingTemplateSnapshot
+    /// Temporary video-only screen recording, muxed with audio after persist.
+    var videoRecordingURL: URL? = nil
 }
 
 extension MeetingSessionResult {
@@ -118,7 +120,8 @@ extension MeetingSessionResult {
             retainedRecordingURL: retainedRecordingURL,
             retainedRecordingError: retainedRecordingError,
             systemRecordingURL: systemRecordingURL,
-            templateSnapshot: templateSnapshot
+            templateSnapshot: templateSnapshot,
+            videoRecordingURL: videoRecordingURL
         )
     }
 }
@@ -147,6 +150,7 @@ final class MeetingSession {
     private let templateSnapshot: MeetingTemplateSnapshot
     private let transcriptionCoordinator: TranscriptionCoordinator
     private let systemAudioRecorder: SystemAudioCapturing
+    private var screenVideoRecorder: MeetingScreenVideoRecorder?
     private let neuralAec = MeetingNeuralAec()
 
     /// Route-aware mic recorder with real-time 16 kHz mono PCM access.
@@ -247,6 +251,18 @@ final class MeetingSession {
             setupRetainedRecordingWriterIfNeeded()
             try await systemAudioRecorder.start()
             try meetingMicRecorder.start()
+
+            if config.enableMeetingScreenVideo {
+                // Screen video is best-effort: a capture failure must never
+                // break the meeting itself.
+                let recorder = MeetingScreenVideoRecorder()
+                do {
+                    try await recorder.start()
+                    screenVideoRecorder = recorder
+                } catch {
+                    fputs("[meeting-video] failed to start screen capture: \(error)\n", stderr)
+                }
+            }
         } catch {
             vadController?.stop()
             vadController = nil
@@ -392,6 +408,10 @@ final class MeetingSession {
 
         // Stop system audio
         let systemAudioURL = systemAudioRecorder.stop()
+
+        // Stop screen video (best-effort)
+        let videoRecordingURL = await screenVideoRecorder?.stop()
+        screenVideoRecorder = nil
 
         // Transcribe last mic chunk
         let finalMicSegments = await transcribeMicChunk(
@@ -571,7 +591,8 @@ final class MeetingSession {
             retainedRecordingURL: retainedRecordingURL,
             retainedRecordingError: retainedRecordingWriterError,
             systemRecordingURL: systemAudioURL,
-            templateSnapshot: templateSnapshot
+            templateSnapshot: templateSnapshot,
+            videoRecordingURL: videoRecordingURL
         )
     }
 

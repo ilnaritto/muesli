@@ -1,4 +1,5 @@
 import AVFoundation
+import AVKit
 import CryptoKit
 import SwiftUI
 
@@ -190,7 +191,7 @@ struct MeetingRecordingPlayerView: View {
             }
             .buttonStyle(.plain)
             .disabled(player == nil)
-            .help(isPlaying ? "Pause recording" : "Play recording")
+            .help(isPlaying ? tr("Pause recording", "Приостановить запись") : tr("Play recording", "Воспроизвести запись"))
 
             Group {
                 if let waveform {
@@ -200,7 +201,7 @@ struct MeetingRecordingPlayerView: View {
                         onSeek: seek(to:)
                     )
                 } else if loadFailed {
-                    Text("Recording unavailable")
+                    Text(tr("Recording unavailable", "Запись недоступна"))
                         .font(MuesliTheme.captionMedium())
                         .foregroundStyle(MuesliTheme.textTertiary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -208,7 +209,7 @@ struct MeetingRecordingPlayerView: View {
                     HStack(spacing: MuesliTheme.spacing8) {
                         ProgressView()
                             .controlSize(.small)
-                        Text("Loading recording")
+                        Text(tr("Loading recording", "Загрузка записи"))
                             .font(MuesliTheme.captionMedium())
                             .foregroundStyle(MuesliTheme.textTertiary)
                     }
@@ -361,7 +362,7 @@ private struct RecordingWaveformView: View {
             )
         }
         .frame(minHeight: 36)
-        .accessibilityLabel("Recording waveform")
+        .accessibilityLabel(tr("Recording waveform", "Форма волны записи"))
     }
 
     private func peakForVisibleBar(_ index: Int, visibleCount: Int, sourceCount: Int) -> CGFloat {
@@ -369,5 +370,47 @@ private struct RecordingWaveformView: View {
         let end = max(start + 1, (index + 1) * sourceCount / visibleCount)
         let maxPeak = peaks[start..<min(end, sourceCount)].max() ?? 10
         return CGFloat(maxPeak) / 255
+    }
+}
+
+/// Embedded screen-video player with inline controls and a fullscreen toggle.
+struct MeetingVideoPlayerView: NSViewRepresentable {
+    let videoPath: String
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.controlsStyle = .inline
+        view.showsFullScreenToggleButton = true
+        view.player = AVPlayer(url: URL(fileURLWithPath: videoPath))
+        return view
+    }
+
+    func updateNSView(_ nsView: AVPlayerView, context: Context) {
+        let currentPath = ((nsView.player?.currentItem?.asset) as? AVURLAsset)?.url.path
+        if currentPath != videoPath {
+            nsView.player = AVPlayer(url: URL(fileURLWithPath: videoPath))
+        }
+    }
+}
+
+/// Screen-video plashka: the player fills the rounded border edge-to-edge and
+/// the height follows the recording's real aspect ratio.
+struct MeetingVideoPanel: View {
+    let videoPath: String
+    @State private var aspectRatio: CGFloat = 16.0 / 10.0
+
+    var body: some View {
+        MeetingVideoPlayerView(videoPath: videoPath)
+            .aspectRatio(aspectRatio, contentMode: .fit)
+            .background(RoundedRectangle(cornerRadius: 20).fill(MuesliTheme.backgroundBase))
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+            .task(id: videoPath) {
+                let asset = AVURLAsset(url: URL(fileURLWithPath: videoPath))
+                guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+                      let size = try? await track.load(.naturalSize),
+                      size.width > 0, size.height > 0 else { return }
+                aspectRatio = size.width / size.height
+            }
     }
 }

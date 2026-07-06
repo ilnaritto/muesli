@@ -27,7 +27,7 @@ struct LiveTranscriptView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
                     if groups.isEmpty {
-                        Text("Waiting for speech…")
+                        Text(tr("Waiting for speech…", "Ожидание речи…"))
                             .font(MuesliTheme.body())
                             .foregroundStyle(MuesliTheme.textTertiary)
                             .padding(MuesliTheme.spacing16)

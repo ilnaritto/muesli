@@ -6,26 +6,25 @@ struct DashboardRootView: View {
     let controller: MuesliController
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView(appState: appState, controller: controller)
-                .navigationSplitViewColumnWidth(min: 240, ideal: 260, max: 300)
-        } detail: {
-            detailContent
+        detailContent
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(MuesliTheme.backgroundBase)
-        }
-        .navigationSplitViewStyle(.balanced)
-        .frame(minWidth: 900, minHeight: 600)
+            // Horizontal only: the right pane's content runs edge-to-edge
+            // vertically; the left card keeps its own vertical inset.
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(MuesliTheme.backgroundDeep)
+            .ignoresSafeArea()
+            .frame(minWidth: 980, minHeight: 600)
         .preferredColorScheme(appState.config.darkMode ? .dark : .light)
         .alert(
-            appState.contributionMilestonePrompt?.title ?? "Muesli milestone",
+            appState.contributionMilestonePrompt?.title ?? tr("Muesli milestone", "Достижение Muesli"),
             isPresented: Binding(
                 get: { appState.contributionMilestonePrompt != nil },
                 set: { if !$0 { controller.dismissContributionMilestonePrompt() } }
             )
         ) {
             if appState.contributionMilestonePrompt?.showGitHubStar == true {
-                Button("Star on GitHub") {
+                Button(tr("Star on GitHub", "Поставить звезду на GitHub")) {
                     controller.openContributionMilestoneAction(.githubStar)
                 }
             }
@@ -35,16 +34,16 @@ struct DashboardRootView: View {
                 }
             }
             if appState.contributionMilestonePrompt?.showTweetAboutMuesli == true {
-                Button("Tweet about Muesli") {
+                Button(tr("Tweet about Muesli", "Твитнуть о Muesli")) {
                     controller.openContributionMilestoneAction(.tweetAboutMuesli)
                 }
             }
             if appState.contributionMilestonePrompt?.showPostOnLinkedIn == true {
-                Button("Post about Muesli on LinkedIn") {
+                Button(tr("Post about Muesli on LinkedIn", "Написать о Muesli в LinkedIn")) {
                     controller.openContributionMilestoneAction(.postOnLinkedIn)
                 }
             }
-            Button("Later", role: .cancel) {
+            Button(tr("Later", "Позже"), role: .cancel) {
                 controller.dismissContributionMilestonePrompt()
             }
         } message: {
@@ -71,27 +70,22 @@ struct DashboardRootView: View {
                     appState.selectedMeetingID = nil
                     appState.selectedMeetingRecord = nil
                 },
-                backLabel: "Back to Search"
+                backLabel: tr("Back to Search", "Назад к поиску")
             )
             .id(id)
         } else if appState.isSearchActive {
             SearchResultsView(appState: appState, controller: controller)
         } else {
             switch appState.selectedTab {
+            case .home:
+                HomeView(appState: appState, controller: controller)
             case .dictations:
                 DictationsView(appState: appState, controller: controller)
             case .meetings:
                 MeetingsView(appState: appState, controller: controller)
-            case .dictionary:
-                DictionaryView(appState: appState, controller: controller)
-            case .models:
-                ModelsView(appState: appState, controller: controller)
-            case .shortcuts:
-                ShortcutsView(appState: appState, controller: controller)
-            case .settings:
+            case .dictionary, .models, .shortcuts, .settings, .about:
+                // Dictionary, Models, Shortcuts, and About now live inside Settings.
                 SettingsView(appState: appState, controller: controller)
-            case .about:
-                AboutView(appState: appState)
             }
         }
     }

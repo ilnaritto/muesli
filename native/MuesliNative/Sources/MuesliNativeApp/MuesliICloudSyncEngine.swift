@@ -357,7 +357,7 @@ final class MuesliICloudSyncEngine {
         } catch let error as CKError where error.code == .unknownItem {
             let subscription = CKRecordZoneSubscription(
                 zoneID: Schema.syncZoneID,
-                subscriptionID: Schema.textSubscriptionID,
+                subscriptionID: Schema.textSubscriptionID
             )
             let notificationInfo = CKSubscription.NotificationInfo()
             notificationInfo.shouldSendContentAvailable = true

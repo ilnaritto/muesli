@@ -296,6 +296,9 @@ final class MuesliController: NSObject {
     private(set) var selectedPostProcessorBackend: TranscriptCleanupBackendOption
     private var activeMeetingSession: MeetingSession?
     private var activeMeetingID: Int64?
+    /// Whether the active meeting session records screen video — drives the
+    /// red pulsing stop square on the floating indicator.
+    private var activeMeetingHasVideo = false
     private var activeMeetingAudioWarning: ActiveMeetingAudioWarning?
     private var liveMeetingTitleCache: [Int64: String] = [:]
     private var liveManualNotesCache: [Int64: String] = [:]
@@ -395,6 +398,7 @@ final class MuesliController: NSObject {
         if loadedConfig.recordingColorHex != "1e1e2e" {
             MuesliTheme.accentOverrideHex = loadedConfig.recordingColorHex
         }
+        L10n.shared.language = loadedConfig.resolvedAppLanguage
         self.selectedBackend = BackendOption.all.first(where: {
             $0.backend == loadedConfig.sttBackend && $0.model == loadedConfig.sttModel
         }) ?? .whisper
@@ -502,6 +506,13 @@ final class MuesliController: NSObject {
         }
         syncDictationRecorderWarmup(intent: .idlePrewarm(.startup))
         indicator.onStopMeeting = { [weak self] in self?.stopMeetingRecording() }
+        indicator.onStartDictation = { [weak self] in self?.toggleVoiceNoteRecording() }
+        indicator.onStartMeeting = { [weak self] in
+            self?.startMeetingRecording(title: "Meeting")
+        }
+        indicator.onStartMeetingWithVideo = { [weak self] in
+            self?.startMeetingRecording(title: "Meeting", withScreenVideo: true)
+        }
         indicator.onDiscardMeeting = { [weak self] in self?.discardMeetingWithConfirmation() }
         indicator.onToggleMeetingPause = { [weak self] in self?.toggleMeetingRecordingPause() }
         indicator.onStopToggleDictation = { [weak self] in
@@ -988,6 +999,7 @@ final class MuesliController: NSObject {
             || config.meetingRecordingHotkeyTriggerThresholdMS != previousMeetingRecordingHotkeyTriggerThresholdMS
         configStore.save(config)
         MuesliTheme.accentOverrideHex = config.recordingColorHex == "1e1e2e" ? nil : config.recordingColorHex
+        L10n.shared.language = config.resolvedAppLanguage
         selectedBackend = BackendOption.all.first(where: {
             $0.backend == config.sttBackend && $0.model == config.sttModel
         }) ?? .whisper
@@ -1787,7 +1799,8 @@ final class MuesliController: NSObject {
         if enabled, selectedPostProcessorBackend == .local {
             guard normalizePostProcessorSelectionForAvailability() != nil else {
                 updateConfig { $0.enablePostProcessor = false }
-                appState.selectedTab = .models
+                appState.selectedTab = .settings
+                appState.settingsSection = .models
                 return
             }
         }
@@ -3281,6 +3294,19 @@ final class MuesliController: NSObject {
         appState.isMeetingTemplatesManagerPresented = true
     }
 
+    /// Opens the templates manager sheet with the creation editor expanded.
+    func showMeetingTemplateCreation() {
+        appState.selectedTab = .meetings
+        appState.meetingTemplatesManagerStartsCreating = true
+        appState.isMeetingTemplatesManagerPresented = true
+    }
+
+    /// Navigates to Settings → Templates.
+    func showMeetingTemplateSettings() {
+        appState.selectedTab = .settings
+        appState.settingsSection = .templates
+    }
+
     @objc func openPreferences() {
         openHistoryWindow(tab: .settings)
     }
@@ -3434,6 +3460,32 @@ final class MuesliController: NSObject {
             return
         }
         resummarize(meeting: meeting, using: templateSnapshot, completion: completion)
+    }
+
+    /// Persists a previously generated summary for a template without calling
+    /// the LLM — used when the user switches back to an already generated tab.
+    func applyStoredMeetingSummary(meetingID: Int64, templateID: String, notes: String) {
+        guard let meeting = meeting(id: meetingID) else { return }
+        guard let templateSnapshot = MeetingTemplates.resolveExactSnapshot(
+            id: templateID,
+            customTemplates: config.customMeetingTemplates
+        ) else { return }
+        do {
+            try dictationStore.updateMeetingSummary(
+                id: meetingID,
+                title: meeting.title,
+                formattedNotes: notes,
+                selectedTemplateID: templateSnapshot.id,
+                selectedTemplateName: templateSnapshot.name,
+                selectedTemplateKind: templateSnapshot.kind,
+                selectedTemplatePrompt: templateSnapshot.prompt
+            )
+            scheduleICloudSyncAfterLocalChange()
+            syncAppState()
+            historyWindowController?.reload()
+        } catch {
+            fputs("[muesli-native] failed to restore cached meeting summary: \(error)\n", stderr)
+        }
     }
 
     private func resummarize(
@@ -3956,6 +4008,9 @@ final class MuesliController: NSObject {
             if let savedRecordingPath = meeting.savedRecordingPath {
                 try deleteSavedMeetingRecording(at: savedRecordingPath)
             }
+            if let savedVideoPath = meeting.savedVideoPath {
+                try deleteSavedMeetingRecording(at: savedVideoPath)
+            }
             try dictationStore.deleteMeeting(id: id)
             scheduleICloudSyncAfterLocalChange()
         } catch let error as MeetingLifecycleError {
@@ -4229,7 +4284,8 @@ final class MuesliController: NSObject {
         openDocument: Bool = false,
         endDate: Date? = nil,
         autoStopSource: MeetingAutoStopSource? = nil,
-        startOrigin: MeetingRecordingStartOrigin = .manual
+        startOrigin: MeetingRecordingStartOrigin = .manual,
+        withScreenVideo: Bool? = nil
     ) -> Bool {
         guard !isMeetingRecording(), !isStartingMeetingRecording else { return false }
         guard let meetingBackend = normalizeMeetingTranscriptionSelectionForAvailability() else {
@@ -4292,7 +4348,8 @@ final class MuesliController: NSObject {
                     meetingID: meetingID,
                     backend: meetingBackend,
                     templateSnapshot: templateSnapshot,
-                    endDate: endDate
+                    endDate: endDate,
+                    screenVideoOverride: withScreenVideo
                 )
             } catch is CancellationError {
                 if self.meetingStartMeetingID == meetingID {
@@ -4662,7 +4719,8 @@ final class MuesliController: NSObject {
         meetingID: Int64,
         backend: BackendOption,
         templateSnapshot: MeetingTemplateSnapshot,
-        endDate: Date?
+        endDate: Date?,
+        screenVideoOverride: Bool? = nil
     ) async throws {
         var shouldRetryAfterPermissionRequest = config.useCoreAudioTap
         statusBarController?.setStatus("Meeting transcription will start shortly.")
@@ -4684,12 +4742,19 @@ final class MuesliController: NSObject {
                 routeSnapshotProvider: { routeSnapshot }
             )
             meetingMicRecorder.preferredInputDeviceID = routeSnapshot.preferredInputDeviceID
+            // A one-off launcher choice ("record with video") overrides the
+            // global screen-video setting for this session only.
+            var sessionConfig = config
+            if let screenVideoOverride {
+                sessionConfig.enableMeetingScreenVideo = screenVideoOverride
+            }
+            activeMeetingHasVideo = sessionConfig.enableMeetingScreenVideo
             let meetingSession = MeetingSession(
                 title: title,
                 calendarEventID: calendarEventID,
                 backend: backend,
                 runtime: runtime,
-                config: config,
+                config: sessionConfig,
                 templateSnapshot: templateSnapshot,
                 transcriptionCoordinator: transcriptionCoordinator,
                 meetingMicRecorder: meetingMicRecorder
@@ -4776,7 +4841,7 @@ final class MuesliController: NSObject {
                 indicator.powerProvider = { [weak meetingSession] in
                     meetingSession?.currentPower() ?? -160
                 }
-                indicator.setMeetingRecording(true, config: config)
+                indicator.setMeetingRecording(true, withVideo: activeMeetingHasVideo, config: config)
                 statusBarController?.refresh()
                 syncAppState()
                 scheduleMeetingEndNotification(endDate: endDate, title: title)
@@ -5315,6 +5380,29 @@ final class MuesliController: NSObject {
         }
     }
 
+    /// Muxes the temporary screen video with the saved audio mix in the
+    /// background and attaches the final .mp4 to the meeting when done.
+    private func finalizeMeetingVideo(temporaryVideoURL: URL, audioPath: String?, meetingID: Int64) {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let finalURL = try await MeetingVideoComposer.finalize(
+                    temporaryVideoURL: temporaryVideoURL,
+                    audioPath: audioPath,
+                    supportDirectory: AppIdentity.supportDirectoryURL
+                )
+                try self.dictationStore.updateMeetingVideoPath(id: meetingID, path: finalURL.path)
+                await MainActor.run {
+                    self.syncAppState()
+                    self.historyWindowController?.reload()
+                }
+            } catch {
+                fputs("[meeting-video] failed to finalize meeting video: \(error)\n", stderr)
+                try? FileManager.default.removeItem(at: temporaryVideoURL)
+            }
+        }
+    }
+
     func revealMeetingRecordingInFinder(path: String) {
         let url = URL(fileURLWithPath: path)
         guard FileManager.default.fileExists(atPath: url.path) else {
@@ -5417,6 +5505,13 @@ final class MuesliController: NSObject {
             existingMeetingID: existingMeetingID,
             preparedRecordingSave: preparedRecordingSave
         )
+        if let temporaryVideoURL = result.videoRecordingURL {
+            finalizeMeetingVideo(
+                temporaryVideoURL: temporaryVideoURL,
+                audioPath: preparedRecordingSave.path,
+                meetingID: persistenceResult.meetingID
+            )
+        }
         meetingHookDispatcher.dispatchCompletedMeetingHook(
             meetingID: persistenceResult.meetingID,
             completedAt: result.endTime,

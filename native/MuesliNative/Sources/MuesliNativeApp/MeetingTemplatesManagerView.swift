@@ -5,6 +5,11 @@ struct MeetingTemplatesManagerView: View {
     let appState: AppState
     let controller: MuesliController
     let onClose: () -> Void
+    /// Opens with the "new template" editor already expanded.
+    var startsCreating: Bool = false
+    /// Rendered inside the Settings pane rather than as a sheet:
+    /// no fixed size, no own background, no Done button.
+    var isEmbedded: Bool = false
 
     @State private var isCreatingTemplate = false
     @State private var editingTemplateID: String?
@@ -19,10 +24,10 @@ struct MeetingTemplatesManagerView: View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing20) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Manage Templates")
+                    Text(tr("Manage Templates", "Управление шаблонами"))
                         .font(MuesliTheme.title2())
                         .foregroundStyle(MuesliTheme.textPrimary)
-                    Text("Create reusable prompt-based note formats for meetings.")
+                    Text(tr("Create reusable prompt-based note formats for meetings.", "Создавайте многоразовые форматы заметок на основе промптов для встреч."))
                         .font(MuesliTheme.callout())
                         .foregroundStyle(MuesliTheme.textSecondary)
                 }
@@ -31,21 +36,23 @@ struct MeetingTemplatesManagerView: View {
 
                 HStack(spacing: MuesliTheme.spacing8) {
                     if isCreatingTemplate || editingTemplateID != nil {
-                        actionButton("Cancel", systemImage: "xmark") {
+                        actionButton(tr("Cancel", "Отмена"), systemImage: "xmark") {
                             resetTemplateEditor()
                         }
                     } else {
-                        actionButton("New template", systemImage: "plus") {
+                        actionButton(tr("New template", "Новый шаблон"), systemImage: "plus") {
                             beginCreatingTemplate()
                         }
                     }
 
-                    actionButton("Done", systemImage: "checkmark") {
-                        onClose()
+                    if !isEmbedded {
+                        actionButton(tr("Done", "Готово"), systemImage: "checkmark") {
+                            onClose()
+                        }
+                        .disabled(isEditingTemplateInProgress)
+                        .opacity(isEditingTemplateInProgress ? 0.55 : 1)
+                        .help(isEditingTemplateInProgress ? tr("Finish or cancel template editing before closing.", "Завершите или отмените редактирование шаблона перед закрытием.") : tr("Close template manager", "Закрыть менеджер шаблонов"))
                     }
-                    .disabled(isEditingTemplateInProgress)
-                    .opacity(isEditingTemplateInProgress ? 0.55 : 1)
-                    .help(isEditingTemplateInProgress ? "Finish or cancel template editing before closing." : "Close template manager")
                 }
             }
 
@@ -68,20 +75,26 @@ struct MeetingTemplatesManagerView: View {
                 .padding(.bottom, MuesliTheme.spacing4)
             }
         }
-        .padding(MuesliTheme.spacing24)
-        .frame(minWidth: 760, minHeight: 520)
-        .background(MuesliTheme.backgroundBase)
+        .padding(isEmbedded ? 0 : MuesliTheme.spacing24)
+        .frame(minWidth: isEmbedded ? nil : 760, minHeight: isEmbedded ? nil : 520)
+        .background(isEmbedded ? Color.clear : MuesliTheme.backgroundBase)
+        .onAppear {
+            if startsCreating {
+                beginCreatingTemplate()
+                appState.meetingTemplatesManagerStartsCreating = false
+            }
+        }
         .alert(
-            "Delete \"\(templateToDelete?.name ?? "")\"?",
+            tr("Delete \"\(templateToDelete?.name ?? "")\"?", "Удалить \"\(templateToDelete?.name ?? "")\"?"),
             isPresented: Binding(
                 get: { templateToDelete != nil },
                 set: { if !$0 { templateToDelete = nil } }
             )
         ) {
-            Button("Cancel", role: .cancel) {
+            Button(tr("Cancel", "Отмена"), role: .cancel) {
                 templateToDelete = nil
             }
-            Button("Delete", role: .destructive) {
+            Button(tr("Delete", "Удалить"), role: .destructive) {
                 guard let template = templateToDelete else { return }
                 controller.deleteCustomMeetingTemplate(id: template.id)
                 if editingTemplateID == template.id {
@@ -90,7 +103,7 @@ struct MeetingTemplatesManagerView: View {
                 templateToDelete = nil
             }
         } message: {
-            Text("This template will be permanently removed. Existing meetings will keep their saved template snapshot.")
+            Text(tr("This template will be permanently removed. Existing meetings will keep their saved template snapshot.", "Этот шаблон будет удалён навсегда. Существующие встречи сохранят свой снимок шаблона."))
         }
     }
 
@@ -100,7 +113,7 @@ struct MeetingTemplatesManagerView: View {
             Image(systemName: MeetingTemplates.customIconFallback)
                 .font(.system(size: 11))
                 .foregroundStyle(MuesliTheme.textTertiary)
-            Text("No custom templates yet.")
+            Text(tr("No custom templates yet.", "Пока нет пользовательских шаблонов."))
                 .font(MuesliTheme.callout())
                 .foregroundStyle(MuesliTheme.textTertiary)
         }
@@ -134,10 +147,10 @@ struct MeetingTemplatesManagerView: View {
                 }
                 Spacer()
                 HStack(spacing: MuesliTheme.spacing8) {
-                    actionButton("Edit", systemImage: "pencil") {
+                    actionButton(tr("Edit", "Изменить"), systemImage: "pencil") {
                         beginEditingTemplate(template)
                     }
-                    actionButton("Delete", systemImage: "trash", role: .destructive) {
+                    actionButton(tr("Delete", "Удалить"), systemImage: "trash", role: .destructive) {
                         templateToDelete = template
                     }
                 }
@@ -155,15 +168,15 @@ struct MeetingTemplatesManagerView: View {
     @ViewBuilder
     private var customTemplateEditor: some View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
-            Text(isCreatingTemplate ? "New template" : "Edit template")
+            Text(isCreatingTemplate ? tr("New template", "Новый шаблон") : tr("Edit template", "Изменить шаблон"))
                 .font(MuesliTheme.captionMedium())
                 .foregroundStyle(MuesliTheme.textPrimary)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Name")
+                Text(tr("Name", "Название"))
                     .font(MuesliTheme.caption())
                     .foregroundStyle(MuesliTheme.textSecondary)
-                TextField("Customer follow-up", text: $draftTemplateName)
+                TextField(tr("Customer follow-up", "Встреча с клиентом"), text: $draftTemplateName)
                     .textFieldStyle(.roundedBorder)
                     .overlay {
                         RoundedRectangle(cornerRadius: 6)
@@ -178,21 +191,21 @@ struct MeetingTemplatesManagerView: View {
                         }
                     }
                 if showNameValidationError {
-                    Text("Enter a template name.")
+                    Text(tr("Enter a template name.", "Введите название шаблона."))
                         .font(MuesliTheme.caption())
                         .foregroundStyle(MuesliTheme.recording)
                 }
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Icon")
+                Text(tr("Icon", "Значок"))
                     .font(MuesliTheme.caption())
                     .foregroundStyle(MuesliTheme.textSecondary)
                 customIconPicker
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Prompt")
+                Text(tr("Prompt", "Промпт"))
                     .font(MuesliTheme.caption())
                     .foregroundStyle(MuesliTheme.textSecondary)
                 TextEditor(text: $draftTemplatePrompt)
@@ -216,7 +229,7 @@ struct MeetingTemplatesManagerView: View {
                         }
                     }
                 if showPromptValidationError {
-                    Text("Enter the prompt instructions for this template.")
+                    Text(tr("Enter the prompt instructions for this template.", "Введите инструкции промпта для этого шаблона."))
                         .font(MuesliTheme.caption())
                         .foregroundStyle(MuesliTheme.recording)
                 }
@@ -225,7 +238,7 @@ struct MeetingTemplatesManagerView: View {
             HStack {
                 Spacer()
                 actionButton(
-                    isCreatingTemplate ? "Create template" : "Save changes",
+                    isCreatingTemplate ? tr("Create template", "Создать шаблон") : tr("Save changes", "Сохранить изменения"),
                     systemImage: isCreatingTemplate ? "plus.circle" : "checkmark.circle"
                 ) {
                     saveTemplateEditor()
@@ -360,7 +373,7 @@ struct MeetingTemplatesManagerView: View {
     }
 
     private var selectedIconLabel: String {
-        MeetingTemplates.customIconOptions.first(where: { $0.symbolName == draftTemplateIcon })?.label ?? "Custom"
+        MeetingTemplates.customIconOptions.first(where: { $0.symbolName == draftTemplateIcon })?.label ?? tr("Custom", "Свой")
     }
 
     @ViewBuilder

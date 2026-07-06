@@ -1,6 +1,7 @@
 import AppKit
 import QuartzCore
 import Foundation
+import SwiftUI
 import MuesliCore
 
 @MainActor
@@ -53,14 +54,17 @@ private final class HoverIndicatorView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        // Always clear the drag flag — a plain click sets it in mouseDown too,
+        // and a stuck flag permanently blocks hover expansion.
+        owner?.isDragging = false
         if didDrag {
-            owner?.isDragging = false
             owner?.savePosition()
         } else if event.modifierFlags.contains(.option) {
             owner?.handleOptionClick()
         } else {
             let clickX = convert(event.locationInWindow, from: nil).x
             owner?.handleClick(atX: clickX)
+            owner?.restoreHoverAfterClick()
         }
         dragOrigin = nil
         didDrag = false
@@ -101,6 +105,14 @@ final class FloatingIndicatorController: NSObject {
     var onCancelToggleDictation: (() -> Void)?
     var onPositionSaved: ((CGPoint) -> Void)?
     var isToggleDictation = false
+    /// Top edge of the collapsed strip while hovering — the launcher expands
+    /// strictly downward from it and the strip returns to the same spot.
+    private var hoverAnchorTop: CGFloat?
+    var onStartDictation: (() -> Void)?
+    var onStartMeeting: (() -> Void)?
+    var onStartMeetingWithVideo: (() -> Void)?
+    private var isMeetingVideoRecording = false
+    private var launcherView: NSView?
     private var stopLayer: CALayer?
     private var transcribingTitle = "Transcribing"
     private var computerUseTranscriptText: String?
@@ -160,6 +172,7 @@ final class FloatingIndicatorController: NSObject {
     func collapseForDrag() {
         isDragging = true
         hoverExitWorkItem?.cancel()
+        defer { hoverAnchorTop = nil }
         guard state == .idle,
               !isShowingLoading,
               let panel,
@@ -177,7 +190,7 @@ final class FloatingIndicatorController: NSObject {
         contentView.frame = NSRect(origin: .zero, size: targetFrame.size)
         contentView.layer?.cornerRadius = targetFrame.height / 2
         contentView.layer?.backgroundColor = style.background.cgColor
-        contentView.layer?.borderColor = style.border.cgColor
+        contentView.layer?.borderWidth = 0
         glassView?.frame = NSRect(origin: .zero, size: targetFrame.size)
         panel.alphaValue = style.alpha
 
@@ -185,8 +198,206 @@ final class FloatingIndicatorController: NSObject {
         iconLabel.textColor = style.iconColor
         textLabel.isHidden = true
         textLabel.alphaValue = 0
+        launcherView?.isHidden = true
         layoutLabels(iconLabel: iconLabel, textLabel: textLabel, in: targetFrame.size, hasTitle: false, animated: false)
         applyGlassState(.idle, frameSize: targetFrame.size)
+    }
+
+    /// Idle strip ⇄ launcher switch. Entirely instant: the window snaps to
+    /// the target frame (top edge pinned via hoverAnchorTop) and the tint is
+    /// placed at its final geometry — no animation, nothing can sag.
+    private func animateIdleHoverTransition(
+        style: (background: NSColor, border: NSColor, icon: String, title: String, iconColor: NSColor, textColor: NSColor, alpha: CGFloat),
+        targetFrame: NSRect
+    ) {
+        guard let panel, let contentView, let tint = tintLayer else { return }
+        let collapsedColor = NSColor.colorWith(hexString: "1e1e2e", alpha: 0.22).cgColor
+        let hoveredColor = NSColor.colorWith(hexString: "1e1e2e", alpha: 0.45).cgColor
+
+        micIconView?.isHidden = true
+        wandIconView?.isHidden = true
+        iconLabel?.isHidden = true
+        textLabel?.isHidden = true
+        contentView.layer?.backgroundColor = NSColor.clear.cgColor
+        contentView.layer?.borderWidth = 0
+        tint.isHidden = false
+        tint.borderWidth = 1
+        tint.borderColor = style.border.cgColor
+        glassView?.layer?.borderWidth = 1
+        glassView?.layer?.borderColor = style.border.cgColor
+
+        panel.alphaValue = style.alpha
+        if isHovered {
+            // Expanding: the window snaps out immediately. When collapsing it
+            // stays large until the shrink morph completes (see below).
+            panel.setFrame(targetFrame, display: true)
+            contentView.frame = NSRect(origin: .zero, size: targetFrame.size)
+        }
+
+        let timing = CAMediaTimingFunction(name: .easeOut)
+        let collapsedSize = NSSize(width: 43, height: 7)
+
+        if isHovered {
+            // Window snaps to the expanded frame; the tint morphs easeOut from
+            // the strip (pinned top-center) into the 44pt capsule. The strip
+            // below the capsule stays transparent for the caption.
+            let pillHeight: CGFloat = 44
+            let pillFrame = CGRect(
+                x: 0,
+                y: targetFrame.height - pillHeight,
+                width: targetFrame.width,
+                height: pillHeight
+            )
+            contentView.layer?.cornerRadius = 0
+            glassView?.isHidden = true
+
+            let start = CGRect(
+                x: (targetFrame.width - collapsedSize.width) / 2,
+                y: targetFrame.height - collapsedSize.height,
+                width: collapsedSize.width,
+                height: collapsedSize.height
+            )
+            // Explicit split animations: width starts 10ms before height.
+            // Anchor at the top-center so growth is sideways + downward only.
+            _ = start
+            let easeOut = CAMediaTimingFunction(name: .easeOut)
+            let morphDuration: CFTimeInterval = 0.18
+            let heightLag: CFTimeInterval = 0.010
+
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            tint.anchorPoint = CGPoint(x: 0.5, y: 1.0)
+            tint.position = CGPoint(x: targetFrame.width / 2, y: targetFrame.height)
+            tint.bounds = CGRect(origin: .zero, size: collapsedSize)
+            tint.cornerRadius = collapsedSize.height / 2
+            tint.backgroundColor = collapsedColor
+            CATransaction.commit()
+
+            let now = CACurrentMediaTime()
+            let widthAnim = CABasicAnimation(keyPath: "bounds.size.width")
+            widthAnim.fromValue = collapsedSize.width
+            widthAnim.toValue = targetFrame.width
+            widthAnim.beginTime = now
+            widthAnim.duration = morphDuration
+            widthAnim.timingFunction = easeOut
+
+            let heightAnim = CABasicAnimation(keyPath: "bounds.size.height")
+            heightAnim.fromValue = collapsedSize.height
+            heightAnim.toValue = pillHeight
+            heightAnim.beginTime = now + heightLag
+            heightAnim.duration = morphDuration
+            heightAnim.fillMode = .backwards
+            heightAnim.timingFunction = easeOut
+
+            let radiusAnim = CABasicAnimation(keyPath: "cornerRadius")
+            radiusAnim.fromValue = collapsedSize.height / 2
+            radiusAnim.toValue = pillHeight / 2
+            radiusAnim.beginTime = now + heightLag
+            radiusAnim.duration = morphDuration
+            radiusAnim.fillMode = .backwards
+            radiusAnim.timingFunction = easeOut
+
+            let colorAnim = CABasicAnimation(keyPath: "backgroundColor")
+            colorAnim.fromValue = collapsedColor
+            colorAnim.toValue = hoveredColor
+            colorAnim.beginTime = now
+            colorAnim.duration = morphDuration
+            colorAnim.timingFunction = easeOut
+
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            CATransaction.setCompletionBlock { [weak self] in
+                guard let self, self.state == .idle, self.isHovered else { return }
+                self.glassView?.frame = pillFrame
+                self.glassView?.layer?.cornerRadius = pillHeight / 2
+                self.glassView?.isHidden = false
+            }
+            tint.bounds = CGRect(x: 0, y: 0, width: targetFrame.width, height: pillHeight)
+            tint.cornerRadius = pillHeight / 2
+            tint.backgroundColor = hoveredColor
+            tint.add(widthAnim, forKey: "morph.width")
+            tint.add(heightAnim, forKey: "morph.height")
+            tint.add(radiusAnim, forKey: "morph.radius")
+            tint.add(colorAnim, forKey: "morph.color")
+            CATransaction.commit()
+
+            updateLauncher(visible: true, frameSize: targetFrame.size)
+        } else {
+            updateLauncher(visible: false, frameSize: targetFrame.size)
+            glassView?.isHidden = true
+
+            // Morph back to the strip inside the still-large window, then
+            // snap the window down to the strip frame.
+            let currentSize = panel.frame.size
+            let strip = CGRect(
+                x: (currentSize.width - collapsedSize.width) / 2,
+                y: currentSize.height - collapsedSize.height,
+                width: collapsedSize.width,
+                height: collapsedSize.height
+            )
+            _ = strip
+            let easeOut = CAMediaTimingFunction(name: .easeOut)
+            let morphDuration: CFTimeInterval = 0.15
+            let widthLag: CFTimeInterval = 0.010
+            let currentBounds = tint.bounds
+
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            tint.anchorPoint = CGPoint(x: 0.5, y: 1.0)
+            tint.position = CGPoint(x: currentSize.width / 2, y: currentSize.height)
+            tint.bounds = currentBounds
+            CATransaction.commit()
+
+            let now = CACurrentMediaTime()
+            let heightAnim = CABasicAnimation(keyPath: "bounds.size.height")
+            heightAnim.fromValue = currentBounds.height
+            heightAnim.toValue = collapsedSize.height
+            heightAnim.beginTime = now
+            heightAnim.duration = morphDuration
+            heightAnim.timingFunction = easeOut
+
+            let widthAnim = CABasicAnimation(keyPath: "bounds.size.width")
+            widthAnim.fromValue = currentBounds.width
+            widthAnim.toValue = collapsedSize.width
+            widthAnim.beginTime = now + widthLag
+            widthAnim.duration = morphDuration
+            widthAnim.fillMode = .backwards
+            widthAnim.timingFunction = easeOut
+
+            let radiusAnim = CABasicAnimation(keyPath: "cornerRadius")
+            radiusAnim.fromValue = tint.cornerRadius
+            radiusAnim.toValue = collapsedSize.height / 2
+            radiusAnim.beginTime = now
+            radiusAnim.duration = morphDuration
+            radiusAnim.timingFunction = easeOut
+
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            CATransaction.setCompletionBlock { [weak self] in
+                guard let self, self.state == .idle, !self.isHovered,
+                      let panel = self.panel, let contentView = self.contentView, let tint = self.tintLayer else { return }
+                panel.setFrame(targetFrame, display: true)
+                contentView.frame = NSRect(origin: .zero, size: targetFrame.size)
+                contentView.layer?.cornerRadius = targetFrame.height / 2
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                tint.frame = CGRect(origin: .zero, size: targetFrame.size)
+                tint.cornerRadius = targetFrame.height / 2
+                CATransaction.commit()
+                self.glassView?.frame = NSRect(origin: .zero, size: targetFrame.size)
+                self.glassView?.layer?.cornerRadius = targetFrame.height / 2
+                self.glassView?.isHidden = false
+            }
+            tint.bounds = CGRect(origin: .zero, size: collapsedSize)
+            tint.cornerRadius = collapsedSize.height / 2
+            tint.backgroundColor = collapsedColor
+            tint.add(heightAnim, forKey: "morph.height")
+            tint.add(widthAnim, forKey: "morph.width")
+            tint.add(radiusAnim, forKey: "morph.radius")
+            CATransaction.commit()
+        }
+
+        panel.orderFrontRegardless()
     }
 
     func savePosition() {
@@ -205,8 +416,9 @@ final class FloatingIndicatorController: NSObject {
         }
     }
 
-    func setMeetingRecording(_ recording: Bool, config: AppConfig) {
+    func setMeetingRecording(_ recording: Bool, withVideo: Bool = false, config: AppConfig) {
         isMeetingRecording = recording
+        isMeetingVideoRecording = recording && withVideo
         recordingWaveformMode = .level
         if !recording {
             isMeetingRecordingPaused = false
@@ -283,6 +495,7 @@ final class FloatingIndicatorController: NSObject {
         }
         if state != .idle {
             isHovered = false
+            hoverAnchorTop = nil
         }
         if !config.showFloatingIndicator && state == .idle {
             close()
@@ -306,11 +519,20 @@ final class FloatingIndicatorController: NSObject {
             micIconView?.isHidden = true
             glassView?.isHidden = true
             tintLayer?.isHidden = true
-
+            launcherView?.isHidden = true
         }
 
         let style = styleForState(state, config: config)
         let targetFrame = frameForState(state, config: config)
+
+        // Any idle→idle redraw (hover on/off, refresh) must not animate the
+        // window — a moving NSPanel visibly sags mid-animation. NOTE: setHovered
+        // flips isHovered BEFORE calling setState, so previousHover == isHovered
+        // here and cannot be used to detect the transition.
+        if previousState == .idle, state == .idle {
+            animateIdleHoverTransition(style: style, targetFrame: targetFrame)
+            return
+        }
 
         let duration = transitionDuration(
             from: previousState,
@@ -330,8 +552,7 @@ final class FloatingIndicatorController: NSObject {
             contentView.animator().frame = NSRect(origin: .zero, size: targetFrame.size)
             contentView.layer?.cornerRadius = targetFrame.height / 2
             contentView.layer?.backgroundColor = style.background.cgColor
-            contentView.layer?.borderWidth = 1.0
-            contentView.layer?.borderColor = style.border.cgColor
+            contentView.layer?.borderWidth = 0
 
             if state == .recording {
                 // Dictation uses cancel on the left. Meeting recordings use pause/resume.
@@ -673,9 +894,22 @@ final class FloatingIndicatorController: NSObject {
     func setHovered(_ hovered: Bool) {
         guard state == .idle, !isShowingLoading, !isDragging, isHovered != hovered else { return }
         hoverExitWorkItem?.cancel()
+        if hovered, hoverAnchorTop == nil {
+            hoverAnchorTop = panel?.frame.maxY
+        }
         isHovered = hovered
         let config = configStore.load()
         setState(.idle, config: config)
+        if !hovered {
+            hoverAnchorTop = nil
+        }
+    }
+
+    /// A plain click on the idle strip collapses it via collapseForDrag;
+    /// reopen the launcher if the cursor is still over the pill.
+    func restoreHoverAfterClick() {
+        guard state == .idle, !isShowingLoading, pointerIsInsidePanel() else { return }
+        setHovered(true)
     }
 
     func scheduleHoverExit() {
@@ -707,6 +941,8 @@ final class FloatingIndicatorController: NSObject {
         tintLayer = nil
         micIconView = nil
         wandIconView = nil
+        launcherView?.removeFromSuperview()
+        launcherView = nil
     }
 
     // MARK: - Stop Layer (toggle dictation)
@@ -724,7 +960,27 @@ final class FloatingIndicatorController: NSObject {
             height: sq
         )
         stop.cornerRadius = 1
-        stop.backgroundColor = NSColor.white.withAlphaComponent(0.85).cgColor
+        // The square carries the recording mode: white = dictation,
+        // yellow = meeting audio, pulsing red = meeting with screen video.
+        let stopColor: NSColor
+        if isMeetingVideoRecording {
+            stopColor = .systemRed
+        } else if isMeetingRecording {
+            stopColor = .systemYellow
+        } else {
+            stopColor = .white.withAlphaComponent(0.85)
+        }
+        stop.backgroundColor = stopColor.cgColor
+        if isMeetingVideoRecording {
+            let pulse = CABasicAnimation(keyPath: "opacity")
+            pulse.fromValue = 1.0
+            pulse.toValue = 0.45
+            pulse.duration = 0.9
+            pulse.autoreverses = true
+            pulse.repeatCount = .infinity
+            pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            stop.add(pulse, forKey: "muesli.stop.pulse")
+        }
 
         contentView.layer?.addSublayer(stop)
         stopLayer = stop
@@ -866,9 +1122,7 @@ final class FloatingIndicatorController: NSObject {
     }
 
     private func applyGlassState(_ state: DictationState, frameSize: NSSize) {
-        let config = configStore.load()
         let radius = frameSize.height / 2
-        let themeHex = config.recordingColorHex
 
         // During recording, hide frost and show solid accent. Otherwise frosted glass.
         let isRecording = (state == .recording)
@@ -881,41 +1135,39 @@ final class FloatingIndicatorController: NSObject {
         let tintHex: String
         switch state {
         case .idle:
-            tintAlpha = isHovered ? 0.72 : 0.44
+            tintAlpha = isHovered ? 0.45 : 0.22
             tintHex = "1e1e2e"
         case .preparing:
-            tintAlpha = 0.62
+            tintAlpha = 0.45
             tintHex = "1e1e2e"
         case .recording:
-            tintAlpha = 0.85
-            tintHex = themeHex
+            // Same style as the hover launcher; the stop square carries
+            // the mode color instead.
+            tintAlpha = 0.45
+            tintHex = "1e1e2e"
         case .transcribing:
-            tintAlpha = 0.62
+            tintAlpha = 0.45
             tintHex = "1e1e2e"
         }
         tintLayer?.isHidden = false
         tintLayer?.backgroundColor = NSColor.colorWith(hexString: tintHex, alpha: tintAlpha).cgColor
+        // The single hairline border sits on the tint itself, so no dark rim
+        // of the tint edge shows outside a separate content-view border.
+        tintLayer?.borderWidth = 1
+        tintLayer?.borderColor = NSColor.colorWith(hex: 0xFFFFFF, alpha: 0.12).cgColor
+        glassView?.layer?.borderWidth = 1
+        glassView?.layer?.borderColor = NSColor.colorWith(hex: 0xFFFFFF, alpha: 0.12).cgColor
         applyTintLayerGeometry(size: frameSize, radius: radius)
 
         let iconSize = NSSize(width: 18, height: 18)
 
         switch state {
         case .idle:
-            // Mic symbol centred (or left-aligned when hovered beside text).
+            // Collapsed idle is a bare thin strip; hover shows the launcher.
             wandIconView?.isHidden = true
             iconLabel?.isHidden = true
-            micIconView?.isHidden = false
-            if let mic = micIconView {
-                mic.alphaValue = 1
-                if isHovered {
-                    mic.frame = NSRect(x: 12, y: (frameSize.height - iconSize.height) / 2,
-                                      width: iconSize.width, height: iconSize.height)
-                } else {
-                    mic.frame = NSRect(x: (frameSize.width - iconSize.width) / 2,
-                                       y: (frameSize.height - iconSize.height) / 2,
-                                       width: iconSize.width, height: iconSize.height)
-                }
-            }
+            micIconView?.isHidden = true
+            updateLauncher(visible: isHovered, frameSize: frameSize)
 
         case .recording:
             // Waveform bars replace mic icon during recording.
@@ -1035,7 +1287,9 @@ final class FloatingIndicatorController: NSObject {
         panel.level = .floating
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        // No compositor shadow: on a tiny translucent strip it reads as a
+        // dark outline and its cached contour lags behind instant resizes.
+        panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = false
         panel.isMovableByWindowBackground = false
@@ -1252,7 +1506,7 @@ final class FloatingIndicatorController: NSObject {
         let size: NSSize
         switch state {
         case .idle:
-            size = isHovered ? NSSize(width: 220, height: 36) : NSSize(width: 44, height: 28)
+            size = isHovered ? NSSize(width: 128, height: 74) : NSSize(width: 43, height: 7)
         case .preparing: size = NSSize(width: 76, height: 22)
         case .recording: size = NSSize(width: 76, height: 22)
         case .transcribing:
@@ -1287,7 +1541,11 @@ final class FloatingIndicatorController: NSObject {
         }
 
         let x = min(max(center.x - size.width / 2, screen.minX), screen.maxX - size.width)
-        let y = min(max(center.y - size.height / 2, screen.minY), screen.maxY - size.height)
+        var y = min(max(center.y - size.height / 2, screen.minY), screen.maxY - size.height)
+        if state == .idle, let top = hoverAnchorTop {
+            // Expand/collapse strictly downward from the strip's top edge.
+            y = min(max(top - size.height, screen.minY), screen.maxY - size.height)
+        }
         return NSRect(x: x, y: y, width: size.width, height: size.height)
     }
 
@@ -1296,25 +1554,25 @@ final class FloatingIndicatorController: NSObject {
         case .idle:
             return (
                 .clear,
-                .colorWith(hex: 0xFFFFFF, alpha: isHovered ? 0.14 : 0.22),
+                .colorWith(hex: 0xFFFFFF, alpha: 0.12),
                 "",
-                isHovered ? "Hold \(config.dictationHotkey.label) to dictate" : "",
+                "",
                 .colorWith(hex: 0xFFFFFF, alpha: 0.75),
                 .colorWith(hex: 0xFFFFFF, alpha: 0.75),
                 isHovered ? 1.0 : 0.85
             )
         case .preparing:
-            return (.clear, .colorWith(hex: 0xFFFFFF, alpha: 0.16), "", "", .white, .white, 1.0)
+            return (.clear, .colorWith(hex: 0xFFFFFF, alpha: 0.12), "", "", .white, .white, 1.0)
         case .recording:
             return (
-                .clear, .colorWith(hex: 0xFFFFFF, alpha: 0.16),
+                .clear, .colorWith(hex: 0xFFFFFF, alpha: 0.12),
                 isMeetingRecording ? "⏹" : "",
                 isMeetingRecording ? "" : "",
                 .white, .white, 1.0
             )
         case .transcribing:
             return (
-                .clear, .colorWith(hex: 0xFFFFFF, alpha: 0.16),
+                .clear, .colorWith(hex: 0xFFFFFF, alpha: 0.12),
                 "", transcribingTitle,
                 .white, .colorWith(hex: 0xFFFFFF, alpha: 0.82), 1.0
             )
@@ -1465,6 +1723,155 @@ final class FloatingIndicatorController: NSObject {
     private func pointerIsInsidePanel() -> Bool {
         guard let panel else { return false }
         return panel.frame.contains(NSEvent.mouseLocation)
+    }
+
+    // MARK: - Hover launcher (dictation / meeting / meeting+video)
+
+    private func updateLauncher(visible: Bool, frameSize: NSSize) {
+        guard visible else {
+            launcherView?.removeFromSuperview()
+            launcherView = nil
+            return
+        }
+        if launcherView == nil, let contentView {
+            let host = LauncherHostingView(rootView: IndicatorLauncherView(
+                onDictation: { [weak self] in self?.launchFromHover { self?.onStartDictation?() } },
+                onMeeting: { [weak self] in self?.launchFromHover { self?.onStartMeeting?() } },
+                onMeetingVideo: { [weak self] in self?.launchFromHover { self?.onStartMeetingWithVideo?() } }
+            ))
+            host.wantsLayer = true
+            host.layer?.backgroundColor = .clear
+            host.appearance = NSAppearance(named: .darkAqua)
+            contentView.addSubview(host)
+            launcherView = host
+        }
+        launcherView?.frame = NSRect(origin: .zero, size: frameSize)
+        launcherView?.isHidden = false
+        launcherView?.alphaValue = 1
+    }
+
+    private func launchFromHover(_ action: @escaping () -> Void) {
+        guard state == .idle else { return }
+        hoverExitWorkItem?.cancel()
+        isHovered = false
+        launcherView?.isHidden = true
+        // The controller flips the pill into preparing/recording itself;
+        // collapse first so a failed start leaves the strip, not the launcher.
+        setState(.idle, config: configStore.load())
+        action()
+    }
+}
+
+/// Hosting view that reacts to the first click even while the panel isn't key.
+private final class LauncherHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+/// Three quick-start circles shown when hovering the idle strip:
+/// meeting (audio) / dictation / meeting with screen video.
+/// Hovering a circle shows a caption capsule 4pt below the pill, centered
+/// under that circle and styled like the pill itself.
+private struct IndicatorLauncherView: View {
+    let onDictation: () -> Void
+    let onMeeting: () -> Void
+    let onMeetingVideo: () -> Void
+    @State private var hoveredIndex: Int?
+    @State private var captionWidth: CGFloat = 0
+    @State private var appeared = false
+
+    private var pillColor: Color { Color(red: 0.118, green: 0.118, blue: 0.180) }
+    private let rowWidth: CGFloat = 128
+    private var captions: [String] {
+        [tr("Call", "Звонок"), tr("Dictation", "Диктовка"), tr("Call with video", "Звонок с видео")]
+    }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 10) {
+                LauncherCircle(systemName: "waveform", action: onMeeting) { hover(0, $0) }
+                LauncherCircle(systemName: "text.bubble", action: onDictation) { hover(1, $0) }
+                LauncherCircle(systemName: "display", action: onMeetingVideo) { hover(2, $0) }
+            }
+            .padding(.horizontal, 6)
+            .frame(height: 44)
+
+            ZStack(alignment: .topLeading) {
+                if let index = hoveredIndex {
+                    Text(captions[index])
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, 10)
+                        .frame(height: 22)
+                        .background {
+                            ZStack {
+                                Capsule().fill(.ultraThinMaterial)
+                                Capsule().fill(pillColor.opacity(0.45))
+                            }
+                        }
+                        .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 1))
+                        .onGeometryChange(for: CGFloat.self) { proxy in
+                            proxy.size.width
+                        } action: { width in
+                            captionWidth = width
+                        }
+                        .position(x: captionX(for: index), y: 11)
+                }
+            }
+            .frame(width: rowWidth, height: 22)
+        }
+        .opacity(appeared ? 1 : 0)
+        .animation(.easeOut(duration: 0.12).delay(0.15), value: appeared)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onAppear { appeared = true }
+    }
+
+    /// Centered under the hovered circle, clamped so the capsule stays
+    /// inside the window.
+    private func captionX(for index: Int) -> CGFloat {
+        let circleCenter: CGFloat = 6 + 16 + CGFloat(index) * 42
+        let half = max(captionWidth / 2, 1)
+        return min(max(circleCenter, half), rowWidth - half)
+    }
+
+    private func hover(_ index: Int, _ hovering: Bool) {
+        if hovering {
+            hoveredIndex = index
+        } else if hoveredIndex == index {
+            hoveredIndex = nil
+        }
+    }
+}
+
+private struct LauncherCircle: View {
+    let systemName: String
+    let action: () -> Void
+    let onHoverChange: (Bool) -> Void
+    @State private var isHovering = false
+
+    init(systemName: String, action: @escaping () -> Void, onHoverChange: @escaping (Bool) -> Void) {
+        self.systemName = systemName
+        self.action = action
+        self.onHoverChange = onHoverChange
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(isHovering ? 1 : 0.85))
+                .frame(width: 32, height: 32)
+                // The circle chrome appears only under the cursor.
+                .background(Circle().fill(.white.opacity(isHovering ? 0.18 : 0)))
+                .overlay(Circle().strokeBorder(.white.opacity(isHovering ? 0.14 : 0), lineWidth: 1))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover {
+            isHovering = $0
+            onHoverChange($0)
+        }
     }
 }
 

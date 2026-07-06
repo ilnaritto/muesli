@@ -229,6 +229,10 @@ public struct MeetingRecord: Identifiable, Codable, Sendable {
     public let selectedTemplateKind: MeetingTemplateKind?
     public let selectedTemplatePrompt: String?
     public let source: MeetingSource
+    /// Summaries generated for this meeting, keyed by template ID.
+    public let templateSummaries: [String: String]
+    /// Saved screen-video recording (local file, not synced).
+    public let savedVideoPath: String?
 
     public init(
         id: Int64,
@@ -249,7 +253,9 @@ public struct MeetingRecord: Identifiable, Codable, Sendable {
         selectedTemplateName: String? = nil,
         selectedTemplateKind: MeetingTemplateKind? = nil,
         selectedTemplatePrompt: String? = nil,
-        source: MeetingSource = .meeting
+        source: MeetingSource = .meeting,
+        templateSummaries: [String: String] = [:],
+        savedVideoPath: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -270,6 +276,8 @@ public struct MeetingRecord: Identifiable, Codable, Sendable {
         self.selectedTemplateKind = selectedTemplateKind
         self.selectedTemplatePrompt = selectedTemplatePrompt
         self.source = source
+        self.templateSummaries = templateSummaries
+        self.savedVideoPath = savedVideoPath
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -292,6 +300,8 @@ public struct MeetingRecord: Identifiable, Codable, Sendable {
         case selectedTemplateKind
         case selectedTemplatePrompt
         case source
+        case templateSummaries
+        case savedVideoPath
     }
 
     public init(from decoder: Decoder) throws {
@@ -315,7 +325,9 @@ public struct MeetingRecord: Identifiable, Codable, Sendable {
             selectedTemplateName: try c.decodeIfPresent(String.self, forKey: .selectedTemplateName),
             selectedTemplateKind: try c.decodeIfPresent(MeetingTemplateKind.self, forKey: .selectedTemplateKind),
             selectedTemplatePrompt: try c.decodeIfPresent(String.self, forKey: .selectedTemplatePrompt),
-            source: (try? c.decode(MeetingSource.self, forKey: .source)) ?? .meeting
+            source: (try? c.decode(MeetingSource.self, forKey: .source)) ?? .meeting,
+            templateSummaries: (try? c.decode([String: String].self, forKey: .templateSummaries)) ?? [:],
+            savedVideoPath: try c.decodeIfPresent(String.self, forKey: .savedVideoPath)
         )
     }
 
