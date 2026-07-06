@@ -292,39 +292,25 @@ struct SettingsView: View {
     private var sectionListPane: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
-                ForEach(SettingsSection.allCases) { section in
+                // "About" now lives at the bottom of the Home tab.
+                ForEach(SettingsSection.allCases.filter { $0 != .about }) { section in
                     sectionRow(section)
                 }
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 8)
             .padding(.vertical, MuesliTheme.spacing12)
         }
     }
 
     private func sectionRow(_ section: SettingsSection) -> some View {
-        let isSelected = appState.settingsSection == section
-        return Button {
+        SidebarNavRow(
+            icon: section.icon,
+            iconColor: section.iconColor,
+            title: section.title,
+            isSelected: appState.settingsSection == section
+        ) {
             appState.settingsSection = section
-        } label: {
-            HStack(spacing: MuesliTheme.spacing12) {
-                Image(systemName: section.icon)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(isSelected ? MuesliTheme.accent : MuesliTheme.textSecondary)
-                    .frame(width: 20)
-                Text(section.title)
-                    .font(MuesliTheme.callout())
-                    .foregroundStyle(isSelected ? MuesliTheme.textPrimary : MuesliTheme.textSecondary)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, MuesliTheme.spacing12)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
-                    .fill(isSelected ? MuesliTheme.surfaceSelected : Color.clear)
-            )
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -351,7 +337,7 @@ struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: MuesliTheme.spacing24) {
                     Text(appState.settingsSection.title)
-                        .font(MuesliTheme.title1())
+                        .font(MuesliTheme.pageTitle())
                         .foregroundStyle(MuesliTheme.textPrimary)
 
                     paneContent
@@ -944,6 +930,7 @@ struct SettingsView: View {
                         controller.updateConfig { $0.meetingRecordingSavePolicy = policy }
                     }
                 }
+                settingsDescription(tr("Saved audio can be played back on the meeting page and is also used as the soundtrack of screen video recordings.", "Сохранённое аудио можно прослушать на странице встречи; оно же добавляет звук в видеозапись экрана."))
                 if appState.config.meetingRecordingSavePolicy != .never {
                     Divider().background(MuesliTheme.surfaceBorder)
                     settingsRow(tr("Recording format", "Формат записи")) {
@@ -2337,7 +2324,7 @@ struct SettingsView: View {
         let allItems: [(id: String, label: String)] = {
             var items: [(String, String)] = [(MeetingTemplates.autoID, MeetingTemplates.auto.title)]
             items += controller.builtInMeetingTemplates().map { ($0.id, $0.title) }
-            items += controller.customMeetingTemplates().map { ($0.id, $0.name) }
+            items += controller.customOnlyMeetingTemplates().map { ($0.id, $0.name) }
             return items
         }()
         let selectedLabel = allItems.first(where: { $0.id == selectionID })?.label ?? tr("Auto", "Авто")

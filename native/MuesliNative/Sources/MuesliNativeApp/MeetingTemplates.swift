@@ -6,17 +6,21 @@ struct CustomMeetingTemplate: Codable, Equatable, Identifiable, Sendable {
     var name: String
     var prompt: String
     var icon: String
+    /// MeetingOutputLanguage code; nil = system (app UI language).
+    var outputLanguage: String?
 
     init(
         id: String = UUID().uuidString,
         name: String,
         prompt: String,
-        icon: String = MeetingTemplates.customIconFallback
+        icon: String = MeetingTemplates.customIconFallback,
+        outputLanguage: String? = nil
     ) {
         self.id = id
         self.name = name
         self.prompt = prompt
         self.icon = MeetingTemplates.normalizedCustomIcon(named: icon)
+        self.outputLanguage = outputLanguage
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -24,6 +28,7 @@ struct CustomMeetingTemplate: Codable, Equatable, Identifiable, Sendable {
         case name
         case prompt
         case icon
+        case outputLanguage = "output_language"
     }
 
     init(from decoder: Decoder) throws {
@@ -34,6 +39,7 @@ struct CustomMeetingTemplate: Codable, Equatable, Identifiable, Sendable {
         icon = MeetingTemplates.normalizedCustomIcon(
             named: try c.decodeIfPresent(String.self, forKey: .icon)
         )
+        outputLanguage = try c.decodeIfPresent(String.self, forKey: .outputLanguage)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -42,6 +48,7 @@ struct CustomMeetingTemplate: Codable, Equatable, Identifiable, Sendable {
         try c.encode(name, forKey: .name)
         try c.encode(prompt, forKey: .prompt)
         try c.encode(MeetingTemplates.normalizedCustomIcon(named: icon), forKey: .icon)
+        try c.encodeIfPresent(outputLanguage, forKey: .outputLanguage)
     }
 }
 
@@ -50,6 +57,9 @@ struct MeetingTemplateSnapshot: Equatable, Sendable {
     let name: String
     let kind: MeetingTemplateKind
     let prompt: String
+    /// MeetingOutputLanguage code; nil = system (app UI language). Resolved
+    /// live from the current template config, not persisted per meeting.
+    var outputLanguage: String? = nil
 }
 
 struct MeetingTemplateDefinition: Identifiable, Equatable, Sendable {
@@ -59,14 +69,59 @@ struct MeetingTemplateDefinition: Identifiable, Equatable, Sendable {
     let icon: String
     let kind: MeetingTemplateKind
     let promptBody: String
+    var outputLanguage: String? = nil
 
     var snapshot: MeetingTemplateSnapshot {
         MeetingTemplateSnapshot(
             id: id,
             name: title,
             kind: kind,
-            prompt: promptBody
+            prompt: promptBody,
+            outputLanguage: outputLanguage
         )
+    }
+}
+
+/// Output language options for meeting summaries. The instruction is
+/// appended to the summary prompt in English; nil/system resolves to the
+/// app UI language at generation time.
+enum MeetingOutputLanguage {
+    static let systemCode = "system"
+
+    /// (code, English name for the prompt, display name for pickers)
+    static let options: [(code: String, promptName: String, displayName: String)] = [
+        ("en", "English", "English"),
+        ("ru", "Russian", "Русский"),
+        ("es", "Spanish", "Español"),
+        ("de", "German", "Deutsch"),
+        ("fr", "French", "Français"),
+        ("it", "Italian", "Italiano"),
+        ("pt", "Portuguese", "Português"),
+        ("uk", "Ukrainian", "Українська"),
+        ("tr", "Turkish", "Türkçe"),
+        ("zh", "Chinese", "中文"),
+        ("ja", "Japanese", "日本語"),
+        ("ko", "Korean", "한국어"),
+    ]
+
+    /// English language name used in the prompt instruction.
+    /// nil or "system" → the current app UI language.
+    static func promptName(for code: String?) -> String {
+        if let code, code != systemCode,
+           let option = options.first(where: { $0.code == code }) {
+            return option.promptName
+        }
+        return L10n.shared.isRussian ? "Russian" : "English"
+    }
+
+    /// Picker label for a stored code (nil = system).
+    static func displayName(for code: String?) -> String {
+        if let code, code != systemCode,
+           let option = options.first(where: { $0.code == code }) {
+            return option.displayName
+        }
+        let systemLanguage = L10n.shared.isRussian ? "Русский" : "English"
+        return tr("System (\(systemLanguage))", "Системный (\(systemLanguage))")
     }
 }
 
@@ -284,7 +339,8 @@ enum MeetingTemplates {
             category: "Custom",
             icon: normalizedCustomIcon(named: customTemplate.icon),
             kind: .custom,
-            promptBody: customTemplate.prompt
+            promptBody: customTemplate.prompt,
+            outputLanguage: customTemplate.outputLanguage
         )
     }
 
@@ -292,8 +348,23 @@ enum MeetingTemplates {
         customTemplates.map(customDefinition)
     }
 
+    /// A custom template stored with a built-in id overrides that built-in
+    /// (user-edited built-in template). It keeps the built-in's slot in the
+    /// list; deleting it restores the stock definition.
+    static func isBuiltInID(_ id: String) -> Bool {
+        builtIns.contains { $0.id == id }
+    }
+
     static func allDefinitions(customTemplates: [CustomMeetingTemplate]) -> [MeetingTemplateDefinition] {
-        [auto] + builtIns + customDefinitions(from: customTemplates)
+        let overrides = Dictionary(
+            customTemplates.filter { isBuiltInID($0.id) }.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let mergedBuiltIns = builtIns.map { builtIn in
+            overrides[builtIn.id].map(customDefinition(from:)) ?? builtIn
+        }
+        let pureCustoms = customTemplates.filter { !isBuiltInID($0.id) }
+        return [auto] + mergedBuiltIns + customDefinitions(from: pureCustoms)
     }
 
     static func resolveDefinition(id: String?, customTemplates: [CustomMeetingTemplate]) -> MeetingTemplateDefinition {
@@ -301,11 +372,12 @@ enum MeetingTemplates {
         if normalizedID == autoID {
             return auto
         }
-        if let builtIn = builtIns.first(where: { $0.id == normalizedID }) {
-            return builtIn
-        }
+        // Customs first so an edited built-in wins over the stock definition.
         if let custom = customTemplates.first(where: { $0.id == normalizedID }) {
             return customDefinition(from: custom)
+        }
+        if let builtIn = builtIns.first(where: { $0.id == normalizedID }) {
+            return builtIn
         }
         return auto
     }
@@ -315,11 +387,11 @@ enum MeetingTemplates {
         if normalizedID.isEmpty || normalizedID == autoID {
             return auto
         }
-        if let builtIn = builtIns.first(where: { $0.id == normalizedID }) {
-            return builtIn
-        }
         if let custom = customTemplates.first(where: { $0.id == normalizedID }) {
             return customDefinition(from: custom)
+        }
+        if let builtIn = builtIns.first(where: { $0.id == normalizedID }) {
+            return builtIn
         }
         return nil
     }
@@ -336,12 +408,22 @@ enum MeetingTemplates {
         let storedID = meeting.selectedTemplateID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let storedName = meeting.selectedTemplateName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let storedPrompt = meeting.selectedTemplatePrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // Prefer the live template definition so edits to a template (prompt,
+        // name, output language) take effect everywhere — matching the template
+        // tabs and the regenerate chip. Fall back to the stored snapshot only
+        // when the template no longer exists (e.g. a deleted custom template).
+        if let live = resolveExactSnapshot(id: storedID.isEmpty ? nil : storedID, customTemplates: customTemplates) {
+            return live
+        }
         if !storedID.isEmpty, !storedName.isEmpty, !storedPrompt.isEmpty {
             return MeetingTemplateSnapshot(
                 id: storedID,
                 name: storedName,
                 kind: meeting.selectedTemplateKind ?? .auto,
-                prompt: storedPrompt
+                prompt: storedPrompt,
+                // The output language is a generation-time preference, not part
+                // of the stored snapshot: resolve it from the current config.
+                outputLanguage: customTemplates.first(where: { $0.id == storedID })?.outputLanguage
             )
         }
         return resolveSnapshot(id: storedID.isEmpty ? nil : storedID, customTemplates: customTemplates)

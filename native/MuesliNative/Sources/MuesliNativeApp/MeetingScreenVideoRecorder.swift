@@ -176,13 +176,31 @@ enum MeetingVideoComposer {
 
         guard let audioPath, FileManager.default.fileExists(atPath: audioPath) else {
             // No saved audio — keep the video as-is.
+            fputs("[meeting-video] no audio available (path: \(audioPath ?? "nil")) — saving silent video\n", stderr)
             try FileManager.default.moveItem(at: temporaryVideoURL, to: outputURL)
             return outputURL
         }
 
+        // PCM (wav) tracks can't be passed through into an .mp4 container —
+        // transcode to AAC first, otherwise the export fails or drops audio.
+        var audioURL = URL(fileURLWithPath: audioPath)
+        var temporaryAACURL: URL?
+        if audioURL.pathExtension.lowercased() == "wav" {
+            let aacURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("muesli-video-audio-\(UUID().uuidString).m4a")
+            try await transcodeToM4A(sourceURL: audioURL, destinationURL: aacURL)
+            audioURL = aacURL
+            temporaryAACURL = aacURL
+        }
+        defer {
+            if let temporaryAACURL {
+                try? FileManager.default.removeItem(at: temporaryAACURL)
+            }
+        }
+
         let composition = AVMutableComposition()
         let videoAsset = AVURLAsset(url: temporaryVideoURL)
-        let audioAsset = AVURLAsset(url: URL(fileURLWithPath: audioPath))
+        let audioAsset = AVURLAsset(url: audioURL)
 
         guard let videoAssetTrack = try await videoAsset.loadTracks(withMediaType: .video).first,
               let compositionVideo = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
@@ -207,6 +225,10 @@ enum MeetingVideoComposer {
             )
         }
 
+        if composition.tracks(withMediaType: .audio).isEmpty {
+            fputs("[meeting-video] WARNING: no audio track loaded from \(audioURL.lastPathComponent) — video will be silent\n", stderr)
+        }
+
         guard let export = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough) else {
             throw NSError(domain: "MeetingVideoComposer", code: 2, userInfo: [
                 NSLocalizedDescriptionKey: "Failed to create export session"
@@ -220,6 +242,22 @@ enum MeetingVideoComposer {
         }
 
         try? FileManager.default.removeItem(at: temporaryVideoURL)
+        fputs("[meeting-video] finalized with audio: \(outputURL.lastPathComponent)\n", stderr)
         return outputURL
+    }
+
+    private static func transcodeToM4A(sourceURL: URL, destinationURL: URL) async throws {
+        let asset = AVURLAsset(url: sourceURL)
+        guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
+            throw NSError(domain: "MeetingVideoComposer", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: "Failed to create audio transcode session"
+            ])
+        }
+        export.outputURL = destinationURL
+        export.outputFileType = .m4a
+        await export.export()
+        if let error = export.error {
+            throw error
+        }
     }
 }

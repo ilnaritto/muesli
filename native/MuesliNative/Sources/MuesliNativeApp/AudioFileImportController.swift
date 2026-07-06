@@ -227,7 +227,12 @@ enum AudioFileImportController {
         let wordCount = DictationStore.countWords(in: diarizedTranscript)
         let generatedTitle: String
         progress("Generating title...")
-        if let autoTitle = await MeetingSummaryClient.generateTitle(transcript: diarizedTranscript, config: config),
+        // Imported meetings use the default template — honor its output language.
+        let importTitleLanguage = MeetingTemplates.resolveSnapshot(
+            id: config.defaultMeetingTemplateID,
+            customTemplates: config.customMeetingTemplates
+        ).outputLanguage
+        if let autoTitle = await MeetingSummaryClient.generateTitle(transcript: diarizedTranscript, config: config, outputLanguage: importTitleLanguage),
            !autoTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             generatedTitle = autoTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         } else {

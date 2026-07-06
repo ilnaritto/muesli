@@ -20,7 +20,7 @@ struct AboutView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: MuesliTheme.spacing32) {
                 Text(tr("About", "О приложении"))
-                    .font(MuesliTheme.title1())
+                    .font(MuesliTheme.pageTitle())
                     .foregroundStyle(MuesliTheme.textPrimary)
 
                 if let banner = updateBanner {

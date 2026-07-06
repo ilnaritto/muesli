@@ -119,10 +119,17 @@ struct MeetingDetailView: View {
                         // the content scrolls behind the pill and the tabs row.
                         ZStack(alignment: .top) {
                             if isAIChatMode {
-                                MeetingAIChatPage()
+                                MeetingAIChatPage(meeting: meeting, controller: controller, appState: appState)
+                                    // Per-meeting identity: the draft resets on
+                                    // switch, while the conversation itself is
+                                    // kept in AppState keyed by meeting id.
+                                    .id(meeting.id)
                                     .padding(.top, floatingHeaderClearance(for: meeting) + MuesliTheme.spacing8)
                             } else if isMediaPanelOpen, hasPlayableMedia(meeting) {
                                 mediaPage(for: meeting)
+                                    .padding(.top, floatingHeaderClearance(for: meeting) + MuesliTheme.spacing8)
+                            } else if isEditingNotes || isEditingTranscript {
+                                editingPage(for: meeting)
                                     .padding(.top, floatingHeaderClearance(for: meeting) + MuesliTheme.spacing8)
                             } else if hasCompletedExtras(meeting) {
                                 VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
@@ -156,7 +163,6 @@ struct MeetingDetailView: View {
                                     // summary/transcript text and don't belong here.
                                     EmptyView()
                                 } else {
-                                    headerExportMenu(for: meeting)
                                     editChip(for: meeting)
                                     if documentMode == .notes {
                                         regenerateChip(for: meeting)
@@ -164,7 +170,13 @@ struct MeetingDetailView: View {
                                     copyChip(for: meeting)
                                 }
                             }
-                            .padding(MuesliTheme.spacing12)
+                            .padding(.top, MuesliTheme.spacing12)
+                            .padding(.leading, MuesliTheme.spacing12)
+                            // While editing, the checkmark keeps an equal gap
+                            // from the right and bottom edges; otherwise the
+                            // bottom gap mirrors the header's top offset.
+                            .padding(.trailing, isEditingNotes || isEditingTranscript ? 20 : MuesliTheme.spacing12)
+                            .padding(.bottom, isEditingNotes || isEditingTranscript ? 20 : 15)
                         }
                     }
                 }
@@ -359,9 +371,9 @@ struct MeetingDetailView: View {
         }
         .padding(.leading, 6)
         .padding(.trailing, 8)
-        // The pane now reaches the window's top edge, so this inset alone
-        // matches the chips' 16pt distance from the window's right edge.
-        .padding(.top, 16)
+        // The pane now reaches the window's top edge; the chips' bottom gap
+        // mirrors this same offset.
+        .padding(.top, 15)
     }
 
     @ViewBuilder
@@ -430,6 +442,17 @@ struct MeetingDetailView: View {
             .contentShape(Circle())
     }
 
+    /// A solid accent action chip — used for confirm actions (e.g. the
+    /// finish-editing checkmark), distinct from the subtle active-tab look.
+    private func solidHeaderIcon(_ systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 40, height: 40)
+            .background(Circle().fill(MuesliTheme.accent))
+            .contentShape(Circle())
+    }
+
     private func copyChip(for meeting: MeetingRecord) -> some View {
         Button {
             controller.copyToClipboard(activeCopyText(for: meeting))
@@ -445,10 +468,11 @@ struct MeetingDetailView: View {
         Button {
             performEditToggle(for: meeting)
         } label: {
-            headerIcon(
-                isEditingNotes || isEditingTranscript ? "checkmark.circle" : "pencil",
-                active: isEditingNotes || isEditingTranscript
-            )
+            if isEditingNotes || isEditingTranscript {
+                solidHeaderIcon("checkmark")
+            } else {
+                headerIcon("pencil")
+            }
         }
         .buttonStyle(.plain)
         .disabled(isRetranscribing && !isEditingNotes && !isEditingTranscript)
@@ -468,7 +492,8 @@ struct MeetingDetailView: View {
         .help(tr("Regenerate summary", "Пересоздать сводку"))
     }
 
-    /// AI-chat chip, media chip, tabs capsule, and the template-management chips.
+    /// AI-chat chip, media chip, transcript chip, and the tabs capsule
+    /// stretching to the right edge.
     @ViewBuilder
     private func templateTabsRow(_ meeting: MeetingRecord) -> some View {
         HStack(spacing: 11) {
@@ -476,10 +501,26 @@ struct MeetingDetailView: View {
             if hasPlayableMedia(meeting) {
                 mediaChip(for: meeting)
             }
+            transcriptChip(for: meeting)
             templateTabsCapsule(meeting)
-            templateCreateChip
-            templateSettingsChip
         }
+    }
+
+    /// Shows the raw transcript instead of the template notes.
+    private func transcriptChip(for meeting: MeetingRecord) -> some View {
+        Button {
+            isAIChatMode = false
+            isMediaPanelOpen = false
+            documentMode = .transcript
+        } label: {
+            headerIcon(
+                "text.alignleft",
+                active: !isOverlayPageOpen(meeting) && documentMode == .transcript
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isEditingNotes || isEditingTranscript)
+        .help(tr("Transcript", "Транскрипт"))
     }
 
     /// Toggles the playback panel below the tabs row: a video icon when a
@@ -525,6 +566,42 @@ struct MeetingDetailView: View {
         .padding(.bottom, MuesliTheme.spacing16)
     }
 
+    /// Full-page summary/transcript editor shown instead of the content:
+    /// a single rounded input block (same style as the template prompt
+    /// editor) pinned below the header rows and stretching to the bottom.
+    @ViewBuilder
+    private func editingPage(for meeting: MeetingRecord) -> some View {
+        Group {
+            if isEditingNotes {
+                TextEditor(text: $editableNotes)
+                    .font(.system(size: 13, design: .monospaced))
+                    .onChange(of: editableNotes) { _, _ in
+                        debounceSaveNotes(meetingID: meeting.id)
+                    }
+            } else {
+                TextEditor(text: $editableTranscript)
+                    .font(.system(size: 14))
+                    .onChange(of: editableTranscript) { _, _ in
+                        debounceSaveTranscript(meetingID: meeting.id)
+                    }
+            }
+        }
+        .foregroundStyle(MuesliTheme.textPrimary)
+        .scrollContentBackground(.hidden)
+        .padding(MuesliTheme.spacing16)
+        .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).fill(MuesliTheme.backgroundBase))
+        .overlay(
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
+                .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Align with the floating header plashki above (leading 6 / trailing 8);
+        // bottom gap mirrors the header's 15pt top offset.
+        .padding(.leading, 6)
+        .padding(.trailing, 8)
+        .padding(.bottom, 15)
+    }
+
     private func mediaFinderButton(path: String) -> some View {
         Button {
             controller.revealMeetingRecordingInFinder(path: path)
@@ -545,47 +622,19 @@ struct MeetingDetailView: View {
         .buttonStyle(.plain)
     }
 
-    private var templateCreateChip: some View {
-        Button {
-            controller.showMeetingTemplateCreation()
-        } label: {
-            headerIcon("plus")
-        }
-        .buttonStyle(.plain)
-        .help(tr("New template", "Новый шаблон"))
-    }
-
-    private var templateSettingsChip: some View {
-        Button {
-            controller.showMeetingTemplateSettings()
-        } label: {
-            headerIcon("gearshape")
-        }
-        .buttonStyle(.plain)
-        .help(tr("Template settings", "Настройки шаблонов"))
-    }
-
     @ViewBuilder
     private func templateTabsCapsule(_ meeting: MeetingRecord) -> some View {
         HStack(alignment: .center, spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .center, spacing: MuesliTheme.spacing16) {
-                    contentTab(tr("Transcript", "Транскрипт"), isSelected: !isOverlayPageOpen(meeting) && documentMode == .transcript) {
-                        isAIChatMode = false
-                        isMediaPanelOpen = false
-                        documentMode = .transcript
-                    }
-                    .disabled(isEditingNotes || isEditingTranscript)
-
-                    templateTab(id: MeetingTemplates.autoID, title: MeetingTemplates.auto.title, for: meeting)
-                    ForEach(controller.builtInMeetingTemplates()) { template in
+                    // One unified list: an edited built-in keeps its slot and
+                    // shows the customized name in place.
+                    ForEach(controller.enabledMeetingTemplates()) { template in
                         templateTab(id: template.id, title: template.title, for: meeting)
                     }
-                    ForEach(controller.customMeetingTemplates()) { template in
-                        templateTab(id: template.id, title: template.name, for: meeting)
-                    }
                 }
-                .padding(.horizontal, MuesliTheme.spacing12)
+                .padding(.leading, 20)
+                .padding(.trailing, 70)
                 .frame(height: 40)
             }
 
@@ -602,13 +651,54 @@ struct MeetingDetailView: View {
         }
         .frame(height: 40)
         .background(Capsule().fill(MuesliTheme.backgroundBase))
+        .overlay(alignment: .trailing) {
+            templateGearOverlay
+        }
+        .clipShape(Capsule())
         .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+    }
+
+    /// Fixed gear pinned inside the right edge of the tabs capsule; tabs
+    /// scrolling underneath fade out through the gradient (same pattern as
+    /// the folder tabs in the meetings list). Opens the templates manager.
+    private var templateGearOverlay: some View {
+        HStack(spacing: 0) {
+            LinearGradient(
+                stops: [
+                    .init(color: MuesliTheme.backgroundBase.opacity(0), location: 0),
+                    .init(color: MuesliTheme.backgroundBase, location: 1)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .frame(width: 24)
+            .allowsHitTesting(false)
+
+            Button {
+                controller.showMeetingTemplatesManager()
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    // 40pt zone flush with the capsule edge: the glyph center
+                    // lands 20pt from the right, on the same vertical axis as
+                    // the "⋯" chip above.
+                    .frame(width: 40, height: 40)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .background(MuesliTheme.backgroundBase)
+            .help(tr("Manage templates", "Управление шаблонами"))
+        }
+        .frame(height: 40)
     }
 
     /// A tab that selects the notes view; the template only generates when the
     /// meeting has no summary for it yet — otherwise the cached one is restored.
     @ViewBuilder
     private func templateTab(id: String, title: String, for meeting: MeetingRecord) -> some View {
+        let isBuiltIn = MeetingTemplates.builtIns.contains { $0.id == id }
+        let hasCustomEntry = controller.customMeetingTemplates().contains { $0.id == id }
         contentTab(title, isSelected: !isOverlayPageOpen(meeting) && documentMode == .notes && pendingTemplateID == id) {
             isAIChatMode = false
             isMediaPanelOpen = false
@@ -619,6 +709,24 @@ struct MeetingDetailView: View {
             }
         }
         .disabled(isEditingNotes || isEditingTranscript || isSummarizing)
+        .contextMenu {
+            if id != MeetingTemplates.autoID {
+                Button(tr("Edit…", "Редактировать…")) {
+                    controller.showMeetingTemplateEditor(templateID: id)
+                }
+                if isBuiltIn, hasCustomEntry {
+                    Button(tr("Reset to Default", "Сбросить к стандартному")) {
+                        controller.resetBuiltInMeetingTemplate(id: id)
+                    }
+                }
+                if !isBuiltIn, hasCustomEntry {
+                    Divider()
+                    Button(tr("Delete", "Удалить"), role: .destructive) {
+                        controller.deleteCustomMeetingTemplate(id: id)
+                    }
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -656,28 +764,37 @@ struct MeetingDetailView: View {
                 showNewFolderPrompt = true
             }
         } label: {
-            HStack(spacing: 5) {
+            if let currentFolderName {
+                HStack(spacing: 5) {
+                    Image(systemName: "folder")
+                        .font(.system(size: 11, weight: .medium))
+                    Text(currentFolderName)
+                        .font(.system(size: 11, weight: .regular))
+                        .lineLimit(1)
+                        .frame(maxWidth: 120)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+                .foregroundStyle(MuesliTheme.textSecondary)
+            } else {
+                // No folder yet: a bare circular chip, same look as the search chip.
                 Image(systemName: "folder")
-                    .font(.system(size: 11, weight: .medium))
-                Text(currentFolderName ?? tr("Add to folder", "В папку"))
-                    .font(.system(size: 11, weight: .medium))
-                    .lineLimit(1)
-                    .frame(maxWidth: 120)
-                    .fixedSize(horizontal: true, vertical: false)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(MuesliTheme.textSecondary)
             }
-            .foregroundStyle(MuesliTheme.textSecondary)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
         // Padding must live OUTSIDE the Menu: the borderless menu style strips
         // padding applied inside the label, which left the capsule edge-to-edge.
-        .padding(.horizontal, 18)
+        .padding(.horizontal, currentFolderName == nil ? 0 : 18)
         .frame(height: 40)
+        .frame(minWidth: 40)
         .background(Capsule().fill(MuesliTheme.backgroundBase))
         .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+        .contentShape(Capsule())
         .help(tr("Move to folder", "Переместить в папку"))
         .alert(tr("New Folder", "Новая папка"), isPresented: $showNewFolderPrompt) {
             TextField(tr("Folder name", "Название папки"), text: $newFolderName)
@@ -715,41 +832,6 @@ struct MeetingDetailView: View {
         }
         .buttonStyle(.plain)
         .help(tr("Chat with AI about this meeting", "Чат с ИИ по этой встрече"))
-    }
-
-    @ViewBuilder
-    private func headerExportMenu(for meeting: MeetingRecord) -> some View {
-        Menu {
-            Button {
-                MeetingExporter.export(
-                    meeting: meeting,
-                    content: documentMode == .transcript ? .transcript : .notes
-                )
-            } label: {
-                Label(
-                    documentMode == .transcript ? tr("Export Transcript", "Экспорт транскрипта") : tr("Export Notes", "Экспорт заметок"),
-                    systemImage: documentMode == .transcript ? "text.quote" : "doc.text"
-                )
-            }
-            Button {
-                MeetingExporter.export(meeting: meeting, content: .fullMeeting)
-            } label: {
-                Label(tr("Export Full Meeting", "Экспорт всей встречи"), systemImage: "doc.on.doc")
-            }
-        } label: {
-            Image(systemName: "square.and.arrow.up")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(MuesliTheme.textSecondary)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .frame(width: 40, height: 40)
-        .background(Circle().fill(MuesliTheme.backgroundBase))
-        .overlay(Circle().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
-        .contentShape(Circle())
-        .help(tr("Export", "Экспорт"))
-        .disabled(isEditingNotes || isEditingTranscript)
     }
 
     @ViewBuilder
@@ -792,6 +874,28 @@ struct MeetingDetailView: View {
                     Label(tr("Show Recording", "Показать запись"), systemImage: "folder")
                 }
             }
+
+            Menu {
+                Button {
+                    MeetingExporter.export(
+                        meeting: meeting,
+                        content: documentMode == .transcript ? .transcript : .notes
+                    )
+                } label: {
+                    Label(
+                        documentMode == .transcript ? tr("Export Transcript", "Экспорт транскрипта") : tr("Export Notes", "Экспорт заметок"),
+                        systemImage: documentMode == .transcript ? "text.quote" : "doc.text"
+                    )
+                }
+                Button {
+                    MeetingExporter.export(meeting: meeting, content: .fullMeeting)
+                } label: {
+                    Label(tr("Export Full Meeting", "Экспорт всей встречи"), systemImage: "doc.on.doc")
+                }
+            } label: {
+                Label(tr("Export", "Экспорт"), systemImage: "square.and.arrow.up")
+            }
+            .disabled(isEditingNotes || isEditingTranscript)
 
             if controller.canDeleteMeeting(meeting) {
                 Divider()
@@ -870,7 +974,7 @@ struct MeetingDetailView: View {
             // Text is vertically centered in the row; the underline hugs the
             // bottom edge regardless of the row height.
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 13, weight: .regular))
                 .foregroundStyle(isSelected ? MuesliTheme.textPrimary : MuesliTheme.textSecondary)
                 .frame(maxHeight: .infinity)
                 .overlay(alignment: .bottom) {
@@ -1076,40 +1180,6 @@ struct MeetingDetailView: View {
                 .padding(.bottom, 24)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
-        } else if isEditingNotes {
-            VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
-                TextEditor(text: $editableNotes)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundStyle(MuesliTheme.textPrimary)
-                    .scrollContentBackground(.hidden)
-                    .padding(MuesliTheme.spacing24)
-                    .background(MuesliTheme.backgroundBase)
-                    .frame(maxWidth: 980, maxHeight: .infinity, alignment: .topLeading)
-                    .onChange(of: editableNotes) { _, _ in
-                        debounceSaveNotes(meetingID: meeting.id)
-                    }
-            }
-            .padding(.horizontal, 40)
-            .padding(.top, 12)
-            .padding(.bottom, 24)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        } else if isEditingTranscript {
-            VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
-                TextEditor(text: $editableTranscript)
-                    .font(.system(size: 14))
-                    .foregroundStyle(MuesliTheme.textPrimary)
-                    .scrollContentBackground(.hidden)
-                    .padding(MuesliTheme.spacing24)
-                    .background(MuesliTheme.backgroundBase)
-                    .frame(maxWidth: 980, maxHeight: .infinity, alignment: .topLeading)
-                    .onChange(of: editableTranscript) { _, _ in
-                        debounceSaveTranscript(meetingID: meeting.id)
-                    }
-            }
-            .padding(.horizontal, 40)
-            .padding(.top, 12)
-            .padding(.bottom, 24)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         } else {
             VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
                 ZStack(alignment: .topLeading) {
@@ -1346,9 +1416,9 @@ struct MeetingDetailView: View {
                 }
             }
 
-            if !controller.customMeetingTemplates().isEmpty {
+            if !controller.customOnlyMeetingTemplates().isEmpty {
                 Section(tr("Custom Templates", "Пользовательские шаблоны")) {
-                    ForEach(controller.customMeetingTemplates()) { template in
+                    ForEach(controller.customOnlyMeetingTemplates()) { template in
                         Button {
                             pendingTemplateID = template.id
                         } label: {
@@ -2605,7 +2675,7 @@ private struct TranscriptSearchPopover: View {
                                 Text(line)
                                     .font(MuesliTheme.caption())
                                     .foregroundStyle(MuesliTheme.textSecondary)
-                                    .lineLimit(2)
+                                    .lineLimit(3)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(MuesliTheme.spacing8)
                                     .background(MuesliTheme.backgroundRaised)
@@ -2613,7 +2683,9 @@ private struct TranscriptSearchPopover: View {
                             }
                         }
                     }
-                    .frame(maxHeight: 260)
+                    // Popovers size views to their IDEAL height, and a
+                    // ScrollView's ideal height is tiny — pin it explicitly.
+                    .frame(height: 380)
                 }
             } else {
                 Text(tr("Type at least 2 characters to search the transcript.", "Введите минимум 2 символа для поиска по транскрипту."))
@@ -2628,67 +2700,124 @@ private struct TranscriptSearchPopover: View {
 
 /// Placeholder page for the upcoming "chat with AI about this meeting" feature.
 /// Pure mock — no backend wiring yet. Shown inline instead of the notes content.
+/// Compact markdown renderer for AI chat bubbles: headings, bullet and
+/// numbered lists, and inline **bold** / *italic* / `code` — the same visual
+/// language as the meeting summary, sized for a chat bubble.
+struct ChatMarkdownText: View {
+    let markdown: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            let lines = markdown.components(separatedBy: .newlines)
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, raw in
+                line(raw)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private static func inline(_ string: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: string,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(string)
+    }
+
+    @ViewBuilder
+    private func line(_ raw: String) -> some View {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty {
+            Color.clear.frame(height: 4)
+        } else if trimmed.hasPrefix("### ") {
+            Text(Self.inline(String(trimmed.dropFirst(4))))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(MuesliTheme.textPrimary)
+        } else if trimmed.hasPrefix("## ") {
+            Text(Self.inline(String(trimmed.dropFirst(3))))
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(MuesliTheme.textPrimary)
+        } else if trimmed.hasPrefix("# ") {
+            Text(Self.inline(String(trimmed.dropFirst(2))))
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(MuesliTheme.textPrimary)
+        } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
+            bulletRow(marker: "•", text: String(trimmed.dropFirst(2)))
+        } else if let numbered = Self.numbered(trimmed) {
+            bulletRow(marker: numbered.marker, text: numbered.text)
+        } else {
+            Text(Self.inline(trimmed))
+                .font(MuesliTheme.callout())
+                .foregroundStyle(MuesliTheme.textSecondary)
+                .lineSpacing(2)
+        }
+    }
+
+    private func bulletRow(marker: String, text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(marker)
+                .font(MuesliTheme.callout())
+                .foregroundStyle(MuesliTheme.textTertiary)
+            Text(Self.inline(text))
+                .font(MuesliTheme.callout())
+                .foregroundStyle(MuesliTheme.textSecondary)
+                .lineSpacing(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private static func numbered(_ line: String) -> (marker: String, text: String)? {
+        guard let range = line.range(of: #"^\d+\.\s+"#, options: .regularExpression) else { return nil }
+        let marker = line[..<line.index(before: range.upperBound)].trimmingCharacters(in: .whitespaces)
+        let text = String(line[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+        guard !marker.isEmpty, !text.isEmpty else { return nil }
+        return (marker, text)
+    }
+}
+
 private struct MeetingAIChatPage: View {
+    let meeting: MeetingRecord
+    let controller: MuesliController
+    let appState: AppState
+
     @State private var draft = ""
-    @State private var messages: [ChatEntry] = []
     @FocusState private var inputFocused: Bool
 
-    private struct ChatEntry: Identifiable {
-        let id = UUID()
-        let text: String
-        let isUser: Bool
+    // The conversation lives in AppState so it survives switching tabs,
+    // meetings, and closing/reopening the chat page during the session.
+    private var turns: [MeetingChatMessage] {
+        appState.meetingChatHistories[meeting.id] ?? []
+    }
+
+    private var isAwaiting: Bool {
+        appState.meetingChatAwaiting.contains(meeting.id)
     }
 
     var body: some View {
         VStack(spacing: MuesliTheme.spacing12) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-                    if messages.isEmpty {
-                        VStack(spacing: MuesliTheme.spacing8) {
-                            Text(tr("Chat with AI about this meeting", "Чат с ИИ по встрече"))
-                                .font(MuesliTheme.title3())
-                                .foregroundStyle(MuesliTheme.textPrimary)
-                            Text(tr("Ask questions about the conversation — the AI will answer based on the transcript.", "Задавайте вопросы о разговоре — ИИ ответит на основе транскрипта."))
-                                .font(MuesliTheme.caption())
-                                .foregroundStyle(MuesliTheme.textTertiary)
-                                .multilineTextAlignment(.center)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    if turns.isEmpty && !isAwaiting {
+                        emptyState
+                    } else {
+                        VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+                            ForEach(turns) { turn in
+                                bubble(turn.content, role: turn.role, isError: turn.isError)
+                                    .id(turn.id)
+                            }
+                            if isAwaiting {
+                                typingBubble
+                                    .id("typing")
+                            }
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, MuesliTheme.spacing32)
-                    }
-                    ForEach(messages) { entry in
-                        bubble(entry.text, isUser: entry.isUser)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(.top, MuesliTheme.spacing8)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .onChange(of: turns.count) { _, _ in scrollToBottom(proxy) }
+                .onChange(of: isAwaiting) { _, _ in scrollToBottom(proxy) }
             }
 
-            // Input row styled like the header plashki; send sits on the left.
-            HStack(spacing: 11) {
-                Button(action: send) {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(canSend ? MuesliTheme.accent : MuesliTheme.textTertiary)
-                        .frame(width: 40, height: 40)
-                        .background(Circle().fill(MuesliTheme.backgroundBase))
-                        .overlay(Circle().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!canSend)
-                .help(tr("Send", "Отправить"))
-
-                TextField(tr("Message about this meeting...", "Сообщение о встрече..."), text: $draft)
-                    .font(MuesliTheme.callout())
-                    .textFieldStyle(.plain)
-                    .focused($inputFocused)
-                    .onSubmit(send)
-                    .padding(.horizontal, 14)
-                    .frame(height: 40)
-                    .frame(maxWidth: .infinity)
-                    .background(Capsule().fill(MuesliTheme.backgroundBase))
-                    .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
-            }
+            inputRow
         }
         .padding(.horizontal, MuesliTheme.spacing24)
         .padding(.bottom, MuesliTheme.spacing16)
@@ -2697,37 +2826,175 @@ private struct MeetingAIChatPage: View {
         .onAppear { inputFocused = true }
     }
 
+    // MARK: - Empty state (vertically centered)
+
+    private var emptyState: some View {
+        VStack(spacing: MuesliTheme.spacing8) {
+            Spacer(minLength: 0)
+            Image(systemName: "bubble.left.and.text.bubble.right")
+                .font(.system(size: 30, weight: .light))
+                .foregroundStyle(MuesliTheme.textTertiary)
+            Text(tr("Chat with AI about this meeting", "Чат с ИИ по встрече"))
+                .font(MuesliTheme.title3())
+                .foregroundStyle(MuesliTheme.textPrimary)
+            Text(tr("Ask questions about the conversation — the AI answers using this meeting's notes and transcript.", "Задавайте вопросы о разговоре — ИИ отвечает по заметкам и транскрипту этой встречи."))
+                .font(MuesliTheme.caption())
+                .foregroundStyle(MuesliTheme.textTertiary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 380)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: 320)
+    }
+
+    // MARK: - Input row (send on the right, auto-growing field)
+
+    private var inputRow: some View {
+        HStack(alignment: .bottom, spacing: 11) {
+            growingInput
+
+            Button(action: send) {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(canSend ? MuesliTheme.accent : MuesliTheme.textTertiary)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(canSend ? MuesliTheme.accentSubtle : MuesliTheme.backgroundBase))
+                    .overlay(Circle().strokeBorder(canSend ? MuesliTheme.accent.opacity(0.35) : MuesliTheme.surfaceBorder, lineWidth: 1))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSend)
+            .help(tr("Send", "Отправить"))
+        }
+    }
+
+    private var growingInput: some View {
+        // Native vertical-axis TextField: sizes itself to one line, grows per
+        // wrapped line up to 6, then scrolls. Return submits (Option+Return
+        // inserts a newline) — no manual height measurement needed.
+        TextField(
+            tr("Message about this meeting…", "Сообщение о встрече…"),
+            text: $draft,
+            axis: .vertical
+        )
+        .font(MuesliTheme.callout())
+        .textFieldStyle(.plain)
+        .lineLimit(1...6)
+        .focused($inputFocused)
+        .onSubmit(send)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        .background(RoundedRectangle(cornerRadius: 20).fill(MuesliTheme.backgroundBase))
+        .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+    }
+
+    // MARK: - Bubbles
+
+    private var typingBubble: some View {
+        HStack {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.7)
+                Text(tr("Thinking…", "Печатает…"))
+                    .font(MuesliTheme.callout())
+                    .foregroundStyle(MuesliTheme.textTertiary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(MuesliTheme.backgroundBase)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+            )
+            Spacer(minLength: 40)
+        }
+    }
+
+    @ViewBuilder
+    private func bubble(_ text: String, role: MeetingChatMessage.Role, isError: Bool) -> some View {
+        let isUser = role == .user
+        HStack {
+            if isUser { Spacer(minLength: 40) }
+            Group {
+                if isUser || isError {
+                    // The user's own text and error messages stay plain.
+                    Text(text)
+                        .font(MuesliTheme.callout())
+                        .foregroundStyle(isUser ? .white : MuesliTheme.recording)
+                } else {
+                    // AI answers render markdown, like the meeting summary.
+                    ChatMarkdownText(markdown: text)
+                }
+            }
+            .textSelection(.enabled)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(isUser ? MuesliTheme.accent.opacity(0.75) : MuesliTheme.backgroundBase)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(isUser ? Color.clear : (isError ? MuesliTheme.recording.opacity(0.4) : MuesliTheme.surfaceBorder), lineWidth: 1)
+            )
+            if !isUser { Spacer(minLength: 40) }
+        }
+    }
+
+    // MARK: - Logic
+
     private var canSend: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isAwaiting
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        withAnimation(.easeOut(duration: 0.2)) {
+            if isAwaiting {
+                proxy.scrollTo("typing", anchor: .bottom)
+            } else if let last = turns.last {
+                proxy.scrollTo(last.id, anchor: .bottom)
+            }
+        }
     }
 
     private func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty, !isAwaiting else { return }
         draft = ""
-        messages.append(ChatEntry(text: text, isUser: true))
-        messages.append(ChatEntry(
-            text: tr("The AI chat isn't connected yet — coming soon.", "ИИ-чат ещё не подключён — скоро будет."),
-            isUser: false
-        ))
-    }
+        let meetingID = meeting.id
+        appState.meetingChatHistories[meetingID, default: []]
+            .append(MeetingChatMessage(role: .user, content: text))
+        appState.meetingChatAwaiting.insert(meetingID)
 
-    @ViewBuilder
-    private func bubble(_ text: String, isUser: Bool) -> some View {
-        HStack {
-            if isUser { Spacer(minLength: 40) }
-            Text(text)
-                .font(MuesliTheme.callout())
-                .foregroundStyle(isUser ? .white : MuesliTheme.textSecondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(isUser ? MuesliTheme.accent.opacity(0.75) : MuesliTheme.backgroundBase)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(isUser ? Color.clear : MuesliTheme.surfaceBorder, lineWidth: 1)
-                )
-            if !isUser { Spacer(minLength: 40) }
+        let history = (appState.meetingChatHistories[meetingID] ?? []).filter { !$0.isError }
+        let context = MeetingChatContext(
+            title: meeting.title,
+            formattedNotes: meeting.formattedNotes,
+            manualNotes: meeting.manualNotes,
+            transcript: meeting.rawTranscript
+        )
+        let config = controller.config
+        let appState = appState
+
+        // Writes land in AppState, so the reply arrives even if the user
+        // switches meetings or closes the chat page meanwhile.
+        Task {
+            do {
+                let reply = try await MeetingChatClient.reply(history: history, context: context, config: config)
+                await MainActor.run {
+                    appState.meetingChatHistories[meetingID, default: []]
+                        .append(MeetingChatMessage(role: .assistant, content: reply))
+                    appState.meetingChatAwaiting.remove(meetingID)
+                }
+            } catch {
+                let message = (error as? MeetingSummaryError)?.errorDescription ?? error.localizedDescription
+                await MainActor.run {
+                    appState.meetingChatHistories[meetingID, default: []]
+                        .append(MeetingChatMessage(role: .assistant, content: message, isError: true))
+                    appState.meetingChatAwaiting.remove(meetingID)
+                }
+            }
         }
     }
 }

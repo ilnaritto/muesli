@@ -10,6 +10,7 @@ private final class HoverIndicatorView: NSView {
     private var trackingAreaRef: NSTrackingArea?
     private var dragOrigin: NSPoint?
     private var didDrag = false
+    private var dragEnabled = false
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -36,13 +37,18 @@ private final class HoverIndicatorView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         didDrag = false
+        // Dragging is only allowed when the position setting is "custom";
+        // preset anchors (top-center etc.) keep the pill locked in place so
+        // it can't be nudged accidentally.
+        dragEnabled = owner?.allowsDragging ?? false
+        guard dragEnabled else { return }
         owner?.collapseForDrag()
         // Recalculate drag origin after collapse (frame changed)
         dragOrigin = NSPoint(x: (window?.frame.width ?? 0) / 2, y: (window?.frame.height ?? 0) / 2)
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let window else { return }
+        guard dragEnabled, let window else { return }
         didDrag = true
         let current = event.locationInWindow
         let frame = window.frame
@@ -135,6 +141,11 @@ final class FloatingIndicatorController: NSObject {
 
     var currentFrame: NSRect? {
         panel?.frame
+    }
+
+    /// The pill may only be dragged when its position setting is "custom".
+    fileprivate var allowsDragging: Bool {
+        configStore.load().indicatorAnchor == .custom
     }
 
     func handleClick(atX x: CGFloat? = nil) {
@@ -1124,9 +1135,9 @@ final class FloatingIndicatorController: NSObject {
     private func applyGlassState(_ state: DictationState, frameSize: NSSize) {
         let radius = frameSize.height / 2
 
-        // During recording, hide frost and show solid accent. Otherwise frosted glass.
-        let isRecording = (state == .recording)
-        glassView?.isHidden = isRecording
+        // Frosted glass in every state — the recording pill was the only one
+        // without blur and looked flat against busy backgrounds.
+        glassView?.isHidden = false
         glassView?.frame = NSRect(origin: .zero, size: frameSize)
         glassView?.layer?.cornerRadius = radius
         glassView?.layer?.masksToBounds = true
@@ -1280,10 +1291,14 @@ final class FloatingIndicatorController: NSObject {
     private func createPanel(config: AppConfig) {
         let panel = NSPanel(
             contentRect: frameForState(.idle, config: config),
-            styleMask: .borderless,
+            // .nonactivatingPanel is load-bearing: without it a click on the
+            // pill activates the app, the user's target app loses focus, and
+            // the dictation paste (Cmd+V) lands nowhere.
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
+        panel.becomesKeyOnlyIfNeeded = true
         panel.level = .floating
         panel.isOpaque = false
         panel.backgroundColor = .clear

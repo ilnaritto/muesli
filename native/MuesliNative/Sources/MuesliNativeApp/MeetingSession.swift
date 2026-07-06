@@ -528,7 +528,7 @@ final class MeetingSession {
             calendarEventID: calendarEventID
         ) {
             generatedTitle = calendarTitle
-        } else if let autoTitle = await MeetingSummaryClient.generateTitle(transcript: rawTranscript, config: config),
+        } else if let autoTitle = await MeetingSummaryClient.generateTitle(transcript: rawTranscript, config: config, outputLanguage: templateSnapshot.outputLanguage),
            !autoTitle.isEmpty {
             generatedTitle = autoTitle
             fputs("[meeting] auto-generated title: \(generatedTitle)\n", stderr)
@@ -739,7 +739,10 @@ final class MeetingSession {
         retainedRecordingWriter = nil
         retainedRecordingWriterError = nil
 
-        guard config.meetingRecordingSavePolicy != .never else { return }
+        // The mixed recording is also the soundtrack of the screen video, so
+        // it must be written whenever video capture is on — even if the user
+        // chose not to keep audio files.
+        guard config.meetingRecordingSavePolicy != .never || config.enableMeetingScreenVideo else { return }
 
         do {
             retainedRecordingWriter = try MeetingRecordingWriter()

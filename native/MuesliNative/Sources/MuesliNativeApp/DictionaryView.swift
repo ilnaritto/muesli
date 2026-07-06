@@ -51,7 +51,7 @@ struct DictionaryView: View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
             HStack {
                 Text(tr("Dictionary", "Словарь"))
-                    .font(MuesliTheme.title1())
+                    .font(MuesliTheme.pageTitle())
                     .foregroundStyle(MuesliTheme.textPrimary)
                 Spacer()
                 Toggle(

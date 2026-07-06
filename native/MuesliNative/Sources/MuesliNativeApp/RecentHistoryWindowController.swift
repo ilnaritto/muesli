@@ -3,6 +3,16 @@ import Foundation
 import SwiftUI
 import MuesliCore
 
+/// Invisible titlebar accessory that only exists to extend the titlebar
+/// container downward: the traffic lights are dropped ~17pt below the default
+/// titlebar, and anything outside the container's bounds stops receiving
+/// hover/click events even though it still draws. Extending the container
+/// keeps the whole visible button hit-testable. hitTest returns nil so the
+/// accessory strip itself never swallows events meant for the content below.
+private final class TrafficLightHitAreaExtender: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 @MainActor
 final class RecentHistoryWindowController: NSObject, NSWindowDelegate {
     private let store: DictationStore
@@ -66,6 +76,15 @@ final class RecentHistoryWindowController: NSObject, NSWindowDelegate {
         window.delegate = self
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
+
+        // Extend the titlebar container down past the dropped traffic lights
+        // so their full visible area stays hover- and click-responsive.
+        let hitAreaAccessory = NSTitlebarAccessoryViewController()
+        hitAreaAccessory.view = TrafficLightHitAreaExtender(
+            frame: NSRect(x: 0, y: 0, width: 0, height: 40)
+        )
+        hitAreaAccessory.layoutAttribute = .bottom
+        window.addTitlebarAccessoryViewController(hitAreaAccessory)
         window.backgroundColor = NSColor(red: 0.067, green: 0.071, blue: 0.078, alpha: 1) // #111214
 
         let rootView = DashboardRootView(

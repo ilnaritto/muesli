@@ -312,6 +312,14 @@ final class MuesliController: NSObject {
     private var dictationLatencyTraceID: UUID?
     private var dictationLatencyTraceStartedAt: Date?
     private var currentDictationOutputMode: DictationOutputMode = .paste
+    /// True while a dictation recording is actually running (regardless of
+    /// whether the hotkey monitor or the floating pill started it).
+    private var isDictationToggleSessionActive: Bool {
+        dictationStartedAt != nil || isNemotron35Streaming
+    }
+    /// Set when a hotkey press was rerouted to stop a pill-started session,
+    /// so the matching release doesn't run handleStop over the fresh state.
+    private var suppressNextHotkeyStop = false
     private var pendingDictationStopStartedAt: Date?
     private var pendingDictationStopSessionID: UUID?
     private var pendingReleaseSoundSessionID: UUID?
@@ -359,6 +367,7 @@ final class MuesliController: NSObject {
     private var meetingStartMeetingID: Int64?
     private var importTask: Task<Void, Never>?
     private var importSessionID: UUID?
+    private var dictationImportTask: Task<Void, Never>?
     private var canceledMeetingStartIDs = Set<Int64>()
     /// Prior transcript captured when resuming a finished meeting, keyed by meeting id.
     /// Present only while a resume is in flight; consumed at stop to merge old + new
@@ -441,6 +450,16 @@ final class MuesliController: NSObject {
         } catch {
             fputs("[muesli-native] startup error: \(error)\n", stderr)
         }
+
+        // One-shot migration: meeting audio is now retained by default so
+        // recordings are playable on the meeting page and screen videos get
+        // sound. "Never" can still be re-selected in Settings afterwards.
+        if !config.didMigrateRecordingSavePolicyToAlways {
+            updateConfig {
+                $0.meetingRecordingSavePolicy = .always
+                $0.didMigrateRecordingSavePolicyToAlways = true
+            }
+        }
         recoverStaleLiveMeetings()
         normalizeMeetingTranscriptionSelectionForAvailability()
         SoundController.prewarmLifecycleSounds()
@@ -461,11 +480,47 @@ final class MuesliController: NSObject {
             logDescription: "leftover temp meeting recording files"
         )
 
-        hotkeyMonitor.onArm = { [weak self] in self?.handleArm() }
-        hotkeyMonitor.onPrepare = { [weak self] in self?.handlePrepare() }
-        hotkeyMonitor.onStart = { [weak self] in self?.handleStart() }
-        hotkeyMonitor.onStop = { [weak self] in self?.handleStop() }
-        hotkeyMonitor.onCancel = { [weak self] in self?.handleCancel() }
+        // When a toggle dictation started OUTSIDE the hotkey monitor (the
+        // floating pill), the monitor doesn't know a session is live: a
+        // hotkey press would arm/cancel over it and silently discard the
+        // recording. Any hotkey activity then acts as "stop & paste".
+        hotkeyMonitor.onArm = { [weak self] in
+            guard let self else { return }
+            if self.isDictationToggleSessionActive { return }
+            self.handleArm()
+        }
+        hotkeyMonitor.onPrepare = { [weak self] in
+            guard let self else { return }
+            if self.isDictationToggleSessionActive { return }
+            self.handlePrepare()
+        }
+        hotkeyMonitor.onStart = { [weak self] in
+            guard let self else { return }
+            if self.isDictationToggleSessionActive {
+                // The hold-release will fire onStop for this same press —
+                // don't let it run handleStop over the finished session.
+                self.suppressNextHotkeyStop = true
+                self.handleToggleStop()
+                return
+            }
+            self.handleStart()
+        }
+        hotkeyMonitor.onStop = { [weak self] in
+            guard let self else { return }
+            if self.suppressNextHotkeyStop {
+                self.suppressNextHotkeyStop = false
+                return
+            }
+            self.handleStop()
+        }
+        hotkeyMonitor.onCancel = { [weak self] in
+            guard let self else { return }
+            if self.isDictationToggleSessionActive {
+                self.handleToggleStop()
+                return
+            }
+            self.handleCancel()
+        }
         hotkeyMonitor.onToggleStart = { [weak self] in self?.handleToggleStart() }
         hotkeyMonitor.onToggleStop = { [weak self] in self?.handleToggleStop() }
         hotkeyMonitor.doubleTapEnabled = config.enableDoubleTapDictation
@@ -506,7 +561,7 @@ final class MuesliController: NSObject {
         }
         syncDictationRecorderWarmup(intent: .idlePrewarm(.startup))
         indicator.onStopMeeting = { [weak self] in self?.stopMeetingRecording() }
-        indicator.onStartDictation = { [weak self] in self?.toggleVoiceNoteRecording() }
+        indicator.onStartDictation = { [weak self] in self?.togglePasteDictationRecording() }
         indicator.onStartMeeting = { [weak self] in
             self?.startMeetingRecording(title: "Meeting")
         }
@@ -771,6 +826,62 @@ final class MuesliController: NSObject {
 
     func meetingStats() -> MeetingStats {
         (try? dictationStore.meetingStats()) ?? MeetingStats(totalWords: 0, totalMeetings: 0, averageWPM: 0)
+    }
+
+    private static let insightsDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale.current
+        f.dateFormat = "d MMM"
+        return f
+    }()
+
+    /// Generates the AI Insights briefing for a period on the selected backend.
+    /// Runs one aggregate pass over recent meeting summaries; result cached.
+    func generateInsights(period: InsightsPeriod, folderID: Int64? = nil) {
+        guard !appState.insightsGenerating.contains(period) else { return }
+        appState.insightsGenerating.insert(period)
+
+        let cutoff = Calendar.current.date(byAdding: .day, value: -period.days, to: Date()) ?? .distantPast
+        let inputs: [MeetingDigestInput] = ((try? dictationStore.recentMeetings(limit: 500)) ?? [])
+            .filter { $0.status == .completed || $0.status == .noteOnly }
+            .filter { folderID == nil || $0.folderID == folderID }
+            .filter { (MeetingBrowserLogic.parseDate($0.startTime) ?? .distantPast) >= cutoff }
+            .filter { !$0.formattedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .prefix(40)
+            .map { meeting in
+                let date = MeetingBrowserLogic.parseDate(meeting.startTime).map { Self.insightsDateFormatter.string(from: $0) } ?? ""
+                return MeetingDigestInput(
+                    date: date,
+                    title: meeting.title,
+                    summary: truncate(meeting.formattedNotes, limit: 1200)
+                )
+            }
+
+        let config = self.config
+        Task { [weak self] in
+            var result = await MeetingInsightsClient.generate(meetings: inputs, config: config)
+            result.folderID = folderID
+            await MainActor.run {
+                self?.appState.meetingInsights[period] = result
+                self?.appState.insightsGenerating.remove(period)
+            }
+        }
+    }
+
+    /// Recomputes the non-AI Overview dashboard. DB reads on main (fast, capped),
+    /// tokenization off-main. Call lazily when the Overview page appears.
+    func refreshOverviewAnalytics() {
+        guard !appState.overviewAnalyticsLoading else { return }
+        appState.overviewAnalyticsLoading = true
+        let rows = (try? dictationStore.analyticsActivityRows()) ?? []
+        let corpus = (try? dictationStore.analyticsTextCorpus()) ?? []
+        Task.detached(priority: .utility) { [weak self] in
+            let result = TextAnalytics.compute(activity: rows, corpus: corpus)
+            await MainActor.run {
+                self?.appState.overviewAnalytics = result
+                self?.appState.overviewAnalyticsLoading = false
+            }
+        }
     }
 
     func truncate(_ text: String, limit: Int) -> String {
@@ -1879,6 +1990,15 @@ final class MuesliController: NSObject {
         preloadExperimentalTranscriptionFeatures()
     }
 
+    func updatePostProcessorSystemPrompt(_ prompt: String) {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        updateConfig {
+            $0.postProcessorSystemPrompt = trimmed
+        }
+        preloadExperimentalTranscriptionFeatures()
+    }
+
     func createTranscriptCleanupPrompt(name: String, prompt: String) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1928,12 +2048,42 @@ final class MuesliController: NSObject {
         MeetingTemplates.allDefinitions(customTemplates: config.customMeetingTemplates)
     }
 
+    /// Templates shown as tabs on the meeting page: disabled ones are hidden.
+    /// Auto can never be disabled.
+    func enabledMeetingTemplates() -> [MeetingTemplateDefinition] {
+        availableMeetingTemplates().filter {
+            $0.id == MeetingTemplates.autoID || isMeetingTemplateEnabled(id: $0.id)
+        }
+    }
+
+    func isMeetingTemplateEnabled(id: String) -> Bool {
+        !config.disabledMeetingTemplateIDs.contains(id)
+    }
+
+    func setMeetingTemplateEnabled(id: String, enabled: Bool) {
+        guard id != MeetingTemplates.autoID else { return }
+        updateConfig {
+            $0.disabledMeetingTemplateIDs.removeAll { $0 == id }
+            if !enabled {
+                $0.disabledMeetingTemplateIDs.append(id)
+            }
+        }
+    }
+
+    /// Built-in templates with user overrides applied in place.
     func builtInMeetingTemplates() -> [MeetingTemplateDefinition] {
-        MeetingTemplates.builtIns
+        MeetingTemplates.allDefinitions(customTemplates: config.customMeetingTemplates)
+            .filter { MeetingTemplates.isBuiltInID($0.id) }
     }
 
     func customMeetingTemplates() -> [CustomMeetingTemplate] {
         config.customMeetingTemplates
+    }
+
+    /// User-created templates only, excluding overrides of built-ins
+    /// (those surface through builtInMeetingTemplates()).
+    func customOnlyMeetingTemplates() -> [CustomMeetingTemplate] {
+        config.customMeetingTemplates.filter { !MeetingTemplates.isBuiltInID($0.id) }
     }
 
     func defaultMeetingTemplate() -> MeetingTemplateSnapshot {
@@ -1954,7 +2104,7 @@ final class MuesliController: NSObject {
         }
     }
 
-    func createCustomMeetingTemplate(name: String, prompt: String, icon: String) {
+    func createCustomMeetingTemplate(name: String, prompt: String, icon: String, outputLanguage: String? = nil) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty, !trimmedPrompt.isEmpty else { return }
@@ -1963,21 +2113,45 @@ final class MuesliController: NSObject {
                 CustomMeetingTemplate(
                     name: trimmedName,
                     prompt: trimmedPrompt,
-                    icon: MeetingTemplates.normalizedCustomIcon(named: icon)
+                    icon: MeetingTemplates.normalizedCustomIcon(named: icon),
+                    outputLanguage: outputLanguage
                 )
             )
         }
     }
 
-    func updateCustomMeetingTemplate(id: String, name: String, prompt: String, icon: String) {
+    func updateCustomMeetingTemplate(id: String, name: String, prompt: String, icon: String, outputLanguage: String? = nil) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty, !trimmedPrompt.isEmpty else { return }
         updateConfig {
-            guard let index = $0.customMeetingTemplates.firstIndex(where: { $0.id == id }) else { return }
-            $0.customMeetingTemplates[index].name = trimmedName
-            $0.customMeetingTemplates[index].prompt = trimmedPrompt
-            $0.customMeetingTemplates[index].icon = MeetingTemplates.normalizedCustomIcon(named: icon)
+            if let index = $0.customMeetingTemplates.firstIndex(where: { $0.id == id }) {
+                $0.customMeetingTemplates[index].name = trimmedName
+                $0.customMeetingTemplates[index].prompt = trimmedPrompt
+                $0.customMeetingTemplates[index].icon = MeetingTemplates.normalizedCustomIcon(named: icon)
+                $0.customMeetingTemplates[index].outputLanguage = outputLanguage
+            } else if MeetingTemplates.isBuiltInID(id) {
+                // Editing a stock built-in template: materialize it as a custom
+                // entry with the SAME id — it overrides the built-in in place.
+                $0.customMeetingTemplates.append(
+                    CustomMeetingTemplate(
+                        id: id,
+                        name: trimmedName,
+                        prompt: trimmedPrompt,
+                        icon: MeetingTemplates.normalizedCustomIcon(named: icon),
+                        outputLanguage: outputLanguage
+                    )
+                )
+            }
+        }
+    }
+
+    /// Removes the user's override of a built-in template, restoring the
+    /// stock definition. The default-template id stays valid either way.
+    func resetBuiltInMeetingTemplate(id: String) {
+        guard MeetingTemplates.isBuiltInID(id) else { return }
+        updateConfig {
+            $0.customMeetingTemplates.removeAll { $0.id == id }
         }
     }
 
@@ -3301,6 +3475,14 @@ final class MuesliController: NSObject {
         appState.isMeetingTemplatesManagerPresented = true
     }
 
+    /// Opens the templates manager sheet with the given template (built-in
+    /// or custom) already open in the editor.
+    func showMeetingTemplateEditor(templateID: String) {
+        appState.selectedTab = .meetings
+        appState.meetingTemplatesManagerStartsEditingID = templateID
+        appState.isMeetingTemplatesManagerPresented = true
+    }
+
     /// Navigates to Settings → Templates.
     func showMeetingTemplateSettings() {
         appState.selectedTab = .settings
@@ -4256,7 +4438,8 @@ final class MuesliController: NSObject {
         calendarEventID: String? = nil,
         endDate: Date? = nil,
         autoStopSource: MeetingAutoStopSource? = nil,
-        startOrigin: MeetingRecordingStartOrigin = .manual
+        startOrigin: MeetingRecordingStartOrigin = .manual,
+        withScreenVideo: Bool? = nil
     ) -> Bool {
         guard ensureBasicDictationPermissionsBeforeDashboard() else { return false }
         if isMeetingRecording() {
@@ -4270,7 +4453,8 @@ final class MuesliController: NSObject {
             openDocument: true,
             endDate: endDate,
             autoStopSource: autoStopSource,
-            startOrigin: startOrigin
+            startOrigin: startOrigin,
+            withScreenVideo: withScreenVideo
         )
         guard didStart else { return false }
         presentHistoryWindow(tab: .meetings)
@@ -4543,6 +4727,68 @@ final class MuesliController: NSObject {
         importTask = Task { @MainActor [weak self] in
             guard let self else { return }
             await self.importAudioFile(from: url, sessionID: sessionID)
+        }
+    }
+
+    /// Imports an audio file and stores the transcript as a dictation
+    /// (not a meeting) — used from the "+" menu on the Dictations tab.
+    func importDictationAudioFile() {
+        guard dictationImportTask == nil else { return }
+        guard dictationStartedAt == nil, !isMeetingRecording(), !isStartingMeetingRecording else { return }
+        dictationImportTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.dictationImportTask = nil }
+            guard let sourceURL = await AudioFileImportController.selectFile() else { return }
+            await self.importDictationAudioFile(from: sourceURL)
+        }
+    }
+
+    private func importDictationAudioFile(from sourceURL: URL) async {
+        indicator.setTranscribingTitle(tr("Importing audio", "Импорт аудио"), config: config)
+        setState(.transcribing)
+        do {
+            let (wavURL, duration) = try await AudioFileImportController.convertToWAV(sourceURL: sourceURL)
+            defer { try? FileManager.default.removeItem(at: wavURL) }
+            let result = try await transcriptionCoordinator.transcribeDictation(
+                at: wavURL,
+                backend: selectedBackend,
+                cohereLanguage: config.resolvedCohereLanguage,
+                indicASRLanguage: config.resolvedIndicASRLanguage,
+                enablePostProcessor: false,
+                customWords: serializedCustomWords(),
+                appContext: nil
+            )
+            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            await MainActor.run {
+                self.setState(.idle)
+                guard !text.isEmpty else {
+                    self.presentErrorAlert(
+                        title: tr("Import Failed", "Импорт не удался"),
+                        message: tr("No speech was recognized in this audio file.", "В этом аудиофайле не распознана речь.")
+                    )
+                    return
+                }
+                let endedAt = Date()
+                _ = try? self.dictationStore.insertDictation(
+                    text: text,
+                    durationSeconds: duration,
+                    source: "import",
+                    startedAt: endedAt.addingTimeInterval(-duration),
+                    endedAt: endedAt
+                )
+                self.scheduleICloudSyncAfterLocalChange()
+                self.syncAppState()
+                self.historyWindowController?.reload()
+                TelemetryDeck.signal("dictation.imported")
+            }
+        } catch {
+            await MainActor.run {
+                self.setState(.idle)
+                self.presentErrorAlert(
+                    title: tr("Import Failed", "Импорт не удался"),
+                    message: error.localizedDescription
+                )
+            }
         }
     }
 
@@ -5382,9 +5628,19 @@ final class MuesliController: NSObject {
 
     /// Muxes the temporary screen video with the saved audio mix in the
     /// background and attaches the final .mp4 to the meeting when done.
-    private func finalizeMeetingVideo(temporaryVideoURL: URL, audioPath: String?, meetingID: Int64) {
+    private func finalizeMeetingVideo(
+        temporaryVideoURL: URL,
+        audioPath: String?,
+        deleteAudioAfterMux: Bool = false,
+        meetingID: Int64
+    ) {
         Task { [weak self] in
             guard let self else { return }
+            defer {
+                if deleteAudioAfterMux, let audioPath {
+                    try? FileManager.default.removeItem(atPath: audioPath)
+                }
+            }
             do {
                 let finalURL = try await MeetingVideoComposer.finalize(
                     temporaryVideoURL: temporaryVideoURL,
@@ -5506,9 +5762,25 @@ final class MuesliController: NSObject {
             preparedRecordingSave: preparedRecordingSave
         )
         if let temporaryVideoURL = result.videoRecordingURL {
+            // The video must get a soundtrack even when audio retention is
+            // off: copy the temporary mic+system mix aside before the session
+            // cleanup deletes it, and drop the copy after muxing.
+            var muxAudioPath = preparedRecordingSave.path
+            var deleteAudioAfterMux = false
+            if muxAudioPath == nil,
+               let tempAudioURL = result.retainedRecordingURL,
+               FileManager.default.fileExists(atPath: tempAudioURL.path) {
+                let copyURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("muesli-video-audio-\(UUID().uuidString).wav")
+                if (try? FileManager.default.copyItem(at: tempAudioURL, to: copyURL)) != nil {
+                    muxAudioPath = copyURL.path
+                    deleteAudioAfterMux = true
+                }
+            }
             finalizeMeetingVideo(
                 temporaryVideoURL: temporaryVideoURL,
-                audioPath: preparedRecordingSave.path,
+                audioPath: muxAudioPath,
+                deleteAudioAfterMux: deleteAudioAfterMux,
                 meetingID: persistenceResult.meetingID
             )
         }
@@ -7183,6 +7455,17 @@ final class MuesliController: NSObject {
             handleToggleStop()
         } else if dictationState == .idle {
             handleToggleStart(outputMode: .voiceNote)
+        }
+    }
+
+    /// Toggle dictation from the floating pill: a REGULAR dictation — the
+    /// transcribed text is pasted at the cursor and saved to the list (voice
+    /// notes, by contrast, are stored without pasting).
+    func togglePasteDictationRecording() {
+        if dictationStartedAt != nil || dictationAudioSessionManager.hasActiveSession || isNemotron35Streaming {
+            handleToggleStop()
+        } else if dictationState == .idle {
+            handleToggleStart(outputMode: .paste)
         }
     }
 

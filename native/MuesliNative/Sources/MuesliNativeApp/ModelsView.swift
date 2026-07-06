@@ -21,6 +21,8 @@ struct ModelsView: View {
     @State private var downloadedPostProcModels: Set<String> = []
     @State private var downloadTasksPostProc: [String: Task<Void, Never>] = [:]
     @State private var postProcModelToDelete: PostProcessorOption?
+    @State private var isEditingSystemPrompt = false
+    @State private var editedSystemPrompt = ""
 
     init(appState: AppState, controller: MuesliController) {
         self.appState = appState
@@ -35,13 +37,16 @@ struct ModelsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: MuesliTheme.spacing24) {
-                Text(tr("Models", "Модели"))
-                    .font(MuesliTheme.title1())
-                    .foregroundStyle(MuesliTheme.textPrimary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(tr("Models", "Модели"))
+                        .font(MuesliTheme.pageTitle())
+                        .foregroundStyle(MuesliTheme.textPrimary)
 
-                Text(tr("Download and manage transcription models. The active model is used for dictation.", "Скачивайте модели транскрипции и управляйте ими. Активная модель используется для диктовки."))
-                    .font(MuesliTheme.body())
-                    .foregroundStyle(MuesliTheme.textSecondary)
+                    Text(tr("Download and manage transcription models. The active model is used for dictation.", "Скачивайте модели транскрипции и управляйте ими. Активная модель используется для диктовки."))
+                        .font(MuesliTheme.callout())
+                        .foregroundStyle(MuesliTheme.textSecondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 familyCard(
                     title: tr("Parakeet Family", "Семейство Parakeet"),

@@ -964,7 +964,10 @@ struct AppConfig: Codable {
     var scheduledMeetingNotificationLeadTime: ScheduledMeetingNotificationLeadTime = .atStart
     var showMeetingDetectionNotification: Bool = true
     var mutedMeetingDetectionAppBundleIDs: [String] = []
-    var meetingRecordingSavePolicy: MeetingRecordingSavePolicy = .never
+    var meetingRecordingSavePolicy: MeetingRecordingSavePolicy = .always
+    /// One-shot migration marker: older configs stored the previous `.never`
+    /// default; on first launch after the update the policy flips to `.always`.
+    var didMigrateRecordingSavePolicyToAlways: Bool = false
     var enableMeetingScreenVideo: Bool = false
     var meetingRecordingFileFormat: String = MeetingRecordingFileFormat.m4a.rawValue
     var darkMode: Bool = true
@@ -998,6 +1001,7 @@ struct AppConfig: Codable {
     var onboardingUseCase: String = OnboardingUseCase.dictation.rawValue
     var userName: String = ""
     var customMeetingTemplates: [CustomMeetingTemplate] = []
+    var disabledMeetingTemplateIDs: [String] = []
     var customWords: [CustomWord] = [
         CustomWord(word: "muesli", replacement: "muesli"),
     ]
@@ -1078,6 +1082,7 @@ struct AppConfig: Codable {
         case showMeetingDetectionNotification = "show_meeting_detection_notification"
         case mutedMeetingDetectionAppBundleIDs = "muted_meeting_detection_app_bundle_ids"
         case meetingRecordingSavePolicy = "meeting_recording_save_policy"
+        case didMigrateRecordingSavePolicyToAlways = "did_migrate_recording_save_policy"
         case enableMeetingScreenVideo = "enable_meeting_screen_video"
         case meetingRecordingFileFormat = "meeting_recording_file_format"
         case darkMode = "dark_mode"
@@ -1111,6 +1116,7 @@ struct AppConfig: Codable {
         case onboardingUseCase = "onboarding_use_case"
         case userName = "user_name"
         case customMeetingTemplates = "custom_meeting_templates"
+        case disabledMeetingTemplateIDs = "disabled_meeting_template_ids"
         case customWords = "custom_words"
         case dictionarySuggestions = "dictionary_suggestions"
         case dismissedDictionarySuggestionKeys = "dismissed_dictionary_suggestion_keys"
@@ -1210,6 +1216,7 @@ struct AppConfig: Codable {
         showMeetingDetectionNotification = decodedShowMeetingDetectionNotification ?? defaults.showMeetingDetectionNotification
         mutedMeetingDetectionAppBundleIDs = (try? c.decode([String].self, forKey: .mutedMeetingDetectionAppBundleIDs)) ?? defaults.mutedMeetingDetectionAppBundleIDs
         meetingRecordingSavePolicy = (try? c.decode(MeetingRecordingSavePolicy.self, forKey: .meetingRecordingSavePolicy)) ?? defaults.meetingRecordingSavePolicy
+        didMigrateRecordingSavePolicyToAlways = (try? c.decode(Bool.self, forKey: .didMigrateRecordingSavePolicyToAlways)) ?? defaults.didMigrateRecordingSavePolicyToAlways
         enableMeetingScreenVideo = (try? c.decode(Bool.self, forKey: .enableMeetingScreenVideo)) ?? defaults.enableMeetingScreenVideo
         let decodedMeetingRecordingFileFormat = (try? c.decode(String.self, forKey: .meetingRecordingFileFormat))
             ?? defaults.meetingRecordingFileFormat
@@ -1269,6 +1276,7 @@ struct AppConfig: Codable {
         }
         userName = (try? c.decode(String.self, forKey: .userName)) ?? defaults.userName
         customMeetingTemplates = (try? c.decode([CustomMeetingTemplate].self, forKey: .customMeetingTemplates)) ?? defaults.customMeetingTemplates
+        disabledMeetingTemplateIDs = (try? c.decode([String].self, forKey: .disabledMeetingTemplateIDs)) ?? defaults.disabledMeetingTemplateIDs
         customWords = (try? c.decode([CustomWord].self, forKey: .customWords)) ?? defaults.customWords
         dictionarySuggestions = (try? c.decode([DictionarySuggestion].self, forKey: .dictionarySuggestions)) ?? defaults.dictionarySuggestions
         dismissedDictionarySuggestionKeys = (try? c.decode([String].self, forKey: .dismissedDictionarySuggestionKeys)) ?? defaults.dismissedDictionarySuggestionKeys

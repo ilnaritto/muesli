@@ -233,6 +233,12 @@ env "${BUILD_ENV[@]}" "$ROOT/scripts/build_native_app.sh" debug
 
 echo ""
 echo "Launching $DEV_APP_NAME..."
+# Replace any running instance so the freshly built binary is what launches —
+# a plain `open` would just reactivate a stale copy that is already running.
+# Runs only after a successful build (set -e exits earlier on build failure),
+# so a failed build leaves the current instance untouched.
+pkill -f "$DEV_APP/Contents/MacOS/" 2>/dev/null || true
+sleep 1
 open "$DEV_APP"
 
 echo ""

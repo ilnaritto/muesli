@@ -160,10 +160,25 @@ final class MeetingRecordingWriter {
         }
     }
 
+    /// How far one stream may run ahead of the other before we stop waiting
+    /// for the lagging side (0.5 s at 16 kHz). Without this, a stalled stream
+    /// (e.g. no system sound being played, or a mic hiccup) starves the mix:
+    /// the healthy side piles up unwritten and only dumps misaligned at stop —
+    /// in practice the author's voice vanished from the retained recording.
+    private static let stallGuardSamples = 8_000
+
     private func writeMixedSamples(state: inout State, flushAll: Bool) {
-        let availableCount = flushAll
-            ? max(state.pendingMic.count, state.pendingSystem.count)
-            : min(state.pendingMic.count, state.pendingSystem.count)
+        var availableCount = min(state.pendingMic.count, state.pendingSystem.count)
+        if flushAll {
+            availableCount = max(state.pendingMic.count, state.pendingSystem.count)
+        } else {
+            let longest = max(state.pendingMic.count, state.pendingSystem.count)
+            if longest - availableCount > Self.stallGuardSamples {
+                // One side stalled: flush the surplus beyond the sync window,
+                // padding the silent side with zeros so the timeline moves on.
+                availableCount = longest - Self.stallGuardSamples
+            }
+        }
         guard availableCount > 0 else { return }
 
         let mixedSamples = Self.mix(

@@ -9,16 +9,12 @@ struct MeetingsListPane: View {
 
     let appState: AppState
     let controller: MuesliController
-    @Binding var selectedFilter: MeetingBrowserFilter
-    @Binding var selectedSort: MeetingBrowserSort
 
     @State private var showNewFolderPrompt = false
     @State private var newFolderName = ""
     @State private var folderToRename: MeetingFolder?
     @State private var renameFolderName = ""
     @State private var folderToDelete: MeetingFolder?
-    @State private var newSubfolderParent: MeetingFolder?
-    @State private var newSubfolderName = ""
     @State private var searchQuery = ""
     @FocusState private var isSearchFocused: Bool
 
@@ -29,8 +25,8 @@ struct MeetingsListPane: View {
     private var filteredMeetings: [MeetingRecord] {
         let base = MeetingBrowserLogic.filteredMeetings(
             from: scopedMeetings,
-            filter: selectedFilter,
-            sort: selectedSort
+            filter: .all,
+            sort: .newestFirst
         )
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return base }
@@ -79,9 +75,6 @@ struct MeetingsListPane: View {
                         )
                     }
 
-                    if let live = controller.activeLiveMeetingRecord() {
-                        compactActiveBanner(live)
-                    }
 
                     if filteredMeetings.isEmpty {
                         compactEmptyState
@@ -125,24 +118,6 @@ struct MeetingsListPane: View {
                     controller.renameFolder(id: folder.id, name: trimmed)
                 }
                 folderToRename = nil
-            }
-        }
-        .alert(
-            tr("New Subfolder in \"\(newSubfolderParent?.name ?? "")\"", "Новая папка в «\(newSubfolderParent?.name ?? "")»"),
-            isPresented: Binding(
-                get: { newSubfolderParent != nil },
-                set: { if !$0 { newSubfolderParent = nil } }
-            )
-        ) {
-            TextField(tr("Folder name", "Название папки"), text: $newSubfolderName)
-            Button(tr("Cancel", "Отмена"), role: .cancel) { newSubfolderParent = nil }
-            Button(tr("Create", "Создать")) {
-                let trimmed = newSubfolderName.trimmingCharacters(in: .whitespacesAndNewlines)
-                if let parent = newSubfolderParent, !trimmed.isEmpty,
-                   let id = controller.createSubfolder(name: trimmed, parentID: parent.id) {
-                    controller.showMeetingsHome(folderID: id)
-                }
-                newSubfolderParent = nil
             }
         }
         .alert(
@@ -198,10 +173,10 @@ struct MeetingsListPane: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 14)
         .padding(.vertical, 7)
         .overlay(
-            RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+            Capsule()
                 .strokeBorder(MuesliTheme.surfaceBorder.opacity(0.7), lineWidth: 1)
         )
     }
@@ -211,32 +186,68 @@ struct MeetingsListPane: View {
     @ViewBuilder
     private var folderTabs: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: MuesliTheme.spacing16) {
-                folderTab(id: nil, name: tr("All", "Все"))
-                ForEach(folderTree.visibleFolders) { folder in
-                    folderTab(id: folder.id, name: folder.name)
-                        .contextMenu {
-                            Button(tr("Rename", "Переименовать")) {
-                                renameFolderName = folder.name
-                                folderToRename = folder
-                            }
-                            Button(tr("New Subfolder…", "Новая вложенная папка…")) {
-                                newSubfolderName = ""
-                                newSubfolderParent = folder
-                            }
-                            if folder.parentID != nil {
-                                Button(tr("Move to Top Level", "На верхний уровень")) {
-                                    controller.moveFolder(id: folder.id, toParent: nil)
+                HStack(spacing: MuesliTheme.spacing16) {
+                    folderTab(id: nil, name: tr("All", "Все"))
+                    ForEach(folderTree.visibleFolders) { folder in
+                        folderTab(id: folder.id, name: folder.name)
+                            .contextMenu {
+                                Button(tr("Rename", "Переименовать")) {
+                                    renameFolderName = folder.name
+                                    folderToRename = folder
+                                }
+                                if folder.parentID != nil {
+                                    Button(tr("Move to Top Level", "На верхний уровень")) {
+                                        controller.moveFolder(id: folder.id, toParent: nil)
+                                    }
+                                }
+                                Divider()
+                                Button(tr("Delete", "Удалить"), role: .destructive) {
+                                    folderToDelete = folder
                                 }
                             }
-                            Divider()
-                            Button(tr("Delete", "Удалить"), role: .destructive) {
-                                folderToDelete = folder
-                            }
-                        }
+                    }
                 }
+                .padding(.leading, 2)
+                .padding(.trailing, 34)
+        }
+        .overlay(alignment: .trailing) {
+            folderPlusOverlay
+        }
+    }
+
+    /// Fixed "+" pinned to the right edge of the folder tabs row.
+    /// Tabs scrolling underneath fade out through the gradient so long
+    /// folder names never blend into the icon.
+    private var folderPlusOverlay: some View {
+        HStack(spacing: 0) {
+            LinearGradient(
+                stops: [
+                    .init(color: MuesliTheme.backgroundBase.opacity(0), location: 0),
+                    .init(color: MuesliTheme.backgroundBase, location: 1)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .frame(width: 24)
+            .allowsHitTesting(false)
+
+            Button {
+                newFolderName = ""
+                showNewFolderPrompt = true
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    // Lift the icon so it sits on the folder-name baseline,
+                    // not centered over the underline zone below the text.
+                    .offset(y: -4)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
             }
-            .padding(.horizontal, 2)
+            .buttonStyle(.plain)
+            .frame(maxHeight: .infinity)
+            .background(MuesliTheme.backgroundBase)
+            .help(tr("New folder", "Новая папка"))
         }
     }
 
@@ -245,11 +256,12 @@ struct MeetingsListPane: View {
         return Button {
             controller.showMeetingsHome(folderID: id)
         } label: {
-            VStack(spacing: 4) {
+            VStack(spacing: 8) {
                 Text(name)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(isSelected ? MuesliTheme.textPrimary : MuesliTheme.textSecondary)
                     .lineLimit(1)
+                    .padding(.top, 3)
                 UnevenRoundedRectangle(
                     topLeadingRadius: 2,
                     bottomLeadingRadius: 0,
@@ -324,24 +336,33 @@ struct MeetingsListPane: View {
 
                 VStack(alignment: .leading, spacing: 0) {
                     let lastID = group.records.last?.id
+                    let liveID = controller.activeLiveMeetingRecord()?.id
                     ForEach(group.records) { meeting in
-                        MeetingListItemView(
-                            record: meeting,
-                            isSelected: appState.selectedMeetingID == meeting.id,
-                            folders: appState.folders,
-                            isCompact: true,
-                            onSelect: { controller.showMeetingDocument(id: meeting.id) },
-                            onMove: { folderID in
-                                controller.moveMeeting(id: meeting.id, toFolder: folderID)
-                            },
-                            onCreateFolderAndMove: { name in
-                                controller.createFolderAndMoveMeeting(name: name, meetingID: meeting.id)
-                            },
-                            onDelete: controller.canDeleteMeeting(meeting) ? {
-                                controller.deleteMeeting(id: meeting.id)
-                            } : nil
-                        )
-                        .id(meeting.id)
+                        if meeting.id == liveID {
+                            // The active meeting renders as its own row with
+                            // the recording controls inline — no separate
+                            // banner card above the list.
+                            liveMeetingRow(meeting)
+                                .id(meeting.id)
+                        } else {
+                            MeetingListItemView(
+                                record: meeting,
+                                isSelected: appState.selectedMeetingID == meeting.id,
+                                folders: appState.folders,
+                                isCompact: true,
+                                onSelect: { controller.showMeetingDocument(id: meeting.id) },
+                                onMove: { folderID in
+                                    controller.moveMeeting(id: meeting.id, toFolder: folderID)
+                                },
+                                onCreateFolderAndMove: { name in
+                                    controller.createFolderAndMoveMeeting(name: name, meetingID: meeting.id)
+                                },
+                                onDelete: controller.canDeleteMeeting(meeting) ? {
+                                    controller.deleteMeeting(id: meeting.id)
+                                } : nil
+                            )
+                            .id(meeting.id)
+                        }
 
                         if meeting.id != lastID {
                             Rectangle()
@@ -531,40 +552,23 @@ struct MeetingsListPane: View {
         }
     }
 
-    // MARK: - Active meeting banner (compact)
+    // MARK: - Active meeting row (inline banner replacement)
 
+    /// The live meeting's list row: title + status with the recording
+    /// controls inline, styled like a regular row.
     @ViewBuilder
-    private func compactActiveBanner(_ meeting: MeetingRecord) -> some View {
-        VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-            HStack(spacing: 6) {
+    private func liveMeetingRow(_ meeting: MeetingRecord) -> some View {
+        let isSelected = appState.selectedMeetingID == meeting.id
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: MuesliTheme.spacing8) {
                 Circle()
                     .fill(activeMeetingStatusColor(for: meeting))
                     .frame(width: 8, height: 8)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(meeting.title)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(MuesliTheme.textPrimary)
-                        .lineLimit(1)
-                    Text(activeMeetingStatusText(for: meeting))
-                        .font(.system(size: 10))
-                        .foregroundStyle(MuesliTheme.textSecondary)
-                }
+                Text(meeting.title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(MuesliTheme.textPrimary)
+                    .lineLimit(1)
                 Spacer(minLength: 4)
-            }
-
-            HStack(spacing: 6) {
-                Button {
-                    controller.showMeetingDocument(id: meeting.id)
-                } label: {
-                    Label(tr("Open Notes", "Открыть заметки"), systemImage: "square.and.pencil")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(MuesliTheme.textPrimary)
-                        .padding(.horizontal, MuesliTheme.spacing8)
-                        .padding(.vertical, 5)
-                        .background(MuesliTheme.surfacePrimary)
-                        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-                }
-                .buttonStyle(.plain)
 
                 if meeting.status == .recording {
                     Button {
@@ -596,15 +600,26 @@ struct MeetingsListPane: View {
                     .help(tr("Stop", "Стоп"))
                 }
             }
+
+            // Same fixed preview zone as regular rows so heights line up.
+            Text(activeMeetingStatusText(for: meeting))
+                .font(MuesliTheme.caption())
+                .foregroundStyle(isSelected ? MuesliTheme.textSecondary : MuesliTheme.textTertiary)
+                .lineLimit(2)
+                .frame(height: 30, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(MuesliTheme.spacing12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(MuesliTheme.backgroundRaised)
-        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
-        .overlay(
-            RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
-                .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+        .background(
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                .fill(isSelected ? MuesliTheme.selectionFill : Color.clear)
+                .padding(.vertical, 3)
         )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            controller.showMeetingDocument(id: meeting.id)
+        }
     }
 
     private func activeMeetingStatusText(for meeting: MeetingRecord) -> String {
@@ -651,68 +666,33 @@ struct MeetingsListPane: View {
     }
 }
 
-/// The "+" / sort / date-filter controls shown in the primary column header
+/// The "+" quick-actions menu shown in the primary column header
 /// on the Meetings tab.
 struct MeetingsHeaderControls: View {
     let appState: AppState
     let controller: MuesliController
-    @Binding var selectedFilter: MeetingBrowserFilter
-    @Binding var selectedSort: MeetingBrowserSort
-
-    @State private var showNewFolderPrompt = false
-    @State private var newFolderName = ""
-
-    private var availableFilters: [MeetingBrowserFilter] {
-        MeetingBrowserLogic.availableFilters(for: appState.meetingRows)
-    }
 
     var body: some View {
-        HStack(spacing: 2) {
-            addMenu
-            sortButton
-            dateFilterButton
-        }
-        .alert(tr("New Folder", "Новая папка"), isPresented: $showNewFolderPrompt) {
-            TextField(tr("Folder name", "Название папки"), text: $newFolderName)
-            Button(tr("Cancel", "Отмена"), role: .cancel) { newFolderName = "" }
-            Button(tr("Create", "Создать")) {
-                let trimmed = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
-                newFolderName = ""
-                guard !trimmed.isEmpty else { return }
-                if let id = controller.createFolder(name: trimmed) {
-                    controller.showMeetingsHome(folderID: id)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var addMenu: some View {
         Menu {
             Button {
                 controller.startQuickNoteMeeting()
             } label: {
-                Label(tr("Quick Note", "Быстрая заметка"), systemImage: "plus")
+                Label(tr("New Meeting", "Новая встреча"), systemImage: "waveform")
             }
             .disabled(appState.isMeetingRecording || appState.isMeetingStarting)
+            Button {
+                _ = controller.startForegroundMeetingRecording(withScreenVideo: true)
+            } label: {
+                Label(tr("Meeting with Video", "Встреча с видео"), systemImage: "display")
+            }
+            .disabled(appState.isMeetingRecording || appState.isMeetingStarting)
+            Divider()
             Button {
                 controller.importAudioFile()
             } label: {
                 Label(tr("Import Audio", "Импорт аудио"), systemImage: "square.and.arrow.down")
             }
             .disabled(appState.isMeetingRecording || appState.isMeetingStarting)
-            Divider()
-            Button {
-                newFolderName = ""
-                showNewFolderPrompt = true
-            } label: {
-                Label(tr("New Folder…", "Новая папка…"), systemImage: "folder.badge.plus")
-            }
-            Button {
-                controller.showMeetingTemplatesManager()
-            } label: {
-                Label(tr("Manage Templates", "Управление шаблонами"), systemImage: "square.and.pencil")
-            }
         } label: {
             Image(systemName: "plus.circle")
                 .font(.system(size: 13, weight: .medium))
@@ -722,58 +702,6 @@ struct MeetingsHeaderControls: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .help(tr("Quick note, import, folders, templates", "Быстрая заметка, импорт, папки, шаблоны"))
-    }
-
-    @ViewBuilder
-    private var sortButton: some View {
-        Menu {
-            ForEach([MeetingBrowserSort.newestFirst, .oldestFirst], id: \.self) { option in
-                Button {
-                    selectedSort = option
-                } label: {
-                    if selectedSort == option {
-                        Label(option.label, systemImage: "checkmark")
-                    } else {
-                        Text(option.label)
-                    }
-                }
-            }
-        } label: {
-            Image(systemName: "arrow.up.arrow.down")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(selectedSort != .newestFirst ? MuesliTheme.accent : MuesliTheme.textSecondary)
-                .frame(width: 22, height: 22)
-                .contentShape(Rectangle())
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help(tr("Sort order", "Порядок сортировки"))
-    }
-
-    @ViewBuilder
-    private var dateFilterButton: some View {
-        Menu {
-            ForEach(availableFilters, id: \.self) { filter in
-                Button {
-                    selectedFilter = filter
-                } label: {
-                    if selectedFilter == filter {
-                        Label(filter.label, systemImage: "checkmark")
-                    } else {
-                        Text(filter.label)
-                    }
-                }
-            }
-        } label: {
-            Image(systemName: "line.3.horizontal.decrease")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(selectedFilter != .all ? MuesliTheme.accent : MuesliTheme.textSecondary)
-                .frame(width: 22, height: 22)
-                .contentShape(Rectangle())
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help(tr("Filter by date", "Фильтр по дате"))
+        .help(tr("Quick note, import audio", "Быстрая заметка, импорт аудио"))
     }
 }

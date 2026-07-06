@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 import MuesliCore
 
 enum DashboardTab: String, CaseIterable {
@@ -46,17 +47,34 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
-        case .general: return "gearshape"
-        case .sync: return "arrow.triangle.2.circlepath.icloud"
-        case .dictation: return "mic"
+        case .general: return "gearshape.fill"
+        case .sync: return "arrow.triangle.2.circlepath.icloud.fill"
+        case .dictation: return "mic.fill"
         case .computerUse: return "desktopcomputer"
-        case .meetings: return "person.2"
-        case .templates: return "square.text.square"
-        case .appearance: return "paintbrush"
-        case .dictionary: return "character.book.closed"
-        case .models: return "square.and.arrow.down"
-        case .shortcuts: return "keyboard"
-        case .about: return "info.circle"
+        case .meetings: return "person.2.fill"
+        case .templates: return "square.text.square.fill"
+        case .appearance: return "paintbrush.fill"
+        case .dictionary: return "character.book.closed.fill"
+        case .models: return "square.and.arrow.down.fill"
+        case .shortcuts: return "keyboard.fill"
+        case .about: return "info.circle.fill"
+        }
+    }
+
+    /// Telegram-style distinct icon tile color per section.
+    var iconColor: Color {
+        switch self {
+        case .general: return Color(hex: 0x8E8E93)      // gray
+        case .sync: return Color(hex: 0x34AADC)         // cyan
+        case .dictation: return Color(hex: 0xFF3B30)    // red
+        case .computerUse: return Color(hex: 0x5856D6)  // indigo
+        case .meetings: return Color(hex: 0x34C759)     // green
+        case .templates: return Color(hex: 0xAF52DE)    // purple
+        case .appearance: return Color(hex: 0xFF9500)   // orange
+        case .dictionary: return Color(hex: 0x00C7BE)   // teal
+        case .models: return Color(hex: 0x007AFF)       // blue
+        case .shortcuts: return Color(hex: 0xFF2D55)    // pink
+        case .about: return Color(hex: 0x8E8E93)        // gray
         }
     }
 }
@@ -113,8 +131,26 @@ final class AppState {
     var folders: [MeetingFolder] = []
     var selectedFolderID: Int64?  // nil = "All Meetings"
     var meetingsNavigationState: MeetingsNavigationState = .browser
+    /// Non-AI Overview dashboard dataset (computed off-main, lazily).
+    var overviewAnalytics: OverviewAnalytics?
+    var overviewAnalyticsLoading = false
+
+    /// AI Insights results, cached per period for the session; generated on demand.
+    var meetingInsights: [InsightsPeriod: InsightsResult] = [:]
+    var insightsGenerating: Set<InsightsPeriod> = []
+    /// Folder filter for the Insights page (nil = all folders).
+    var insightsFolderID: Int64? = nil
+
+    /// In-memory AI chat conversations per meeting (not persisted to disk):
+    /// survive tab switches and page toggles within the app session.
+    var meetingChatHistories: [Int64: [MeetingChatMessage]] = [:]
+    /// Meetings with an AI chat reply currently in flight.
+    var meetingChatAwaiting: Set<Int64> = []
     var isMeetingTemplatesManagerPresented: Bool = false
     var meetingTemplatesManagerStartsCreating: Bool = false
+    /// When set, the templates manager opens with this template (built-in or
+    /// custom) already loaded into the editor.
+    var meetingTemplatesManagerStartsEditingID: String?
     var dictationStats: DictationStats = DictationStats(
         totalWords: 0, totalSessions: 0, averageWordsPerSession: 0,
         averageWPM: 0, currentStreakDays: 0, longestStreakDays: 0

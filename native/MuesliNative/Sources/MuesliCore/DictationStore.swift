@@ -764,6 +764,74 @@ public final class DictationStore {
         )
     }
 
+    // MARK: - Overview analytics (raw rows; bucketing/tokenizing done app-side)
+
+    /// One voice activity row: an ISO timestamp and its duration in seconds.
+    /// Union of dictations and completed/note-only meetings.
+    public struct AnalyticsActivityRow: Sendable {
+        public let timestamp: String
+        public let durationSeconds: Double
+        public let isMeeting: Bool
+    }
+
+    public func analyticsActivityRows() throws -> [AnalyticsActivityRow] {
+        let db = try openDatabase()
+        defer { sqlite3_close(db) }
+        var rows: [AnalyticsActivityRow] = []
+
+        func collect(_ sql: String, isMeeting: Bool, bind: ((OpaquePointer?) -> Void)? = nil) throws {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { throw lastError(db) }
+            defer { sqlite3_finalize(statement) }
+            bind?(statement)
+            while sqlite3_step(statement) == SQLITE_ROW {
+                let ts = sqlite3_column_text(statement, 0).map { String(cString: $0) } ?? ""
+                let dur = sqlite3_column_double(statement, 1)
+                if !ts.isEmpty {
+                    rows.append(AnalyticsActivityRow(timestamp: ts, durationSeconds: dur, isMeeting: isMeeting))
+                }
+            }
+        }
+
+        try collect("SELECT timestamp, COALESCE(duration_seconds,0) FROM dictations WHERE deleted_at IS NULL", isMeeting: false)
+        try collect(
+            "SELECT start_time, COALESCE(duration_seconds,0) FROM meetings WHERE deleted_at IS NULL AND meeting_status IN (?, ?)",
+            isMeeting: true
+        ) { statement in
+            sqlite3_bind_text(statement, 1, (MeetingStatus.completed.rawValue as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(statement, 2, (MeetingStatus.noteOnly.rawValue as NSString).utf8String, -1, nil)
+        }
+        return rows
+    }
+
+    /// All user speech text (dictations + meeting transcripts + notes) for
+    /// local word-frequency analysis, capped to avoid unbounded memory.
+    public func analyticsTextCorpus(maxChars: Int = 400_000) throws -> [String] {
+        let db = try openDatabase()
+        defer { sqlite3_close(db) }
+        var texts: [String] = []
+        var total = 0
+
+        func collect(_ sql: String) throws {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { throw lastError(db) }
+            defer { sqlite3_finalize(statement) }
+            while sqlite3_step(statement) == SQLITE_ROW, total < maxChars {
+                if let c = sqlite3_column_text(statement, 0) {
+                    let s = String(cString: c)
+                    if !s.isEmpty {
+                        texts.append(s)
+                        total += s.count
+                    }
+                }
+            }
+        }
+
+        try collect("SELECT raw_text FROM dictations WHERE deleted_at IS NULL ORDER BY id DESC")
+        try collect("SELECT raw_transcript FROM meetings WHERE deleted_at IS NULL ORDER BY id DESC")
+        return texts
+    }
+
     public func deleteDictation(id: Int64) throws {
         let db = try openDatabase()
         defer { sqlite3_close(db) }

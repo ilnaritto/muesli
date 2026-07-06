@@ -20,7 +20,6 @@ enum DictationFilter: Hashable {
 struct DictationsView: View {
     let appState: AppState
     let controller: MuesliController
-    @State private var selectedFilter: DictationFilter = .all
     @State private var selectedDictationID: Int64?
     @State private var searchQuery = ""
     @State private var showDeleteConfirmation = false
@@ -88,7 +87,7 @@ struct DictationsView: View {
             PrimaryColumn(appState: appState, title: tr("Dictations", "Диктовки")) {
                 dictationsColumn
             } trailing: {
-                dateFilterButton
+                addMenu
             }
 
             detailPane
@@ -192,10 +191,10 @@ struct DictationsView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 14)
         .padding(.vertical, 7)
         .overlay(
-            RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+            Capsule()
                 .strokeBorder(MuesliTheme.surfaceBorder.opacity(0.7), lineWidth: 1)
         )
     }
@@ -208,9 +207,10 @@ struct DictationsView: View {
         } label: {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: MuesliTheme.spacing8) {
-                    Text(formatTimeOnly(record.timestamp))
-                        .font(.system(size: 10, weight: .medium).monospacedDigit())
-                        .foregroundStyle(MuesliTheme.textTertiary)
+                    Text(dictationTitle(record))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(MuesliTheme.textPrimary)
+                        .lineLimit(1)
                     if record.source == "cua" {
                         Text("CUA")
                             .font(.system(size: 8, weight: .bold))
@@ -223,7 +223,10 @@ struct DictationsView: View {
                     if let badge = SyncOriginDisplay.badgeLabel(forDictationSource: record.source) {
                         SyncOriginBadge(label: badge)
                     }
-                    Spacer(minLength: 0)
+                    Spacer(minLength: 4)
+                    Text(formatTimeOnly(record.timestamp))
+                        .font(.system(size: 10, weight: .medium).monospacedDigit())
+                        .foregroundStyle(MuesliTheme.textTertiary)
                 }
                 Text(record.rawText.isEmpty ? tr("(empty)", "(пусто)") : record.rawText)
                     .font(MuesliTheme.caption())
@@ -237,7 +240,7 @@ struct DictationsView: View {
                 // Inset vertically so the selection fill never touches the
                 // hairline separators between rows.
                 RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
-                    .fill(isSelected ? MuesliTheme.surfaceSelected : Color.clear)
+                    .fill(isSelected ? MuesliTheme.selectionFill : Color.clear)
                     .padding(.vertical, 3)
             )
             .contentShape(Rectangle())
@@ -292,83 +295,99 @@ struct DictationsView: View {
     @ViewBuilder
     private var detailPane: some View {
         if let record = selectedDictation {
-            ScrollView {
-                VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
-                    Text(formatFullDate(record.timestamp))
-                        .font(MuesliTheme.title2())
-                        .foregroundStyle(MuesliTheme.textPrimary)
-
+            VStack(alignment: .leading, spacing: 9) {
+                // Header row: date pill stretching, copy/delete chips at right —
+                // same layout language as the meeting page header.
+                HStack(spacing: 11) {
+                    // Title pill mirroring the meeting header: round icon,
+                    // date as the title, small meta line underneath.
                     HStack(spacing: MuesliTheme.spacing8) {
-                        metaChip(icon: "clock", text: formatDuration(record.durationSeconds))
-                        metaChip(icon: "text.word.spacing", text: tr("words: \(record.wordCount)", "слов: \(record.wordCount)"))
-                        if record.durationSeconds > 1 {
-                            let wpm = Int((Double(record.wordCount) / (record.durationSeconds / 60)).rounded())
-                            metaChip(icon: "gauge.with.needle", text: tr("\(wpm) WPM", "\(wpm) слов/мин"))
+                        ZStack {
+                            Circle()
+                                .fill(MuesliTheme.accentSubtle)
+                            Image(systemName: "text.bubble")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(MuesliTheme.accent)
                         }
-                        if !record.appContext.isEmpty {
-                            metaChip(icon: "macwindow", text: record.appContext)
-                        }
-                        Spacer()
-                    }
+                        .frame(width: 30, height: 30)
 
-                    HStack(spacing: MuesliTheme.spacing8) {
-                        Button {
-                            controller.copyToClipboard(record.rawText)
-                        } label: {
-                            Label(tr("Copy", "Копировать"), systemImage: "doc.on.doc")
-                                .font(.system(size: 12, weight: .semibold))
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(dictationTitle(record))
+                                .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(MuesliTheme.textPrimary)
-                                .padding(.horizontal, MuesliTheme.spacing12)
-                                .padding(.vertical, 7)
-                                .background(MuesliTheme.surfacePrimary)
-                                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                                .lineLimit(1)
+                            Text(dictationMetaLine(record))
+                                .font(.system(size: 10))
+                                .foregroundStyle(MuesliTheme.textTertiary)
+                                .lineLimit(1)
                         }
-                        .buttonStyle(.plain)
-
-                        Button {
-                            showDeleteConfirmation = true
-                        } label: {
-                            Label(tr("Delete", "Удалить"), systemImage: "trash")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(MuesliTheme.recording)
-                                .padding(.horizontal, MuesliTheme.spacing12)
-                                .padding(.vertical, 7)
-                                .background(MuesliTheme.recording.opacity(0.1))
-                                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-                        }
-                        .buttonStyle(.plain)
+                        Spacer(minLength: 0)
                     }
+                    .padding(.leading, 5)
+                    .padding(.trailing, 10)
+                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Capsule().fill(MuesliTheme.backgroundBase))
+                    .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
 
-                    Divider().overlay(MuesliTheme.surfaceBorder)
-
-                    Text(record.rawText)
-                        .font(MuesliTheme.body())
-                        .foregroundStyle(MuesliTheme.textPrimary)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    if record.computerUseTrace != nil {
-                        VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-                            Text(tr("Computer Use trace", "Трассировка Computer Use"))
-                                .font(MuesliTheme.headline())
-                                .foregroundStyle(MuesliTheme.textSecondary)
-                            Text(ComputerUseTraceFormatter.debugText(for: record))
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(MuesliTheme.textSecondary)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(MuesliTheme.spacing12)
-                                .background(MuesliTheme.backgroundRaised)
-                                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-                        }
+                    Button {
+                        controller.copyToClipboard(record.rawText)
+                    } label: {
+                        detailChipIcon("doc.on.doc")
                     }
+                    .buttonStyle(.plain)
+                    .help(tr("Copy text", "Копировать текст"))
+
+                    Button {
+                        showDeleteConfirmation = true
+                    } label: {
+                        detailChipIcon("trash", tint: MuesliTheme.recording)
+                    }
+                    .buttonStyle(.plain)
+                    .help(tr("Delete dictation", "Удалить диктовку"))
                 }
-                .padding(MuesliTheme.spacing32)
-                .frame(maxWidth: 980, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
+
+                // Where the text was pasted, as its own block.
+                if !record.appContext.isEmpty {
+                    metaChip(icon: "macwindow", text: tr("Pasted into: \(record.appContext)", "Вставлено в: \(record.appContext)"))
+                }
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
+                        Text(record.rawText)
+                            .font(MuesliTheme.body())
+                            .foregroundStyle(MuesliTheme.textPrimary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if record.computerUseTrace != nil {
+                            VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+                                Text(tr("Computer Use trace", "Трассировка Computer Use"))
+                                    .font(MuesliTheme.headline())
+                                    .foregroundStyle(MuesliTheme.textSecondary)
+                                Text(ComputerUseTraceFormatter.debugText(for: record))
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(MuesliTheme.textSecondary)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(MuesliTheme.spacing12)
+                                    .background(MuesliTheme.backgroundRaised)
+                                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 34)
+                    .padding(.top, MuesliTheme.spacing12)
+                    .padding(.bottom, MuesliTheme.spacing24)
+                    .frame(maxWidth: 980, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
+            .padding(.leading, 6)
+            .padding(.trailing, 8)
+            .padding(.top, 15)
             .alert(tr("Delete Dictation", "Удалить диктовку"), isPresented: $showDeleteConfirmation) {
                 Button(tr("Delete", "Удалить"), role: .destructive) {
                     selectedDictationID = nil
@@ -395,20 +414,61 @@ struct DictationsView: View {
         }
     }
 
+    /// Capsule chip in the meeting-page plashka style.
     @ViewBuilder
     private func metaChip(icon: String, text: String) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 5) {
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .medium))
-            Text(text)
                 .font(.system(size: 11, weight: .medium))
+            Text(text)
+                .font(.system(size: 11, weight: .regular))
                 .lineLimit(1)
         }
         .foregroundStyle(MuesliTheme.textSecondary)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(MuesliTheme.surfacePrimary)
-        .clipShape(Capsule())
+        .padding(.horizontal, 14)
+        .frame(height: 28)
+        .background(Capsule().fill(MuesliTheme.backgroundBase))
+        .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+    }
+
+    /// Circular 40pt icon chip, same as the meeting header chips.
+    private func detailChipIcon(_ systemName: String, tint: Color? = nil) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 15, weight: .medium))
+            .foregroundStyle(tint ?? MuesliTheme.textSecondary)
+            .frame(width: 40, height: 40)
+            .background(Circle().fill(MuesliTheme.backgroundBase))
+            .overlay(Circle().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+            .contentShape(Circle())
+    }
+
+    /// Pill title: the first few words of the dictation stand in for a name.
+    private func dictationTitle(_ record: DictationRecord) -> String {
+        let words = record.rawText
+            .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+        guard !words.isEmpty else { return tr("(empty)", "(пусто)") }
+        var title = words.prefix(4).joined(separator: " ")
+        if title.count > 40 {
+            title = String(title.prefix(40))
+        }
+        if words.count > 4 || title.count < record.rawText.trimmingCharacters(in: .whitespacesAndNewlines).count {
+            title += "…"
+        }
+        return title
+    }
+
+    /// Small meta line under the pill title: recorded at • duration • words • WPM.
+    private func dictationMetaLine(_ record: DictationRecord) -> String {
+        var parts: [String] = [
+            formatFullDate(record.timestamp),
+            formatDuration(record.durationSeconds),
+            tr("words: \(record.wordCount)", "слов: \(record.wordCount)"),
+        ]
+        if record.durationSeconds > 1 {
+            let wpm = Int((Double(record.wordCount) / (record.durationSeconds / 60)).rounded())
+            parts.append(tr("\(wpm) WPM", "\(wpm) слов/мин"))
+        }
+        return parts.joined(separator: "  \u{2022}  ")
     }
 
     private func formatDuration(_ seconds: Double) -> String {
@@ -463,81 +523,31 @@ struct DictationsView: View {
     }
 
     @ViewBuilder
-    private var dateFilterButton: some View {
+    private var addMenu: some View {
         Menu {
-            ForEach(availableFilters, id: \.self) { filter in
-                Button {
-                    selectedFilter = filter
-                    applyFilter(filter)
-                } label: {
-                    HStack {
-                        Text(filter.label)
-                        if selectedFilter == filter {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
+            Button {
+                controller.toggleVoiceNoteRecording()
+            } label: {
+                Label(tr("New Dictation", "Новая диктовка"), systemImage: "text.bubble")
             }
+            .disabled(appState.dictationState != .idle)
+            Divider()
+            Button {
+                controller.importDictationAudioFile()
+            } label: {
+                Label(tr("Import Audio", "Импорт аудио"), systemImage: "square.and.arrow.down")
+            }
+            .disabled(appState.dictationState != .idle)
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "line.3.horizontal.decrease")
-                    .font(.system(size: 11))
-                if selectedFilter != .all {
-                    Text(selectedFilter.label)
-                        .font(.system(size: 11))
-                }
-            }
-            .foregroundStyle(selectedFilter != .all ? MuesliTheme.accent : MuesliTheme.textTertiary)
-            .padding(.horizontal, selectedFilter != .all ? 8 : 0)
-            .padding(.vertical, 3)
-            .background(selectedFilter != .all ? MuesliTheme.accent.opacity(0.12) : Color.clear)
-            .clipShape(Capsule())
+            Image(systemName: "plus.circle")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(MuesliTheme.textSecondary)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-    }
-
-    /// Build filter options dynamically based on the date range of actual data.
-    private var availableFilters: [DictationFilter] {
-        var filters: [DictationFilter] = [.all]
-        let calendar = Calendar.current
-        let now = Date()
-
-        // Check oldest dictation to determine which filters make sense
-        let oldestDate: Date? = appState.dictationRows.last.flatMap { parseDate($0.timestamp) }
-            ?? appState.dictationRows.first.flatMap { parseDate($0.timestamp) }
-
-        guard let oldest = oldestDate else { return filters }
-        let daysSinceOldest = calendar.dateComponents([.day], from: oldest, to: now).day ?? 0
-
-        // Always show "Last 2 days" if data spans more than today
-        if daysSinceOldest >= 1 { filters.append(.last2Days) }
-        if daysSinceOldest >= 3 { filters.append(.lastWeek) }
-        if daysSinceOldest >= 8 { filters.append(.last2Weeks) }
-        if daysSinceOldest >= 15 { filters.append(.lastMonth) }
-        if daysSinceOldest >= 31 { filters.append(.last3Months) }
-
-        return filters
-    }
-
-    private func applyFilter(_ filter: DictationFilter) {
-        let calendar = Calendar.current
-        let now = Date()
-
-        switch filter {
-        case .all:
-            controller.clearDictationFilter()
-        case .last2Days:
-            controller.filterDictations(from: calendar.date(byAdding: .day, value: -2, to: now), to: nil)
-        case .lastWeek:
-            controller.filterDictations(from: calendar.date(byAdding: .day, value: -7, to: now), to: nil)
-        case .last2Weeks:
-            controller.filterDictations(from: calendar.date(byAdding: .day, value: -14, to: now), to: nil)
-        case .lastMonth:
-            controller.filterDictations(from: calendar.date(byAdding: .month, value: -1, to: now), to: nil)
-        case .last3Months:
-            controller.filterDictations(from: calendar.date(byAdding: .month, value: -3, to: now), to: nil)
-        }
+        .help(tr("Import audio as dictation", "Импорт аудио как диктовки"))
     }
 
     // MARK: - Date parsing

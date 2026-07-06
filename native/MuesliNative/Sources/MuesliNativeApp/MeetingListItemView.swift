@@ -59,7 +59,7 @@ struct MeetingListItemView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(record.title)
                     .font(isCompact ? .system(size: 13, weight: .medium) : MuesliTheme.headline())
-                    .foregroundStyle(isCompact && isSelected ? .white : MuesliTheme.textPrimary)
+                    .foregroundStyle(MuesliTheme.textPrimary)
                     .lineLimit(isCompact ? 1 : 2)
 
                 Spacer(minLength: 4)
@@ -69,9 +69,9 @@ struct MeetingListItemView: View {
                         if record.status != .completed {
                             statusBadge
                         }
-                        Text(formatDateOnly())
+                        Text(formatDurationShort())
                             .font(MuesliTheme.caption())
-                            .foregroundStyle(isSelected ? .white : MuesliTheme.textTertiary)
+                            .foregroundStyle(isSelected ? MuesliTheme.textSecondary : MuesliTheme.textTertiary)
                             .lineLimit(1)
                     }
                 } else {
@@ -122,7 +122,7 @@ struct MeetingListItemView: View {
                 // A fixed two-line preview area keeps every row the same height.
                 Text(previewText())
                     .font(MuesliTheme.caption())
-                    .foregroundStyle(isSelected ? .white : MuesliTheme.textTertiary)
+                    .foregroundStyle(isSelected ? MuesliTheme.textSecondary : MuesliTheme.textTertiary)
                     .lineLimit(2)
                     .frame(height: 30, alignment: .topLeading)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -140,7 +140,7 @@ struct MeetingListItemView: View {
                 // Inset vertically so the selection fill never touches the
                 // hairline separators between rows.
                 RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
-                    .fill(isSelected ? MuesliTheme.accent : Color.clear)
+                    .fill(isSelected ? MuesliTheme.selectionFill : Color.clear)
                     .padding(.vertical, 3)
             } else {
                 RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge)
@@ -284,17 +284,20 @@ struct MeetingListItemView: View {
         }
     }
 
-    private func formatDateOnly() -> String {
-        guard let date = MeetingBrowserLogic.parseDate(record.startTime) else { return "" }
-        return Self.dateOnlyFormatter.string(from: date)
+    /// Compact-row duration: seconds under a minute, "X min" under an hour,
+    /// "h:mm" from an hour up.
+    private func formatDurationShort() -> String {
+        let total = Int(record.durationSeconds.rounded())
+        if total >= 3600 {
+            let hours = total / 3600
+            let minutes = (total % 3600) / 60
+            return String(format: "%d:%02d", hours, minutes)
+        }
+        if total >= 60 {
+            return tr("\(total / 60) min", "\(total / 60) мин")
+        }
+        return tr("\(total) sec", "\(total) сек")
     }
-
-    private static let dateOnlyFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale.current
-        f.dateFormat = "d MMM"
-        return f
-    }()
 
     @ViewBuilder
     private func folderPopoverRow(icon: String, label: String, isActive: Bool = false, action: @escaping () -> Void) -> some View {

@@ -157,8 +157,6 @@ enum MeetingBrowserLogic {
 struct MeetingsView: View {
     let appState: AppState
     let controller: MuesliController
-    @State private var selectedFilter: MeetingBrowserFilter = .all
-    @State private var selectedSort: MeetingBrowserSort = .newestFirst
 
     private var currentDocumentMeeting: MeetingRecord? {
         guard case let .document(id) = appState.meetingsNavigationState else { return nil }
@@ -173,16 +171,12 @@ struct MeetingsView: View {
             PrimaryColumn(appState: appState, title: tr("Meetings", "Встречи")) {
                 MeetingsListPane(
                     appState: appState,
-                    controller: controller,
-                    selectedFilter: $selectedFilter,
-                    selectedSort: $selectedSort
+                    controller: controller
                 )
             } trailing: {
                 MeetingsHeaderControls(
                     appState: appState,
-                    controller: controller,
-                    selectedFilter: $selectedFilter,
-                    selectedSort: $selectedSort
+                    controller: controller
                 )
             }
 
@@ -200,7 +194,8 @@ struct MeetingsView: View {
                 appState: appState,
                 controller: controller,
                 onClose: { appState.isMeetingTemplatesManagerPresented = false },
-                startsCreating: appState.meetingTemplatesManagerStartsCreating
+                startsCreating: appState.meetingTemplatesManagerStartsCreating,
+                startsEditingTemplateID: appState.meetingTemplatesManagerStartsEditingID
             )
         }
         .onDrop(of: ["public.file-url"], isTargeted: nil) { providers in

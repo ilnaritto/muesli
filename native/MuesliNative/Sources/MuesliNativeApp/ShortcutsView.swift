@@ -16,7 +16,7 @@ struct ShortcutsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: MuesliTheme.spacing24) {
                 Text(tr("Shortcuts", "Горячие клавиши"))
-                    .font(MuesliTheme.title1())
+                    .font(MuesliTheme.pageTitle())
                     .foregroundStyle(MuesliTheme.textPrimary)
 
                 Text(tr("Choose your preferred shortcuts for dictation and computer use commands.", "Выберите удобные горячие клавиши для диктовки и команд управления компьютером."))
