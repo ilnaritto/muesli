@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/redesign/hero.jpg" alt="Muesli — UX/UI Update" width="900" />
+  <img src="assets/redesign/hero-hq.jpg" alt="Muesli — UX/UI Update" width="900" />
 </p>
 
 <h1 align="center">Muesli · UX/UI Update</h1>
@@ -35,7 +35,7 @@ This fork is **my take, as a product designer, on what Muesli's interface could 
 ## 35-second overview
 
 <p align="center">
-  <img src="assets/redesign/overview.gif" alt="Overview of the redesigned interface" width="820" />
+  <img src="assets/redesign/overview-hq.gif" alt="Overview of the redesigned interface" width="820" />
 </p>
 
 ---
@@ -74,7 +74,7 @@ Instead of a plain list — a dashboard that shows your voice habits at a glance
 A floating header with a title "pill," round action chips, and note templates turned into **tabs** right above the meeting. Switch between templates and the summary for each is recomputed and cached — so reopening is instant.
 
 <p align="center">
-  <img src="assets/redesign/templates.gif" alt="Meeting templates as tabs" width="760" />
+  <img src="assets/redesign/templates-hq.gif" alt="Meeting templates as tabs" width="760" />
 </p>
 
 ### 🤖 AI chat about a meeting
@@ -82,7 +82,7 @@ A floating header with a title "pill," round action chips, and note templates tu
 Ask about the call in your own words — "tell me more," "what were the decisions," "pull out the action items" — and get an answer based on the meeting's content. The chat works and responds from the transcript, right on the meeting page.
 
 <p align="center">
-  <img src="assets/redesign/meeting-chat.jpg" alt="AI chat about a meeting" width="820" />
+  <img src="assets/redesign/meeting-chat-hq.jpg" alt="AI chat about a meeting" width="820" />
 </p>
 
 ### 🎯 A floating pill with quick actions
@@ -90,7 +90,7 @@ Ask about the call in your own words — "tell me more," "what were the decision
 A compact pill that lives on top of any app. On hover it expands into a launcher with three actions: meeting, dictation, and screen-recorded meeting — without a single extra window.
 
 <p align="center">
-  <img src="assets/redesign/floating-pill.gif" alt="Floating pill" width="520" />
+  <img src="assets/redesign/floating-pill-hq.gif" alt="Floating pill" width="520" />
 </p>
 
 ### 🎥 Meeting screen recording
@@ -98,7 +98,7 @@ A compact pill that lives on top of any app. On hover it expands into a launcher
 Beyond audio, a meeting can be recorded together with your screen — the video is saved next to the transcript and available right on the meeting page. Off by default.
 
 <p align="center">
-  <img src="assets/redesign/screen-video.jpg" alt="Meeting screen recording" width="820" />
+  <img src="assets/redesign/screen-video-hq.jpg" alt="Meeting screen recording" width="820" />
 </p>
 
 ### 🌍 Full RU / EN localization
@@ -106,7 +106,7 @@ Beyond audio, a meeting can be recorded together with your screen — the video 
 Every string in the interface is translated and switches on the fly — Russian and English, no restart.
 
 <p align="center">
-  <img src="assets/redesign/localization.gif" alt="RU / EN language switching" width="760" />
+  <img src="assets/redesign/localization-hq.gif" alt="RU / EN language switching" width="760" />
 </p>
 
 ---

@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/redesign/hero.jpg" alt="Muesli — UX/UI Update" width="900" />
+  <img src="assets/redesign/hero-hq.jpg" alt="Muesli — UX/UI Update" width="900" />
 </p>
 
 <h1 align="center">Muesli · UX/UI Update</h1>
@@ -35,7 +35,7 @@
 ## Обзор за 35 секунд
 
 <p align="center">
-  <img src="assets/redesign/overview.gif" alt="Обзор переработанного интерфейса" width="820" />
+  <img src="assets/redesign/overview-hq.gif" alt="Обзор переработанного интерфейса" width="820" />
 </p>
 
 ---
@@ -74,7 +74,7 @@
 Плавающая шапка с «пилюлей» заголовка, круглые чипы действий, а шаблоны заметок стали **вкладками** прямо над встречей. Переключаешься между шаблонами — сводка под каждый пересчитывается и кэшируется, так что повторное открытие мгновенно.
 
 <p align="center">
-  <img src="assets/redesign/templates.gif" alt="Шаблоны встреч как вкладки" width="760" />
+  <img src="assets/redesign/templates-hq.gif" alt="Шаблоны встреч как вкладки" width="760" />
 </p>
 
 ### 🤖 AI-чат по встрече
@@ -82,7 +82,7 @@
 Спроси о звонке своими словами — «расскажи подробнее», «какие были решения», «собери задачи» — и получи ответ по материалам встречи. Чат работает и отвечает по транскрипту прямо на странице встречи.
 
 <p align="center">
-  <img src="assets/redesign/meeting-chat.jpg" alt="AI-чат по встрече" width="820" />
+  <img src="assets/redesign/meeting-chat-hq.jpg" alt="AI-чат по встрече" width="820" />
 </p>
 
 ### 🎯 Плавающая пилюля с быстрыми действиями
@@ -90,7 +90,7 @@
 Компактная пилюля, которая живёт поверх любого приложения. При наведении разворачивается в лаунчер с тремя действиями: встреча, диктовка и запись встречи с экраном — без единого лишнего окна.
 
 <p align="center">
-  <img src="assets/redesign/floating-pill.gif" alt="Плавающая пилюля" width="520" />
+  <img src="assets/redesign/floating-pill-hq.gif" alt="Плавающая пилюля" width="520" />
 </p>
 
 ### 🎥 Запись экрана встречи
@@ -98,7 +98,7 @@
 Помимо аудио, встречу можно писать вместе с экраном — видео сохраняется рядом с транскриптом и доступно прямо на странице встречи. Опция выключена по умолчанию.
 
 <p align="center">
-  <img src="assets/redesign/screen-video.jpg" alt="Запись экрана встречи" width="820" />
+  <img src="assets/redesign/screen-video-hq.jpg" alt="Запись экрана встречи" width="820" />
 </p>
 
 ### 🌍 Полная локализация RU / EN
@@ -106,7 +106,7 @@
 Каждая строка интерфейса переведена и переключается на лету — русский и английский без перезапуска.
 
 <p align="center">
-  <img src="assets/redesign/localization.gif" alt="Переключение языка RU / EN" width="760" />
+  <img src="assets/redesign/localization-hq.gif" alt="Переключение языка RU / EN" width="760" />
 </p>
 
 ---
