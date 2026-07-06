@@ -1,5 +1,6 @@
 <p align="center">
-  <strong>Русский</strong>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="README.en.md">English</a>
+  <img src="https://img.shields.io/badge/Русский-8A5CF6?style=for-the-badge" alt="Русский" />
+  <a href="https://github.com/ilnaritto/muesli/blob/main/README.en.md"><img src="https://img.shields.io/badge/English-3A3A3A?style=for-the-badge" alt="Switch to English" /></a>
 </p>
 
 <p align="center">
