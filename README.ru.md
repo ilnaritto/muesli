@@ -36,7 +36,7 @@
 ## Обзор за 35 секунд
 
 <p align="center">
-  <img src="assets/redesign/overview-hq.gif" alt="Обзор переработанного интерфейса" width="820" />
+  <img src="assets/redesign/overview-demo.gif" alt="Обзор переработанного интерфейса" width="820" />
 </p>
 
 ---

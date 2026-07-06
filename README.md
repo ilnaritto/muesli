@@ -36,7 +36,7 @@ This fork is **my take, as a product designer, on what Muesli's interface could 
 ## 35-second overview
 
 <p align="center">
-  <img src="assets/redesign/overview-hq.gif" alt="Overview of the redesigned interface" width="820" />
+  <img src="assets/redesign/overview-demo.gif" alt="Overview of the redesigned interface" width="820" />
 </p>
 
 ---
