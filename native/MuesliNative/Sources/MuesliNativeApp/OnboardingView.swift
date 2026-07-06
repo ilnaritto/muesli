@@ -171,7 +171,7 @@ struct OnboardingView: View {
 
                 HStack(spacing: MuesliTheme.spacing12) {
                     if canGoBack {
-                        Button("Back") {
+                        Button(tr("Back", "Назад")) {
                             goToPreviousStep()
                         }
                         .buttonStyle(.plain)
@@ -239,11 +239,11 @@ struct OnboardingView: View {
     private var primaryButton: some View {
         switch currentStep {
         case 0:
-            onboardingButton("Continue", enabled: !userName.trimmingCharacters(in: .whitespaces).isEmpty) {
+            onboardingButton(tr("Continue", "Продолжить"), enabled: !userName.trimmingCharacters(in: .whitespaces).isEmpty) {
                 goToNextStep()
             }
         case 1:
-            onboardingButton(selectedBackend.isDownloaded ? "Continue" : "Download & Continue", enabled: true) {
+            onboardingButton(selectedBackend.isDownloaded ? tr("Continue", "Продолжить") : tr("Download & Continue", "Скачать и продолжить"), enabled: true) {
                 startDownload()
             }
         case 2:
@@ -251,7 +251,7 @@ struct OnboardingView: View {
                 goToNextStep()
             }
         case 3:
-            onboardingButton(currentStepIndex == orderedSteps.count - 1 ? "Finish" : "Continue", enabled: requiredPermissionsGranted) {
+            onboardingButton(currentStepIndex == orderedSteps.count - 1 ? tr("Finish", "Завершить") : tr("Continue", "Продолжить"), enabled: requiredPermissionsGranted) {
                 if selectedUseCase.includesPushToTalk {
                     saveProgressAndRestart()
                 } else if currentStepIndex == orderedSteps.count - 1 {
@@ -262,7 +262,7 @@ struct OnboardingView: View {
             }
         case 4:
             if dictationTestResult != nil {
-                onboardingButton(selectedUseCase.includesMeetings ? "Continue" : "Finish", enabled: true) {
+                onboardingButton(selectedUseCase.includesMeetings ? tr("Continue", "Продолжить") : tr("Finish", "Завершить"), enabled: true) {
                     if selectedUseCase.includesMeetings {
                         goToNextStep()
                     } else {
@@ -278,7 +278,7 @@ struct OnboardingView: View {
                             finishOnboarding(withKey: false)
                         }
                     }
-                    onboardingButton(selectedUseCase.includesMeetings ? "Continue" : "Finish", enabled: false) {
+                    onboardingButton(selectedUseCase.includesMeetings ? tr("Continue", "Продолжить") : tr("Finish", "Завершить"), enabled: false) {
                         if selectedUseCase.includesMeetings {
                             goToNextStep()
                         } else {
@@ -290,14 +290,14 @@ struct OnboardingView: View {
         case 5:
             HStack(spacing: MuesliTheme.spacing12) {
                 skipButton { goToNextStep() }
-                onboardingButton("Continue", enabled: true) {
+                onboardingButton(tr("Continue", "Продолжить"), enabled: true) {
                     goToNextStep()
                 }
             }
         case 6:
             HStack(spacing: MuesliTheme.spacing12) {
                 skipButton { finishOnboarding(withKey: true) }
-                onboardingButton("Finish", enabled: true) {
+                onboardingButton(tr("Finish", "Завершить"), enabled: true) {
                     finishOnboarding(withKey: true)
                 }
             }
@@ -337,7 +337,7 @@ struct OnboardingView: View {
 
     @ViewBuilder
     private func skipButton(action: @escaping () -> Void) -> some View {
-        Button("Skip", action: action)
+        Button(tr("Skip", "Пропустить"), action: action)
             .buttonStyle(.plain)
             .font(MuesliTheme.body())
             .foregroundStyle(MuesliTheme.textSecondary)
@@ -425,12 +425,12 @@ struct OnboardingView: View {
 
     private var modelDownloadIndicatorTitle: String {
         if modelDownloadError != nil {
-            return "Download paused"
+            return tr("Download paused", "Загрузка приостановлена")
         }
         if isShowingModelReadyIndicator {
-            return "\(selectedBackend.label) ready"
+            return tr("\(selectedBackend.label) ready", "\(selectedBackend.label) готова")
         }
-        return "Preparing \(selectedBackend.label)"
+        return tr("Preparing \(selectedBackend.label)", "Подготовка \(selectedBackend.label)")
     }
 
     private func modelDownloadIndicatorDetail(progress: Double?) -> String {
@@ -438,23 +438,23 @@ struct OnboardingView: View {
             return modelDownloadError
         }
         if isShowingModelReadyIndicator {
-            return "Ready to test"
+            return tr("Ready to test", "Готово к проверке")
         }
         if let modelDownloadStatus {
             return modelDownloadStatus
         }
         if let progress {
-            return "\(Int((progress * 100).rounded()))% complete"
+            return tr("\(Int((progress * 100).rounded()))% complete", "\(Int((progress * 100).rounded()))% завершено")
         }
-        return "Downloading..."
+        return tr("Downloading...", "Загрузка...")
     }
 
     private var dictationTestSubtitle: AttributedString {
         let markdown: String
         if isSelectedModelReadyForDictationTest {
             markdown = selectedUseCase.includesVoiceNotes
-                ? "Hold **\(selectedHotkey.label)** to record a voice note, then release.\nYour words should appear below."
-                : "Hold **\(selectedHotkey.label)** and say something, then release.\nYour words should appear below."
+                ? tr("Hold **\(selectedHotkey.label)** to record a voice note, then release.\nYour words should appear below.", "Удерживайте **\(selectedHotkey.label)**, чтобы записать голосовую заметку, затем отпустите.\nВаши слова появятся ниже.")
+                : tr("Hold **\(selectedHotkey.label)** and say something, then release.\nYour words should appear below.", "Удерживайте **\(selectedHotkey.label)** и скажите что-нибудь, затем отпустите.\nВаши слова появятся ниже.")
         } else {
             markdown = dictationTestPreparationSubtitleMarkdown
         }
@@ -462,26 +462,26 @@ struct OnboardingView: View {
     }
 
     private var dictationTestPreparationSubtitleMarkdown: String {
-        let unlockCopy = selectedUseCase.includesVoiceNotes ? "Voice note test" : "Dictation"
+        let unlockCopy = selectedUseCase.includesVoiceNotes ? tr("Voice note test", "Проверка голосовой заметки") : tr("Dictation", "Диктовка")
         if isModelPreparingAfterDownload {
-            return "Optimizing **\(selectedBackend.label)** for this Mac.\n\(unlockCopy) will unlock when it is ready."
+            return tr("Optimizing **\(selectedBackend.label)** for this Mac.\n\(unlockCopy) will unlock when it is ready.", "Оптимизация **\(selectedBackend.label)** для этого Mac.\n\(unlockCopy) будет доступна, когда всё будет готово.")
         }
-        return "Preparing **\(selectedBackend.label)** for your first test.\n\(unlockCopy) will unlock when the model is ready."
+        return tr("Preparing **\(selectedBackend.label)** for your first test.\n\(unlockCopy) will unlock when the model is ready.", "Подготовка **\(selectedBackend.label)** к первой проверке.\n\(unlockCopy) будет доступна, когда модель будет готова.")
     }
 
     private var modelPreparationHints: [String] {
         if selectedBackend.backend == "whisper" {
             return [
-                "Compiling CoreML files for the Neural Engine",
-                "Preparing the first dictation test",
-                "Future launches will skip most of this",
-                "We'll bring Muesli forward when ready",
+                tr("Compiling CoreML files for the Neural Engine", "Компиляция файлов CoreML для Neural Engine"),
+                tr("Preparing the first dictation test", "Подготовка первой проверки диктовки"),
+                tr("Future launches will skip most of this", "Следующие запуски будут заметно быстрее"),
+                tr("We'll bring Muesli forward when ready", "Muesli откроется, когда всё будет готово"),
             ]
         }
         return [
-            "Preparing the first dictation test",
-            "Future launches will skip most of this",
-            "We'll bring Muesli forward when ready",
+            tr("Preparing the first dictation test", "Подготовка первой проверки диктовки"),
+            tr("Future launches will skip most of this", "Следующие запуски будут заметно быстрее"),
+            tr("We'll bring Muesli forward when ready", "Muesli откроется, когда всё будет готово"),
         ]
     }
 
@@ -496,21 +496,21 @@ struct OnboardingView: View {
                 .frame(width: 80, height: 48)
 
             VStack(spacing: MuesliTheme.spacing8) {
-                Text("Welcome to Muesli")
+                Text(tr("Welcome to Muesli", "Добро пожаловать в Muesli"))
                     .font(MuesliTheme.title1())
                     .foregroundStyle(MuesliTheme.textPrimary)
 
-                Text("Local-first dictation and meeting transcription for macOS.")
+                Text(tr("Local-first dictation and meeting transcription for macOS.", "Локальная диктовка и транскрипция встреч для macOS."))
                     .font(MuesliTheme.body())
                     .foregroundStyle(MuesliTheme.textSecondary)
             }
 
             VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-                Text("Your name")
+                Text(tr("Your name", "Ваше имя"))
                     .font(MuesliTheme.caption())
                     .foregroundStyle(MuesliTheme.textTertiary)
 
-                OnboardingTextField(text: $userName, placeholder: "Enter your name", onSubmit: {
+                OnboardingTextField(text: $userName, placeholder: tr("Enter your name", "Введите ваше имя"), onSubmit: {
                     if !userName.trimmingCharacters(in: .whitespaces).isEmpty {
                         goToNextStep()
                     }
@@ -519,7 +519,7 @@ struct OnboardingView: View {
             }
 
             VStack(spacing: MuesliTheme.spacing8) {
-                Text("What will you use Muesli for?")
+                Text(tr("What will you use Muesli for?", "Для чего вы будете использовать Muesli?"))
                     .font(MuesliTheme.caption())
                     .foregroundStyle(MuesliTheme.textTertiary)
 
@@ -532,8 +532,8 @@ struct OnboardingView: View {
                 ) {
                     useCaseCard(
                         icon: "waveform",
-                        title: "Voice Notes",
-                        subtitle: "Record in Muesli",
+                        title: tr("Voice Notes", "Голосовые заметки"),
+                        subtitle: tr("Record in Muesli", "Запись в Muesli"),
                         selected: selectedUseCase == .voiceNotes
                     ) {
                         selectedUseCase = .voiceNotes
@@ -541,8 +541,8 @@ struct OnboardingView: View {
 
                     useCaseCard(
                         icon: "keyboard.fill",
-                        title: "Dictation",
-                        subtitle: "Paste into apps",
+                        title: tr("Dictation", "Диктовка"),
+                        subtitle: tr("Paste into apps", "Вставка в приложения"),
                         selected: selectedUseCase == .dictation
                     ) {
                         selectedUseCase = .dictation
@@ -550,8 +550,8 @@ struct OnboardingView: View {
 
                     useCaseCard(
                         icon: "person.2.fill",
-                        title: "Meetings",
-                        subtitle: "Notes and summaries",
+                        title: tr("Meetings", "Встречи"),
+                        subtitle: tr("Notes and summaries", "Заметки и сводки"),
                         selected: selectedUseCase == .meetings
                     ) {
                         selectedUseCase = .meetings
@@ -559,8 +559,8 @@ struct OnboardingView: View {
 
                     useCaseCard(
                         icon: "rectangle.3.group.fill",
-                        title: "Everything",
-                        subtitle: "Dictation + meetings",
+                        title: tr("Everything", "Всё"),
+                        subtitle: tr("Dictation + meetings", "Диктовка + встречи"),
                         selected: selectedUseCase == .dictationAndMeetings
                     ) {
                         selectedUseCase = .dictationAndMeetings
@@ -609,11 +609,11 @@ struct OnboardingView: View {
     private var modelStep: some View {
         VStack(spacing: MuesliTheme.spacing16) {
             VStack(spacing: MuesliTheme.spacing8) {
-                Text("Choose your transcription model")
+                Text(tr("Choose your transcription model", "Выберите модель транскрипции"))
                     .font(MuesliTheme.title1())
                     .foregroundStyle(MuesliTheme.textPrimary)
 
-                Text("Start with a fast local model.\nLarger models are available after setup.")
+                Text(tr("Start with a fast local model.\nLarger models are available after setup.", "Начните с быстрой локальной модели.\nБолее крупные модели доступны после настройки."))
                     .font(MuesliTheme.body())
                     .foregroundStyle(MuesliTheme.textSecondary)
                     .multilineTextAlignment(.center)
@@ -630,7 +630,7 @@ struct OnboardingView: View {
                         }
                     } label: {
                         HStack(spacing: 4) {
-                            Text("Other models")
+                            Text(tr("Other models", "Другие модели"))
                                 .font(MuesliTheme.caption())
                             Image(systemName: showMoreModels ? "chevron.up" : "chevron.down")
                                 .font(.system(size: 9, weight: .semibold))
@@ -645,7 +645,7 @@ struct OnboardingView: View {
                             modelCard(option: option)
                         }
 
-                        Text("More models are available after onboarding.")
+                        Text(tr("More models are available after onboarding.", "Больше моделей доступно после настройки."))
                             .font(.system(size: 11, weight: .medium, design: .rounded))
                             .foregroundStyle(MuesliTheme.textTertiary)
                             .multilineTextAlignment(.center)
@@ -666,11 +666,11 @@ struct OnboardingView: View {
 
     private var cohereLanguageCard: some View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-            Text("Cohere language")
+            Text(tr("Cohere language", "Язык Cohere"))
                 .font(MuesliTheme.headline())
                 .foregroundStyle(MuesliTheme.textPrimary)
 
-            Text("Cohere does not auto-detect language, so pick the language you want it to transcribe.")
+            Text(tr("Cohere does not auto-detect language, so pick the language you want it to transcribe.", "Cohere не определяет язык автоматически — выберите язык для транскрипции."))
                 .font(MuesliTheme.caption())
                 .foregroundStyle(MuesliTheme.textSecondary)
 
@@ -714,7 +714,7 @@ struct OnboardingView: View {
                             .font(MuesliTheme.headline())
                             .foregroundStyle(MuesliTheme.textPrimary)
                         if option.recommended {
-                            Text("Recommended")
+                            Text(tr("Recommended", "Рекомендуется"))
                                 .font(.system(size: 9, weight: .semibold))
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 5)
@@ -751,18 +751,18 @@ struct OnboardingView: View {
     /// successful transcription before meeting-specific permissions appear.
     private var permissionSteps: [(icon: String, name: String, description: String, granted: Bool, action: () -> Void)] {
         var steps: [(String, String, String, Bool, () -> Void)] = [
-            ("mic.fill", "Microphone", "Record audio for voice notes, dictation, and meetings", micGranted, {
+            ("mic.fill", "Microphone", tr("Record audio for voice notes, dictation, and meetings", "Запись звука для голосовых заметок, диктовки и встреч"), micGranted, {
                 AVCaptureDevice.requestAccess(for: .audio) { _ in }
             })
         ]
         if selectedUseCase.includesPushToTalk {
             if selectedUseCase.includesDictation {
                 steps += [
-                    ("hand.raised.fill", "Accessibility", "Paste transcribed text into other apps", accessibilityGranted, requestAccessibilityPermission),
+                    ("hand.raised.fill", "Accessibility", tr("Paste transcribed text into other apps", "Вставка распознанного текста в другие приложения"), accessibilityGranted, requestAccessibilityPermission),
                 ]
             }
             steps += [
-            ("keyboard.fill", "Input Monitoring", "Detect hotkey for push-to-talk recording", inputMonitoringGranted, {
+            ("keyboard.fill", "Input Monitoring", tr("Detect hotkey for push-to-talk recording", "Отслеживание горячей клавиши для записи с удержанием"), inputMonitoringGranted, {
                 if !CGRequestListenEventAccess() {
                     self.openSystemSettings("Privacy_ListenEvent")
                 }
@@ -797,7 +797,7 @@ struct OnboardingView: View {
                 let isConfirmingGrant = recentlyGrantedPermissionName == step.name
 
                 VStack(spacing: MuesliTheme.spacing8) {
-                    Text("Permission \(displayIndex + 1) of \(total)")
+                    Text(tr("Permission \(displayIndex + 1) of \(total)", "Разрешение \(displayIndex + 1) из \(total)"))
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(MuesliTheme.textTertiary)
                         .textCase(.uppercase)
@@ -860,14 +860,14 @@ struct OnboardingView: View {
                 }
 
                 if isWaitingForNativePermissionPrompt(step.name) {
-                    Text("Respond to the macOS permission prompt")
+                    Text(tr("Respond to the macOS permission prompt", "Ответьте на запрос разрешения macOS"))
                         .font(.system(size: 11))
                         .foregroundStyle(MuesliTheme.textTertiary)
                 } else {
                     Button {
                         openSystemSettingsForPermission(at: displayIndex)
                     } label: {
-                        Text("Not seeing a prompt? Open System Settings")
+                        Text(tr("Not seeing a prompt? Open System Settings", "Не видите запрос? Откройте Системные настройки"))
                             .font(.system(size: 11))
                             .foregroundStyle(MuesliTheme.accent)
                     }
@@ -878,7 +878,7 @@ struct OnboardingView: View {
                     Button {
                         openApplicationsFolder()
                     } label: {
-                        Text("Need to add Muesli manually? Open Applications")
+                        Text(tr("Need to add Muesli manually? Open Applications", "Нужно добавить Muesli вручную? Откройте папку «Программы»"))
                             .font(.system(size: 11))
                             .foregroundStyle(MuesliTheme.textTertiary)
                     }
@@ -890,9 +890,9 @@ struct OnboardingView: View {
                         switchToVoiceNotesOnly()
                     } label: {
                         VStack(spacing: 2) {
-                            Text("Use Voice Notes instead")
+                            Text(tr("Use Voice Notes instead", "Использовать голосовые заметки"))
                                 .font(.system(size: 12, weight: .semibold))
-                            Text("Keeps the hotkey, skips paste permission")
+                            Text(tr("Keeps the hotkey, skips paste permission", "Горячая клавиша сохранится, без разрешения на вставку"))
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(MuesliTheme.textTertiary)
                         }
@@ -908,7 +908,7 @@ struct OnboardingView: View {
                         .font(.system(size: 48))
                         .foregroundStyle(MuesliTheme.success)
 
-                    Text("All permissions granted")
+                    Text(tr("All permissions granted", "Все разрешения предоставлены"))
                         .font(MuesliTheme.title1())
                         .foregroundStyle(MuesliTheme.textPrimary)
                 }
@@ -922,10 +922,10 @@ struct OnboardingView: View {
     }
 
     private func permissionButtonTitle(for permissionName: String, isConfirmingGrant: Bool) -> String {
-        if isConfirmingGrant { return "Granted" }
-        if isWaitingForNativePermissionPrompt(permissionName) { return "Waiting for macOS..." }
-        if grantingPermissionName == permissionName { return "Open Settings" }
-        return "Grant Permission"
+        if isConfirmingGrant { return tr("Granted", "Предоставлено") }
+        if isWaitingForNativePermissionPrompt(permissionName) { return tr("Waiting for macOS...", "Ожидание macOS...") }
+        if grantingPermissionName == permissionName { return tr("Open Settings", "Открыть настройки") }
+        return tr("Grant Permission", "Предоставить разрешение")
     }
 
     private func isWaitingForNativePermissionPrompt(_ permissionName: String) -> Bool {
@@ -1003,7 +1003,7 @@ struct OnboardingView: View {
                     .foregroundStyle(MuesliTheme.success)
                     .transition(.scale.combined(with: .opacity))
             } else {
-                Button("Grant") {
+                Button(tr("Grant", "Предоставить")) {
                     action()
                 }
                 .buttonStyle(.plain)
@@ -1143,11 +1143,11 @@ struct OnboardingView: View {
             Spacer()
 
             VStack(spacing: MuesliTheme.spacing8) {
-                Text("Dictation Shortcut")
+                Text(tr("Dictation Shortcut", "Горячая клавиша диктовки"))
                     .font(MuesliTheme.title1())
                     .foregroundStyle(MuesliTheme.textPrimary)
 
-                Text("Choose the key you'll hold to dictate. Press and hold the key to record, release to transcribe.")
+                Text(tr("Choose the key you'll hold to dictate. Press and hold the key to record, release to transcribe.", "Выберите клавишу, которую будете удерживать для диктовки. Нажмите и удерживайте её для записи, отпустите для транскрипции."))
                     .font(MuesliTheme.body())
                     .foregroundStyle(MuesliTheme.textSecondary)
                     .multilineTextAlignment(.center)
@@ -1175,7 +1175,7 @@ struct OnboardingView: View {
                         startRecordingHotkey()
                     }
                 } label: {
-                    Text(isRecordingHotkey ? "Press a modifier key..." : "Change Shortcut")
+                    Text(isRecordingHotkey ? tr("Press a modifier key...", "Нажмите клавишу-модификатор...") : tr("Change Shortcut", "Изменить клавишу"))
                         .font(MuesliTheme.body())
                         .foregroundStyle(isRecordingHotkey ? MuesliTheme.accent : MuesliTheme.textPrimary)
                 }
@@ -1190,7 +1190,7 @@ struct OnboardingView: View {
                 )
             }
 
-            Text("Supported: Left Cmd, Right Cmd, Fn, Ctrl, Option, Shift")
+            Text(tr("Supported: Left Cmd, Right Cmd, Fn, Ctrl, Option, Shift", "Поддерживаются: левый Cmd, правый Cmd, Fn, Ctrl, Option, Shift"))
                 .font(MuesliTheme.caption())
                 .foregroundStyle(MuesliTheme.textTertiary)
 
@@ -1227,7 +1227,7 @@ struct OnboardingView: View {
             Spacer()
 
             VStack(spacing: MuesliTheme.spacing8) {
-                Text(selectedUseCase.includesVoiceNotes ? "Test Voice Note" : "Test Dictation")
+                Text(selectedUseCase.includesVoiceNotes ? tr("Test Voice Note", "Проверка голосовой заметки") : tr("Test Dictation", "Проверка диктовки"))
                     .font(MuesliTheme.title1())
                     .foregroundStyle(MuesliTheme.textPrimary)
 
@@ -1237,7 +1237,7 @@ struct OnboardingView: View {
                     .multilineTextAlignment(.center)
 
                 if isSelectedModelReadyForDictationTest {
-                    Text("Try saying: \"testing this one out\"")
+                    Text(tr("Try saying: \"testing this one out\"", "Попробуйте сказать: «проверяю, как это работает»"))
                         .font(.system(size: 13, weight: .medium, design: .rounded))
                         .foregroundStyle(MuesliTheme.accent)
                         .padding(.top, 2)
@@ -1249,10 +1249,10 @@ struct OnboardingView: View {
                     if isModelPreparingAfterDownload {
                         IndeterminatePreparationBar()
                             .frame(width: 260, height: 7)
-                        Text(modelDownloadStatus ?? "Preparing \(selectedBackend.label)...")
+                        Text(modelDownloadStatus ?? tr("Preparing \(selectedBackend.label)...", "Подготовка \(selectedBackend.label)..."))
                             .font(.system(size: 11, weight: .medium, design: .rounded))
                             .foregroundStyle(MuesliTheme.textTertiary)
-                        Text("This usually takes 20-60 seconds the first time.")
+                        Text(tr("This usually takes 20-60 seconds the first time.", "В первый раз это обычно занимает 20–60 секунд."))
                             .font(.system(size: 10, weight: .medium, design: .rounded))
                             .foregroundStyle(MuesliTheme.textTertiary)
                         RotatingPreparationHint(messages: modelPreparationHints)
@@ -1260,17 +1260,17 @@ struct OnboardingView: View {
                     } else if let modelDownloadProgress {
                         ProgressView(value: modelDownloadProgress, total: 1.0)
                             .frame(width: 260)
-                        Text(modelDownloadStatus ?? "\(Int((modelDownloadProgress * 100).rounded()))% complete")
+                        Text(modelDownloadStatus ?? tr("\(Int((modelDownloadProgress * 100).rounded()))% complete", "\(Int((modelDownloadProgress * 100).rounded()))% завершено"))
                             .font(.system(size: 11, weight: .medium, design: .rounded))
                             .foregroundStyle(MuesliTheme.textTertiary)
                     } else {
                         ProgressView()
                             .controlSize(.regular)
-                        Text(modelDownloadStatus ?? "Preparing \(selectedBackend.label)...")
+                        Text(modelDownloadStatus ?? tr("Preparing \(selectedBackend.label)...", "Подготовка \(selectedBackend.label)..."))
                             .font(.system(size: 11, weight: .medium, design: .rounded))
                             .foregroundStyle(MuesliTheme.textTertiary)
                     }
-                    Text("The dictation test is disabled until download and warmup complete.")
+                    Text(tr("The dictation test is disabled until download and warmup complete.", "Проверка диктовки недоступна, пока не завершатся загрузка и подготовка."))
                         .font(MuesliTheme.caption())
                         .foregroundStyle(MuesliTheme.textTertiary)
                         .multilineTextAlignment(.center)
@@ -1281,7 +1281,7 @@ struct OnboardingView: View {
                             .foregroundStyle(.red)
                             .lineLimit(2)
 
-                        Button("Retry Download") {
+                        Button(tr("Retry Download", "Повторить загрузку")) {
                             self.modelDownloadError = nil
                             ensureModelDownloadStarted()
                         }
@@ -1292,7 +1292,7 @@ struct OnboardingView: View {
                 }
             } else {
                 VStack(spacing: MuesliTheme.spacing16) {
-                    Text(dictationTestResult ?? "Your transcription will appear here...")
+                    Text(dictationTestResult ?? tr("Your transcription will appear here...", "Здесь появится ваш транскрипт..."))
                         .font(dictationTestResult != nil ? .system(size: 14, design: .monospaced) : .system(size: 13, design: .rounded))
                         .foregroundStyle(dictationTestResult != nil ? MuesliTheme.textPrimary : MuesliTheme.textTertiary)
                         .italic(dictationTestResult == nil)
@@ -1309,7 +1309,7 @@ struct OnboardingView: View {
                         HStack(spacing: 8) {
                             ProgressView()
                                 .controlSize(.small)
-                            Text("Listening... release \(selectedHotkey.label) when done")
+                            Text(tr("Listening... release \(selectedHotkey.label) when done", "Слушаю... отпустите \(selectedHotkey.label), когда закончите"))
                                 .font(MuesliTheme.caption())
                                 .foregroundStyle(MuesliTheme.textSecondary)
                         }
@@ -1317,7 +1317,7 @@ struct OnboardingView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "keyboard")
                                 .font(.system(size: 14))
-                            Text("Hold \(selectedHotkey.label) to start")
+                            Text(tr("Hold \(selectedHotkey.label) to start", "Удерживайте \(selectedHotkey.label), чтобы начать"))
                                 .font(MuesliTheme.body())
                         }
                         .foregroundStyle(MuesliTheme.textTertiary)
@@ -1334,7 +1334,7 @@ struct OnboardingView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundStyle(MuesliTheme.success)
-                            Text("Dictation is working!")
+                            Text(tr("Dictation is working!", "Диктовка работает!"))
                                 .font(MuesliTheme.body())
                                 .foregroundStyle(MuesliTheme.success)
                         }
@@ -1355,7 +1355,7 @@ struct OnboardingView: View {
             }
             controller.dictationTestCallback = { text in
                 if text.isEmpty {
-                    dictationTestError = "No speech detected. Try again."
+                    dictationTestError = tr("No speech detected. Try again.", "Речь не обнаружена. Попробуйте ещё раз.")
                 } else {
                     withAnimation { dictationTestResult = text }
                     advanceAfterSuccessfulDictationTest(text: text)
@@ -1392,11 +1392,11 @@ struct OnboardingView: View {
             Spacer()
 
             VStack(spacing: MuesliTheme.spacing8) {
-                Text("Meeting Summaries")
+                Text(tr("Meeting Summaries", "Сводки встреч"))
                     .font(MuesliTheme.title1())
                     .foregroundStyle(MuesliTheme.textPrimary)
 
-                Text("Connect an LLM provider to get AI-powered meeting notes.\nYou can set this up later in Settings.")
+                Text(tr("Connect an LLM provider to get AI-powered meeting notes.\nYou can set this up later in Settings.", "Подключите LLM-провайдера, чтобы получать заметки встреч с помощью ИИ.\nЭто можно настроить позже в настройках."))
                     .font(MuesliTheme.body())
                     .foregroundStyle(MuesliTheme.textSecondary)
                     .multilineTextAlignment(.center)
@@ -1429,7 +1429,7 @@ struct OnboardingView: View {
             .frame(width: 320)
 
             if summaryBackend == .chatGPT {
-                Text("Use your ChatGPT Plus or Pro subscription.")
+                Text(tr("Use your ChatGPT Plus or Pro subscription.", "Используйте свою подписку ChatGPT Plus или Pro."))
                     .font(MuesliTheme.caption())
                     .foregroundStyle(MuesliTheme.textSecondary)
 
@@ -1438,7 +1438,7 @@ struct OnboardingView: View {
                         OpenAILogoShape()
                             .fill(.white)
                             .frame(width: 14, height: 14)
-                        Text("Signed in with ChatGPT")
+                        Text(tr("Signed in with ChatGPT", "Выполнен вход через ChatGPT"))
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(.white)
                     }
@@ -1450,7 +1450,7 @@ struct OnboardingView: View {
                     HStack(spacing: 8) {
                         ProgressView()
                             .controlSize(.small)
-                        Text("Signing in...")
+                        Text(tr("Signing in...", "Выполняется вход..."))
                             .font(.system(size: 12))
                             .foregroundStyle(MuesliTheme.textSecondary)
                     }
@@ -1469,7 +1469,7 @@ struct OnboardingView: View {
                             OpenAILogoShape()
                                 .fill(.white)
                                 .frame(width: 14, height: 14)
-                            Text("Sign in with ChatGPT")
+                            Text(tr("Sign in with ChatGPT", "Войти через ChatGPT"))
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundStyle(.white)
                         }
@@ -1488,13 +1488,13 @@ struct OnboardingView: View {
                     }
                 }
             } else if summaryBackend == .ollama {
-                Text("Run AI models locally on your device with Ollama.\nNo API key needed — just install Ollama and pull a model.")
+                Text(tr("Run AI models locally on your device with Ollama.\nNo API key needed — just install Ollama and pull a model.", "Запускайте модели ИИ локально с помощью Ollama.\nAPI-ключ не нужен — просто установите Ollama и загрузите модель."))
                     .font(MuesliTheme.caption())
                     .foregroundStyle(MuesliTheme.textSecondary)
                     .multilineTextAlignment(.center)
 
                 VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-                    Text("Ollama is served by default at http://localhost:11434")
+                    Text(tr("Ollama is served by default at http://localhost:11434", "Ollama по умолчанию доступна по адресу http://localhost:11434"))
                         .font(.system(size: 11))
                         .foregroundStyle(MuesliTheme.textTertiary)
 
@@ -1502,20 +1502,20 @@ struct OnboardingView: View {
                         Circle()
                             .fill(MuesliTheme.success)
                             .frame(width: 6, height: 6)
-                        Text("No authentication required")
+                        Text(tr("No authentication required", "Аутентификация не требуется"))
                             .font(.system(size: 11))
                             .foregroundStyle(MuesliTheme.success)
                     }
                 }
             } else {
                 if summaryBackend == .openRouter {
-                    Text("OpenRouter supports many model providers through one API key.")
+                    Text(tr("OpenRouter supports many model providers through one API key.", "OpenRouter поддерживает множество провайдеров моделей через один API-ключ."))
                         .font(MuesliTheme.caption())
                         .foregroundStyle(MuesliTheme.textTertiary)
                 }
 
                 VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-                    Text("API Key")
+                    Text(tr("API Key", "API-ключ"))
                         .font(MuesliTheme.caption())
                         .foregroundStyle(MuesliTheme.textTertiary)
 
@@ -1530,7 +1530,7 @@ struct OnboardingView: View {
                         Circle()
                             .fill(apiKey.isEmpty ? MuesliTheme.textTertiary : MuesliTheme.success)
                             .frame(width: 6, height: 6)
-                        Text(apiKey.isEmpty ? "No API key" : "Key entered")
+                        Text(apiKey.isEmpty ? tr("No API key", "Нет API-ключа") : tr("Key entered", "Ключ введён"))
                             .font(.system(size: 11))
                             .foregroundStyle(apiKey.isEmpty ? MuesliTheme.textTertiary : MuesliTheme.success)
                     }
@@ -1593,11 +1593,11 @@ struct OnboardingView: View {
             isModelStillDownloading = false
             modelDownloadProgress = 1.0
             isModelPreparingAfterDownload = false
-            modelDownloadStatus = "\(selectedBackend.label) ready"
+            modelDownloadStatus = tr("\(selectedBackend.label) ready", "\(selectedBackend.label) готова")
             modelDownloadError = nil
             publishModelPreparationStatus(
-                title: "\(selectedBackend.label) ready",
-                detail: "Ready for transcription",
+                title: tr("\(selectedBackend.label) ready", "\(selectedBackend.label) готова"),
+                detail: tr("Ready for transcription", "Готово к транскрипции"),
                 progress: 1.0,
                 isPreparing: false,
                 isComplete: true
@@ -1623,11 +1623,11 @@ struct OnboardingView: View {
         modelDownloadProgress = alreadyDownloaded ? nil : (modelDownloadProgress ?? 0.02)
         isModelPreparingAfterDownload = alreadyDownloaded
         modelDownloadStatus = alreadyDownloaded
-            ? "Warming up \(backend.label)..."
+            ? tr("Warming up \(backend.label)...", "Прогрев \(backend.label)...")
             : (modelDownloadStatus ?? initialDownloadStatus(for: backend))
         modelDownloadError = nil
         publishModelPreparationStatus(
-            title: "Preparing \(backend.label)",
+            title: tr("Preparing \(backend.label)", "Подготовка \(backend.label)"),
             detail: modelDownloadStatus,
             progress: modelDownloadProgress,
             isPreparing: isModelPreparingAfterDownload,
@@ -1655,12 +1655,12 @@ struct OnboardingView: View {
                     modelReadyBackend = backend
                     modelDownloadProgress = 1.0
                     isModelPreparingAfterDownload = false
-                    modelDownloadStatus = "\(backend.label) ready"
+                    modelDownloadStatus = tr("\(backend.label) ready", "\(backend.label) готова")
                     modelDownloadError = nil
                     withAnimation { isModelStillDownloading = false }
                     publishModelPreparationStatus(
-                        title: "\(backend.label) ready",
-                        detail: "Ready for transcription",
+                        title: tr("\(backend.label) ready", "\(backend.label) готова"),
+                        detail: tr("Ready for transcription", "Готово к транскрипции"),
                         progress: 1.0,
                         isPreparing: false,
                         isComplete: true
@@ -1675,12 +1675,12 @@ struct OnboardingView: View {
                 await MainActor.run {
                     guard selectedBackend == backend else { return }
                     modelDownloadError = modelPreparationFailureMessage(for: backend)
-                    modelDownloadStatus = backend.isDownloaded ? "Model setup paused" : "Download paused"
+                    modelDownloadStatus = backend.isDownloaded ? tr("Model setup paused", "Настройка модели приостановлена") : tr("Download paused", "Загрузка приостановлена")
                     modelDownloadProgress = nil
                     isModelPreparingAfterDownload = false
                     isModelStillDownloading = false
                     publishModelPreparationStatus(
-                        title: backend.isDownloaded ? "Model setup paused" : "Download paused",
+                        title: backend.isDownloaded ? tr("Model setup paused", "Настройка модели приостановлена") : tr("Download paused", "Загрузка приостановлена"),
                         detail: modelDownloadError,
                         progress: nil,
                         isPreparing: false,
@@ -1693,7 +1693,7 @@ struct OnboardingView: View {
     }
 
     private func applyModelPreparationProgress(_ progress: Double, status: String?, backend: BackendOption) {
-        let detail = status ?? "Preparing \(backend.label)..."
+        let detail = status ?? tr("Preparing \(backend.label)...", "Подготовка \(backend.label)...")
         let lowercasedDetail = detail.lowercased()
         let isPreparing = lowercasedDetail.contains("compiling")
             || lowercasedDetail.contains("warming")
@@ -1704,9 +1704,9 @@ struct OnboardingView: View {
 
         if isPreparing {
             isModelPreparingAfterDownload = true
-            modelDownloadStatus = "Optimizing \(backend.label) for this Mac..."
+            modelDownloadStatus = tr("Optimizing \(backend.label) for this Mac...", "Оптимизация \(backend.label) для этого Mac...")
             publishModelPreparationStatus(
-                title: "Preparing \(backend.label)",
+                title: tr("Preparing \(backend.label)", "Подготовка \(backend.label)"),
                 detail: modelDownloadStatus,
                 progress: nil,
                 isPreparing: true,
@@ -1725,7 +1725,7 @@ struct OnboardingView: View {
         modelDownloadProgress = max(currentProgress, max(clampedProgress, 0.02))
         modelDownloadStatus = detail
         publishModelPreparationStatus(
-            title: "Preparing \(backend.label)",
+            title: tr("Preparing \(backend.label)", "Подготовка \(backend.label)"),
             detail: detail,
             progress: modelDownloadProgress,
             isPreparing: false,
@@ -1754,15 +1754,15 @@ struct OnboardingView: View {
             .replacingOccurrences(of: "~", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if !size.isEmpty {
-            return "0 MB of \(size)"
+            return tr("0 MB of \(size)", "0 МБ из \(size)")
         }
-        return "Starting \(backend.label) download..."
+        return tr("Starting \(backend.label) download...", "Начинается загрузка \(backend.label)...")
     }
 
     private func modelPreparationFailureMessage(for backend: BackendOption) -> String {
         backend.isDownloaded
-            ? "Model setup failed. Restart Muesli or retry from Models."
-            : "Download failed. Check your connection and retry."
+            ? tr("Model setup failed. Restart Muesli or retry from Models.", "Не удалось настроить модель. Перезапустите Muesli или повторите в разделе «Модели».")
+            : tr("Download failed. Check your connection and retry.", "Не удалось скачать. Проверьте подключение и повторите.")
     }
 
     private func publishModelPreparationStatus(
@@ -1823,7 +1823,7 @@ struct OnboardingView: View {
                     .font(MuesliTheme.title1())
                     .foregroundStyle(MuesliTheme.textPrimary)
 
-                Text("Connect Google Calendar to see upcoming meetings.\nYou can set this up later in Settings.")
+                Text(tr("Connect Google Calendar to see upcoming meetings.\nYou can set this up later in Settings.", "Подключите Google Calendar, чтобы видеть предстоящие встречи.\nЭто можно настроить позже в настройках."))
                     .font(MuesliTheme.body())
                     .foregroundStyle(MuesliTheme.textSecondary)
                     .multilineTextAlignment(.center)
@@ -1834,7 +1834,7 @@ struct OnboardingView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundStyle(MuesliTheme.success)
-                        Text("Google Calendar connected")
+                        Text(tr("Google Calendar connected", "Google Calendar подключён"))
                             .font(MuesliTheme.body())
                             .foregroundStyle(MuesliTheme.textPrimary)
                     }
@@ -1842,7 +1842,7 @@ struct OnboardingView: View {
                     HStack(spacing: 8) {
                         ProgressView()
                             .controlSize(.small)
-                        Text("Connecting...")
+                        Text(tr("Connecting...", "Подключение..."))
                             .font(MuesliTheme.body())
                             .foregroundStyle(MuesliTheme.textSecondary)
                     }
@@ -1851,7 +1851,7 @@ struct OnboardingView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "calendar.badge.plus")
                                 .font(.system(size: 14))
-                            Text("Connect Google Calendar")
+                            Text(tr("Connect Google Calendar", "Подключить Google Calendar"))
                                 .font(.system(size: 14, weight: .medium))
                         }
                         .foregroundStyle(.white.opacity(0.4))
@@ -1860,7 +1860,7 @@ struct OnboardingView: View {
                         .background(MuesliTheme.textTertiary.opacity(0.3))
                         .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
 
-                        Text("Google OAuth verification pending")
+                        Text(tr("Google OAuth verification pending", "Ожидается проверка Google OAuth"))
                             .font(MuesliTheme.caption())
                             .foregroundStyle(MuesliTheme.textTertiary)
                     }
@@ -1881,7 +1881,7 @@ struct OnboardingView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "calendar.badge.plus")
                                 .font(.system(size: 14))
-                            Text("Connect Google Calendar")
+                            Text(tr("Connect Google Calendar", "Подключить Google Calendar"))
                                 .font(.system(size: 14, weight: .medium))
                         }
                         .foregroundStyle(.white)
@@ -1899,7 +1899,7 @@ struct OnboardingView: View {
                             .multilineTextAlignment(.center)
                     }
                 } else {
-                    Text("Google Calendar credentials not configured.")
+                    Text(tr("Google Calendar credentials not configured.", "Учётные данные Google Calendar не настроены."))
                         .font(MuesliTheme.caption())
                         .foregroundStyle(MuesliTheme.textTertiary)
                 }
@@ -1927,8 +1927,8 @@ struct OnboardingView: View {
             )
         } else if isModelStillDownloading || modelReadyBackend == selectedBackend {
             publishModelPreparationStatus(
-                title: modelReadyBackend == selectedBackend ? "\(selectedBackend.label) ready" : "Preparing \(selectedBackend.label)",
-                detail: modelReadyBackend == selectedBackend ? "Ready for transcription" : modelDownloadStatus,
+                title: modelReadyBackend == selectedBackend ? tr("\(selectedBackend.label) ready", "\(selectedBackend.label) готова") : tr("Preparing \(selectedBackend.label)", "Подготовка \(selectedBackend.label)"),
+                detail: modelReadyBackend == selectedBackend ? tr("Ready for transcription", "Готово к транскрипции") : modelDownloadStatus,
                 progress: modelReadyBackend == selectedBackend ? 1.0 : modelDownloadProgress,
                 isPreparing: isModelPreparingAfterDownload,
                 isComplete: modelReadyBackend == selectedBackend

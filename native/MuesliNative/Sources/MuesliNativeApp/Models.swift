@@ -912,6 +912,7 @@ struct AppConfig: Codable {
     var showMeetingDetectionNotification: Bool = true
     var mutedMeetingDetectionAppBundleIDs: [String] = []
     var meetingRecordingSavePolicy: MeetingRecordingSavePolicy = .never
+    var enableMeetingScreenVideo: Bool = false
     var meetingRecordingFileFormat: String = MeetingRecordingFileFormat.m4a.rawValue
     var darkMode: Bool = true
     var enableDoubleTapDictation: Bool = true
@@ -982,6 +983,7 @@ struct AppConfig: Codable {
     var contributionBuyMeCoffeeClicked: Bool = false
     var contributionTweetClicked: Bool = false
     var contributionLinkedInClicked: Bool = false
+    var appLanguage: String = AppLanguage.system.rawValue
 
     enum CodingKeys: String, CodingKey {
         case dictationHotkey = "dictation_hotkey"
@@ -1012,6 +1014,7 @@ struct AppConfig: Codable {
         case showMeetingDetectionNotification = "show_meeting_detection_notification"
         case mutedMeetingDetectionAppBundleIDs = "muted_meeting_detection_app_bundle_ids"
         case meetingRecordingSavePolicy = "meeting_recording_save_policy"
+        case enableMeetingScreenVideo = "enable_meeting_screen_video"
         case meetingRecordingFileFormat = "meeting_recording_file_format"
         case darkMode = "dark_mode"
         case enableDoubleTapDictation = "enable_double_tap_dictation"
@@ -1080,6 +1083,7 @@ struct AppConfig: Codable {
         case contributionBuyMeCoffeeClicked = "contribution_buy_me_coffee_clicked"
         case contributionTweetClicked = "contribution_tweet_clicked"
         case contributionLinkedInClicked = "contribution_linkedin_clicked"
+        case appLanguage = "app_language"
     }
 
     init() {}
@@ -1131,6 +1135,7 @@ struct AppConfig: Codable {
         showMeetingDetectionNotification = decodedShowMeetingDetectionNotification ?? defaults.showMeetingDetectionNotification
         mutedMeetingDetectionAppBundleIDs = (try? c.decode([String].self, forKey: .mutedMeetingDetectionAppBundleIDs)) ?? defaults.mutedMeetingDetectionAppBundleIDs
         meetingRecordingSavePolicy = (try? c.decode(MeetingRecordingSavePolicy.self, forKey: .meetingRecordingSavePolicy)) ?? defaults.meetingRecordingSavePolicy
+        enableMeetingScreenVideo = (try? c.decode(Bool.self, forKey: .enableMeetingScreenVideo)) ?? defaults.enableMeetingScreenVideo
         let decodedMeetingRecordingFileFormat = (try? c.decode(String.self, forKey: .meetingRecordingFileFormat))
             ?? defaults.meetingRecordingFileFormat
         meetingRecordingFileFormat = MeetingRecordingFileFormat(rawValue: decodedMeetingRecordingFileFormat)?.rawValue
@@ -1224,6 +1229,11 @@ struct AppConfig: Codable {
         contributionBuyMeCoffeeClicked = (try? c.decode(Bool.self, forKey: .contributionBuyMeCoffeeClicked)) ?? defaults.contributionBuyMeCoffeeClicked
         contributionTweetClicked = (try? c.decode(Bool.self, forKey: .contributionTweetClicked)) ?? defaults.contributionTweetClicked
         contributionLinkedInClicked = (try? c.decode(Bool.self, forKey: .contributionLinkedInClicked)) ?? defaults.contributionLinkedInClicked
+        appLanguage = (try? c.decode(String.self, forKey: .appLanguage)) ?? defaults.appLanguage
+    }
+
+    var resolvedAppLanguage: AppLanguage {
+        AppLanguage.resolved(appLanguage)
     }
 
     var resolvedCohereLanguage: CohereTranscribeLanguage {

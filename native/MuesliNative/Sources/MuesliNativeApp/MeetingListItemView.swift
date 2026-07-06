@@ -5,6 +5,7 @@ struct MeetingListItemView: View {
     let record: MeetingRecord
     let isSelected: Bool
     let folders: [MeetingFolder]
+    let isCompact: Bool
     private let folderByID: [Int64: MeetingFolder]
     private let folderIDsWithChildren: Set<Int64>
     let onSelect: () -> Void
@@ -21,6 +22,7 @@ struct MeetingListItemView: View {
         record: MeetingRecord,
         isSelected: Bool,
         folders: [MeetingFolder],
+        isCompact: Bool = false,
         onSelect: @escaping () -> Void,
         onMove: @escaping (Int64?) -> Void,
         onCreateFolderAndMove: ((String) -> Void)?,
@@ -29,6 +31,7 @@ struct MeetingListItemView: View {
         self.record = record
         self.isSelected = isSelected
         self.folders = folders
+        self.isCompact = isCompact
         self.folderByID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
         self.folderIDsWithChildren = Set(folders.compactMap(\.parentID))
         self.onSelect = onSelect
@@ -52,79 +55,171 @@ struct MeetingListItemView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-            HStack(alignment: .top) {
+        VStack(alignment: .leading, spacing: isCompact ? 4 : MuesliTheme.spacing8) {
+            HStack(alignment: .firstTextBaseline) {
                 Text(record.title)
-                    .font(MuesliTheme.headline())
-                    .foregroundStyle(MuesliTheme.textPrimary)
-                    .lineLimit(2)
+                    .font(isCompact ? .system(size: 13, weight: .medium) : MuesliTheme.headline())
+                    .foregroundStyle(isCompact && isSelected ? .white : MuesliTheme.textPrimary)
+                    .lineLimit(isCompact ? 1 : 2)
 
                 Spacer(minLength: 4)
 
-                HStack(spacing: 6) {
-                    if !folders.isEmpty {
-                        folderMenuButton
-                    }
-                    if onDelete != nil {
-                        deleteButton
-                    }
-                }
-            }
-
-            HStack(spacing: MuesliTheme.spacing4) {
-                if record.status != .completed {
-                    statusBadge
-                    Text("\u{2022}")
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                }
-                Text(formatMeta())
-                    .font(MuesliTheme.caption())
-                    .foregroundStyle(MuesliTheme.textSecondary)
-
-                if let sourceIndicator = sourceIndicator {
-                    sourceIndicator
-                }
-
-                // Current folder badge
-                if let name = currentFolderName {
-                    Text("\u{2022}")
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                    HStack(spacing: 2) {
-                        Image(systemName: "folder")
-                            .font(.system(size: 9))
-                        Text(name)
+                if isCompact {
+                    HStack(spacing: MuesliTheme.spacing4) {
+                        if record.status != .completed {
+                            statusBadge
+                        }
+                        Text(formatDateOnly())
                             .font(MuesliTheme.caption())
+                            .foregroundStyle(isSelected ? .white : MuesliTheme.textTertiary)
+                            .lineLimit(1)
                     }
-                    .foregroundStyle(MuesliTheme.accent.opacity(0.8))
+                } else {
+                    HStack(spacing: 6) {
+                        if !folders.isEmpty {
+                            folderMenuButton
+                        }
+                        if onDelete != nil {
+                            deleteButton
+                        }
+                    }
                 }
             }
 
-            Text(previewText())
-                .font(MuesliTheme.caption())
-                .foregroundStyle(MuesliTheme.textTertiary)
-                .lineLimit(2)
+            if !isCompact {
+                HStack(spacing: MuesliTheme.spacing4) {
+                    if record.status != .completed {
+                        statusBadge
+                        Text("\u{2022}")
+                            .font(MuesliTheme.caption())
+                            .foregroundStyle(MuesliTheme.textTertiary)
+                    }
+                    Text(formatMeta())
+                        .font(MuesliTheme.caption())
+                        .foregroundStyle(MuesliTheme.textSecondary)
+
+                    if let sourceIndicator = sourceIndicator {
+                        sourceIndicator
+                    }
+
+                    // Current folder badge
+                    if let name = currentFolderName {
+                        Text("\u{2022}")
+                            .font(MuesliTheme.caption())
+                            .foregroundStyle(MuesliTheme.textTertiary)
+                        HStack(spacing: 2) {
+                            Image(systemName: "folder")
+                                .font(.system(size: 9))
+                            Text(name)
+                                .font(MuesliTheme.caption())
+                        }
+                        .foregroundStyle(MuesliTheme.accent.opacity(0.8))
+                    }
+                }
+            }
+
+            if isCompact {
+                // A fixed two-line preview area keeps every row the same height.
+                Text(previewText())
+                    .font(MuesliTheme.caption())
+                    .foregroundStyle(isSelected ? .white : MuesliTheme.textTertiary)
+                    .lineLimit(2)
+                    .frame(height: 30, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(previewText())
+                    .font(MuesliTheme.caption())
+                    .foregroundStyle(MuesliTheme.textTertiary)
+                    .lineLimit(2)
+            }
         }
-        .padding(MuesliTheme.spacing16)
+        .padding(isCompact ? MuesliTheme.spacing12 : MuesliTheme.spacing16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isSelected ? MuesliTheme.surfaceSelected : MuesliTheme.backgroundRaised)
-        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge))
-        .overlay(
-            RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge)
-                .strokeBorder(
-                    isSelected ? MuesliTheme.accent.opacity(0.35) : MuesliTheme.surfaceBorder,
-                    lineWidth: 1
-                )
-        )
+        .background {
+            if isCompact {
+                // Inset vertically so the selection fill never touches the
+                // hairline separators between rows.
+                RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                    .fill(isSelected ? MuesliTheme.accent : Color.clear)
+                    .padding(.vertical, 3)
+            } else {
+                RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge)
+                    .fill(isSelected ? MuesliTheme.surfaceSelected : MuesliTheme.backgroundRaised)
+            }
+        }
+        .overlay {
+            if !isCompact {
+                RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge)
+                    .strokeBorder(
+                        isSelected ? MuesliTheme.accent.opacity(0.35) : MuesliTheme.surfaceBorder,
+                        lineWidth: 1
+                    )
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
         .onHover { isHovering = $0 }
-        .alert("Delete Meeting", isPresented: $showDeleteConfirmation) {
-            Button("Delete", role: .destructive) { onDelete?() }
-            Button("Cancel", role: .cancel) {}
+        .contextMenu {
+            if !folders.isEmpty || onCreateFolderAndMove != nil {
+                Menu(tr("Add to Folder", "Добавить в папку")) {
+                    Button {
+                        onMove(nil)
+                    } label: {
+                        if record.folderID == nil {
+                            Label(tr("Unfiled", "Без папки"), systemImage: "checkmark")
+                        } else {
+                            Text(tr("Unfiled", "Без папки"))
+                        }
+                    }
+                    if !folders.isEmpty {
+                        Divider()
+                        ForEach(folders) { folder in
+                            Button {
+                                onMove(folder.id)
+                            } label: {
+                                if record.folderID == folder.id {
+                                    Label(folderBreadcrumb(folder), systemImage: "checkmark")
+                                } else {
+                                    Text(folderBreadcrumb(folder))
+                                }
+                            }
+                        }
+                    }
+                    if onCreateFolderAndMove != nil {
+                        Divider()
+                        Button(tr("New Folder...", "Новая папка...")) {
+                            newFolderName = ""
+                            showNewFolderPrompt = true
+                        }
+                    }
+                }
+            }
+            if onDelete != nil {
+                Divider()
+                Button(role: .destructive) {
+                    showDeleteConfirmation = true
+                } label: {
+                    Label(tr("Delete", "Удалить"), systemImage: "trash")
+                }
+            }
+        }
+        .alert(tr("New Folder", "Новая папка"), isPresented: $showNewFolderPrompt) {
+            TextField(tr("Folder name", "Название папки"), text: $newFolderName)
+            Button(tr("Create", "Создать")) {
+                let trimmed = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    onCreateFolderAndMove?(trimmed)
+                }
+            }
+            Button(tr("Cancel", "Отмена"), role: .cancel) {}
         } message: {
-            Text("Are you sure you want to delete this meeting? Saved notes, transcript, and any retained recording will be removed.")
+            Text(tr("Create a new folder and move this meeting into it.", "Создать новую папку и переместить в неё эту встречу."))
+        }
+        .alert(tr("Delete Meeting", "Удалить встречу"), isPresented: $showDeleteConfirmation) {
+            Button(tr("Delete", "Удалить"), role: .destructive) { onDelete?() }
+            Button(tr("Cancel", "Отмена"), role: .cancel) {}
+        } message: {
+            Text(tr("Are you sure you want to delete this meeting? Saved notes, transcript, and any retained recording will be removed.", "Удалить эту встречу? Сохранённые заметки, транскрипт и оставленная запись будут удалены."))
         }
     }
 
@@ -157,10 +252,10 @@ struct MeetingListItemView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Move to folder")
-        .popover(isPresented: $showFolderPopover, arrowEdge: .leading) {
+        .help(tr("Move to folder", "Переместить в папку"))
+        .popover(isPresented: $showFolderPopover, arrowEdge: isCompact ? .trailing : .leading) {
             VStack(alignment: .leading, spacing: 0) {
-                folderPopoverRow(icon: "tray", label: "Unfiled", isActive: record.folderID == nil) {
+                folderPopoverRow(icon: "tray", label: tr("Unfiled", "Без папки"), isActive: record.folderID == nil) {
                     onMove(nil)
                     showFolderPopover = false
                 }
@@ -178,7 +273,7 @@ struct MeetingListItemView: View {
                 }
                 if onCreateFolderAndMove != nil {
                     Divider().padding(.vertical, 4)
-                    folderPopoverRow(icon: "folder.badge.plus", label: "New Folder...") {
+                    folderPopoverRow(icon: "folder.badge.plus", label: tr("New Folder...", "Новая папка...")) {
                         showFolderPopover = false
                         newFolderName = ""
                         showNewFolderPrompt = true
@@ -187,19 +282,19 @@ struct MeetingListItemView: View {
             }
             .padding(8)
         }
-        .alert("New Folder", isPresented: $showNewFolderPrompt) {
-            TextField("Folder name", text: $newFolderName)
-            Button("Create") {
-                let trimmed = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    onCreateFolderAndMove?(trimmed)
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Create a new folder and move this meeting into it.")
-        }
     }
+
+    private func formatDateOnly() -> String {
+        guard let date = MeetingBrowserLogic.parseDate(record.startTime) else { return "" }
+        return Self.dateOnlyFormatter.string(from: date)
+    }
+
+    private static let dateOnlyFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale.current
+        f.dateFormat = "d MMM"
+        return f
+    }()
 
     @ViewBuilder
     private func folderPopoverRow(icon: String, label: String, isActive: Bool = false, action: @escaping () -> Void) -> some View {
@@ -241,7 +336,7 @@ struct MeetingListItemView: View {
         }
         .buttonStyle(.plain)
         .opacity(isHovering ? 1 : 0)
-        .help("Delete meeting")
+        .help(tr("Delete meeting", "Удалить встречу"))
     }
 
     // MARK: - Formatting
@@ -261,10 +356,10 @@ struct MeetingListItemView: View {
             return AnyView(SyncOriginBadge(label: label))
         }
         if isImportedAudio {
-            return AnyView(sourceBadge(icon: "square.and.arrow.down", label: "Imported", help: "Imported audio"))
+            return AnyView(sourceBadge(icon: "square.and.arrow.down", label: tr("Imported", "Импортировано"), help: tr("Imported audio", "Импортированное аудио")))
         }
         if hasSavedRecording {
-            return AnyView(sourceBadge(icon: "waveform", label: "Recording", help: "Saved recording available"))
+            return AnyView(sourceBadge(icon: "waveform", label: tr("Recording", "Запись"), help: tr("Saved recording available", "Доступна сохранённая запись")))
         }
         return nil
     }
@@ -310,14 +405,14 @@ struct MeetingListItemView: View {
     private func formatDuration(_ seconds: Double) -> String {
         let rounded = Int(seconds.rounded())
         if rounded >= 3600 {
-            return "\(rounded / 3600)h \((rounded % 3600) / 60)m"
+            return tr("\(rounded / 3600)h \((rounded % 3600) / 60)m", "\(rounded / 3600) ч \((rounded % 3600) / 60) мин")
         }
         if rounded >= 60 {
             let m = rounded / 60
             let s = rounded % 60
-            return s == 0 ? "\(m)m" : "\(m)m \(s)s"
+            return s == 0 ? tr("\(m)m", "\(m) мин") : tr("\(m)m \(s)s", "\(m) мин \(s) с")
         }
-        return "\(rounded)s"
+        return tr("\(rounded)s", "\(rounded) с")
     }
 
     private func previewText() -> String {

@@ -11,25 +11,25 @@ struct StatsHeaderView: View {
                 icon: "flame.fill",
                 iconColor: .orange,
                 value: "\(dictationStats.currentStreakDays)",
-                label: "day streak"
+                label: tr("day streak", "серия дней")
             )
             StatCard(
                 icon: "character.cursor.ibeam",
                 iconColor: MuesliTheme.accent,
                 value: formatWordCount(dictationStats.totalWords),
-                label: "words dictated"
+                label: tr("words dictated", "надиктовано слов")
             )
             StatCard(
                 icon: "gauge.with.dots.needle.33percent",
                 iconColor: MuesliTheme.success,
                 value: String(format: "%.0f", dictationStats.averageWPM),
-                label: "avg WPM"
+                label: tr("avg WPM", "слов/мин")
             )
             StatCard(
                 icon: "person.2.fill",
                 iconColor: MuesliTheme.accent,
                 value: "\(meetingStats.totalMeetings)",
-                label: "meetings"
+                label: tr("meetings", "встречи")
             )
         }
         .padding(.horizontal, MuesliTheme.spacing24)

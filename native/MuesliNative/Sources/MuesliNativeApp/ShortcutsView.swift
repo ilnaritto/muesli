@@ -15,11 +15,11 @@ struct ShortcutsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: MuesliTheme.spacing24) {
-                Text("Shortcuts")
+                Text(tr("Shortcuts", "Горячие клавиши"))
                     .font(MuesliTheme.title1())
                     .foregroundStyle(MuesliTheme.textPrimary)
 
-                Text("Choose your preferred shortcuts for dictation and computer use commands.")
+                Text(tr("Choose your preferred shortcuts for dictation and computer use commands.", "Выберите удобные горячие клавиши для диктовки и команд управления компьютером."))
                     .font(MuesliTheme.body())
                     .foregroundStyle(MuesliTheme.textSecondary)
 
@@ -51,10 +51,10 @@ struct ShortcutsView: View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
-                    Text("Push to Talk")
+                    Text(tr("Push to Talk", "Нажми и говори"))
                         .font(MuesliTheme.headline())
                         .foregroundStyle(MuesliTheme.textPrimary)
-                    Text("Hold to record, release to transcribe")
+                    Text(tr("Hold to record, release to transcribe", "Удерживайте для записи, отпустите для транскрипции"))
                         .font(MuesliTheme.caption())
                         .foregroundStyle(MuesliTheme.textSecondary)
                 }
@@ -89,10 +89,10 @@ struct ShortcutsView: View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
-                    Text("Computer Use Command")
+                    Text(tr("Computer Use Command", "Команда управления компьютером"))
                         .font(MuesliTheme.headline())
                         .foregroundStyle(MuesliTheme.textPrimary)
-                    Text("Hold to record a command, release to plan and run it")
+                    Text(tr("Hold to record a command, release to plan and run it", "Удерживайте, чтобы записать команду, отпустите, чтобы спланировать и выполнить её"))
                         .font(MuesliTheme.caption())
                         .foregroundStyle(MuesliTheme.textSecondary)
                 }
@@ -143,10 +143,10 @@ struct ShortcutsView: View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
-                    Text("Meeting Recording")
+                    Text(tr("Meeting Recording", "Запись встречи"))
                         .font(MuesliTheme.headline())
                         .foregroundStyle(MuesliTheme.textPrimary)
-                    Text("Toggle meeting recording on/off")
+                    Text(tr("Toggle meeting recording on/off", "Включение и выключение записи встречи"))
                         .font(MuesliTheme.caption())
                         .foregroundStyle(MuesliTheme.textSecondary)
                 }
@@ -239,7 +239,7 @@ struct ShortcutsView: View {
 
     private func thresholdInput(value: Int, onChange: @escaping (Int) -> Void) -> some View {
         HStack(spacing: MuesliTheme.spacing8) {
-            Text("Hold")
+            Text(tr("Hold", "Удержание"))
                 .font(MuesliTheme.caption())
                 .foregroundStyle(MuesliTheme.textSecondary)
 
@@ -265,11 +265,11 @@ struct ShortcutsView: View {
                     .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
             )
 
-            Text("ms")
+            Text(tr("ms", "мс"))
                 .font(MuesliTheme.caption())
                 .foregroundStyle(MuesliTheme.textSecondary)
         }
-        .help("Hold threshold: \(HotkeyTriggerTiming.minThresholdMilliseconds)-\(HotkeyTriggerTiming.maxThresholdMilliseconds) ms")
+        .help(tr("Hold threshold: \(HotkeyTriggerTiming.minThresholdMilliseconds)-\(HotkeyTriggerTiming.maxThresholdMilliseconds) ms", "Порог удержания: \(HotkeyTriggerTiming.minThresholdMilliseconds)-\(HotkeyTriggerTiming.maxThresholdMilliseconds) мс"))
     }
 
     private func shortcutMessage(_ message: String) -> some View {
@@ -286,7 +286,7 @@ struct ShortcutsView: View {
                 startRecording(target)
             }
         } label: {
-            Text(recordingTarget == target ? recordingPrompt(for: target) : "Change Shortcut")
+            Text(recordingTarget == target ? recordingPrompt(for: target) : tr("Change Shortcut", "Изменить сочетание"))
                 .font(MuesliTheme.body())
                 .foregroundStyle(recordingTarget == target ? MuesliTheme.accent : MuesliTheme.textPrimary)
         }
@@ -304,9 +304,9 @@ struct ShortcutsView: View {
     private func recordingPrompt(for target: ShortcutTarget) -> String {
         switch target {
         case .meetingRecording:
-            return "Press a key or modifier..."
+            return tr("Press a key or modifier...", "Нажмите клавишу или модификатор...")
         case .dictation, .computerUse:
-            return "Press a modifier key..."
+            return tr("Press a modifier key...", "Нажмите клавишу-модификатор...")
         }
     }
 
@@ -314,10 +314,10 @@ struct ShortcutsView: View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
-                    Text("Hands-Free Mode")
+                    Text(tr("Hands-Free Mode", "Режим без рук"))
                         .font(MuesliTheme.headline())
                         .foregroundStyle(MuesliTheme.textPrimary)
-                    Text("Double-tap dictation or CUA to start, tap again to stop")
+                    Text(tr("Double-tap dictation or CUA to start, tap again to stop", "Двойное нажатие клавиши диктовки или CUA — старт, ещё одно нажатие — стоп"))
                         .font(MuesliTheme.caption())
                         .foregroundStyle(MuesliTheme.textSecondary)
                 }
@@ -349,7 +349,7 @@ struct ShortcutsView: View {
             computerUseShortcutMessage = nil
             meetingRecordingShortcutMessage = nil
         } label: {
-            Text("Reset to Defaults")
+            Text(tr("Reset to Defaults", "Сбросить настройки"))
                 .font(MuesliTheme.body())
                 .foregroundStyle(MuesliTheme.textSecondary)
         }

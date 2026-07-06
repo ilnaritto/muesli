@@ -4,6 +4,13 @@ import MuesliCore
 private enum SearchTab: String, CaseIterable {
     case dictations = "Dictations"
     case meetings = "Meetings"
+
+    var label: String {
+        switch self {
+        case .dictations: return tr("Dictations", "Диктовки")
+        case .meetings: return tr("Meetings", "Встречи")
+        }
+    }
 }
 
 struct SearchResultsView: View {
@@ -41,7 +48,7 @@ struct SearchResultsView: View {
             Button {
                 controller.clearSearch()
             } label: {
-                Text("Clear")
+                Text(tr("Clear", "Очистить"))
                     .font(MuesliTheme.callout())
                     .foregroundStyle(MuesliTheme.accent)
             }
@@ -58,7 +65,7 @@ struct SearchResultsView: View {
             withAnimation(.easeInOut(duration: 0.15)) { selectedTab = tab }
         } label: {
             HStack(spacing: 6) {
-                Text(tab.rawValue)
+                Text(tab.label)
                     .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
                     .foregroundStyle(isSelected ? MuesliTheme.textPrimary : MuesliTheme.textTertiary)
                 Text("\(count)")
@@ -84,7 +91,7 @@ struct SearchResultsView: View {
         switch selectedTab {
         case .dictations:
             if appState.searchResultDictations.isEmpty {
-                noResultsForTab("dictations")
+                noResultsForTab(tr("dictations", "диктовки"))
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
@@ -111,7 +118,7 @@ struct SearchResultsView: View {
             }
         case .meetings:
             if appState.searchResultMeetings.isEmpty {
-                noResultsForTab("meetings")
+                noResultsForTab(tr("meetings", "встречи"))
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
@@ -135,7 +142,7 @@ struct SearchResultsView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 32))
                 .foregroundStyle(MuesliTheme.textTertiary)
-            Text("No results for \"\(appState.searchQuery)\"")
+            Text(tr("No results for \"\(appState.searchQuery)\"", "Ничего не найдено по запросу «\(appState.searchQuery)»"))
                 .font(MuesliTheme.body())
                 .foregroundStyle(MuesliTheme.textSecondary)
         }
@@ -145,7 +152,7 @@ struct SearchResultsView: View {
     @ViewBuilder
     private func noResultsForTab(_ name: String) -> some View {
         VStack(spacing: MuesliTheme.spacing8) {
-            Text("No matching \(name)")
+            Text(tr("No matching \(name)", "Ничего не найдено: \(name)"))
                 .font(MuesliTheme.body())
                 .foregroundStyle(MuesliTheme.textSecondary)
         }
@@ -183,7 +190,7 @@ private struct SearchDictationRow: View {
                             .foregroundStyle(MuesliTheme.textTertiary)
                     }
                     .buttonStyle(.plain)
-                    .help("Copy CUA trace")
+                    .help(tr("Copy CUA trace", "Копировать трассировку CUA"))
                 }
 
                 Button(action: onCopy) {
@@ -268,13 +275,13 @@ private struct SearchMeetingRow: View {
 
     private func formatDuration(_ seconds: Double) -> String {
         let rounded = Int(seconds.rounded())
-        if rounded < 60 { return "\(rounded)s" }
+        if rounded < 60 { return tr("\(rounded)s", "\(rounded) с") }
         let m = rounded / 60
         let s = rounded % 60
-        if m < 60 { return s > 0 ? "\(m)m \(s)s" : "\(m)m" }
+        if m < 60 { return s > 0 ? tr("\(m)m \(s)s", "\(m) мин \(s) с") : tr("\(m)m", "\(m) мин") }
         let h = m / 60
         let rm = m % 60
-        return rm > 0 ? "\(h)h \(rm)m" : "\(h)h"
+        return rm > 0 ? tr("\(h)h \(rm)m", "\(h) ч \(rm) мин") : tr("\(h)h", "\(h) ч")
     }
 }
 
