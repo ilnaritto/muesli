@@ -3,24 +3,30 @@ import MuesliCore
 
 /// Shared scaffold for the leftmost column of every tab: a fixed-width pane
 /// with a traffic-light header zone on top and the bottom tab bar pinned below.
-struct PrimaryColumn<Content: View, Trailing: View>: View {
+struct PrimaryColumn<Content: View, Leading: View, Trailing: View>: View {
     static var columnWidth: CGFloat { 320 }
     static var headerZoneHeight: CGFloat { 44 }
     static var cardCornerRadius: CGFloat { 23 }
+    /// Horizontal room reserved on the left of the header for the macOS
+    /// traffic-light window buttons, so leading accessories clear them.
+    static var trafficLightInset: CGFloat { 76 }
 
     let appState: AppState
     let title: String
+    @ViewBuilder let leading: () -> Leading
     @ViewBuilder let content: () -> Content
     @ViewBuilder let trailing: () -> Trailing
 
     init(
         appState: AppState,
         title: String,
+        @ViewBuilder leading: @escaping () -> Leading,
         @ViewBuilder content: @escaping () -> Content,
         @ViewBuilder trailing: @escaping () -> Trailing
     ) {
         self.appState = appState
         self.title = title
+        self.leading = leading
         self.content = content
         self.trailing = trailing
     }
@@ -55,6 +61,13 @@ struct PrimaryColumn<Content: View, Trailing: View>: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(MuesliTheme.textSecondary)
                 .lineLimit(1)
+
+            // Leading accessories sit just right of the traffic-light buttons.
+            HStack(spacing: MuesliTheme.spacing4) {
+                leading()
+                Spacer()
+            }
+            .padding(.leading, Self.trafficLightInset)
 
             HStack(spacing: MuesliTheme.spacing4) {
                 Spacer()
@@ -98,13 +111,24 @@ struct PrimaryColumn<Content: View, Trailing: View>: View {
     }
 }
 
-extension PrimaryColumn where Trailing == EmptyView {
+extension PrimaryColumn where Leading == EmptyView, Trailing == EmptyView {
     init(
         appState: AppState,
         title: String,
         @ViewBuilder content: @escaping () -> Content
     ) {
-        self.init(appState: appState, title: title, content: content, trailing: { EmptyView() })
+        self.init(appState: appState, title: title, leading: { EmptyView() }, content: content, trailing: { EmptyView() })
+    }
+}
+
+extension PrimaryColumn where Leading == EmptyView {
+    init(
+        appState: AppState,
+        title: String,
+        @ViewBuilder content: @escaping () -> Content,
+        @ViewBuilder trailing: @escaping () -> Trailing
+    ) {
+        self.init(appState: appState, title: title, leading: { EmptyView() }, content: content, trailing: trailing)
     }
 }
 

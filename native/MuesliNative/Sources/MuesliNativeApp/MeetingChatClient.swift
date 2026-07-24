@@ -92,14 +92,59 @@ enum MeetingChatClient {
         if backend == MeetingSummaryBackendOption.customLLM.backend {
             return try await replyWithCustomLLM(history: history, system: system, config: config)
         }
+        if backend == MeetingSummaryBackendOption.localGguf.backend {
+            return try await replyWithLocalModel(history: history, system: system, config: config)
+        }
         return try await replyWithOpenAI(history: history, system: system, config: config)
+    }
+
+    private static func replyWithLocalModel(
+        history: [MeetingChatMessage],
+        system: String,
+        config: AppConfig
+    ) async throws -> String {
+        guard #available(macOS 15, *) else {
+            throw MeetingSummaryError.backendFailed(backend: "Local", statusCode: nil, message: "Local chat requires macOS 15 or newer.")
+        }
+        let model = LocalSummaryModelOption.defaultOption
+        guard model.isDownloaded else {
+            throw MeetingSummaryError.backendFailed(
+                backend: "Local",
+                statusCode: nil,
+                message: "Local model \(model.label) is not downloaded. Open Models and download it first."
+            )
+        }
+        let userPrompt = flattenedHistoryForLocal(history)
+        let engine = LocalSummaryEngine(modelURL: model.modelURL)
+        let text: String
+        do {
+            text = try await engine.summarize(systemPrompt: system, userPrompt: userPrompt)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw MeetingSummaryError.backendFailed(backend: "Local", statusCode: nil, message: error.localizedDescription)
+        }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw MeetingSummaryError.emptyResponse(backend: "Local")
+        }
+        return text
+    }
+
+    /// LLM.swift runs a single templated turn, so fold the conversation into one
+    /// role-labelled user message (the system prompt is passed separately).
+    private static func flattenedHistoryForLocal(_ history: [MeetingChatMessage]) -> String {
+        if history.count <= 1 { return history.last?.content ?? "" }
+        return history.map { message in
+            let who = message.role == .user ? "User" : "Assistant"
+            return "\(who): \(message.content)"
+        }.joined(separator: "\n\n")
     }
 
     // MARK: - Prompt building
 
     private static func systemPrompt(for context: MeetingChatContext) -> String {
         var sections = [instructions, "--- MEETING ---", "Title: \(context.title)"]
-        let notes = context.formattedNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        let notes = SummaryLayout.plainText(context.formattedNotes).trimmingCharacters(in: .whitespacesAndNewlines)
         if !notes.isEmpty {
             sections.append("## Notes\n\(notes)")
         }

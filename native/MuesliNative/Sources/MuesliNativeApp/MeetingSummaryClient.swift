@@ -90,6 +90,7 @@ enum MeetingSummaryRetryPolicy {
         let normalized = backend.lowercased()
         return normalized == MeetingSummaryBackendOption.ollama.backend
             || normalized == MeetingSummaryBackendOption.lmStudio.backend
+            || normalized == MeetingSummaryBackendOption.localGguf.backend
             || normalized == "lm studio"
     }
 
@@ -224,10 +225,13 @@ enum MeetingSummaryClient {
         meetingTitle: String,
         config: AppConfig,
         template: MeetingTemplateSnapshot,
-        existingNotes: String?,
+        existingNotes rawExistingNotes: String?,
         manualNotesToRetain: String?,
         visualContext: String?
     ) async throws -> String {
+        // Previous notes may be designed markup (resummarize flow) — convert
+        // to markdown before embedding, or the model echoes the markup back.
+        let existingNotes = rawExistingNotes.map { SummaryLayout.plainText($0) }
         let backend = (config.meetingSummaryBackend.isEmpty ? MeetingSummaryBackendOption.chatGPT.backend : config.meetingSummaryBackend).lowercased()
         let generatedNotes: String
         if backend == MeetingSummaryBackendOption.chatGPT.backend {
@@ -290,6 +294,18 @@ enum MeetingSummaryClient {
             )
             return notesByRetainingManualNotes(generatedNotes: generatedNotes, manualNotes: manualNotesToRetain)
         }
+        if backend == MeetingSummaryBackendOption.localGguf.backend {
+            generatedNotes = try await summarizeWithLocalModel(
+                transcript: transcript,
+                meetingTitle: meetingTitle,
+                existingNotes: existingNotes,
+                manualNotes: manualNotesToRetain,
+                config: config,
+                template: template,
+                visualContext: visualContext
+            )
+            return notesByRetainingManualNotes(generatedNotes: generatedNotes, manualNotes: manualNotesToRetain)
+        }
         generatedNotes = try await summarizeWithOpenAI(
             transcript: transcript,
             meetingTitle: meetingTitle,
@@ -317,7 +333,7 @@ enum MeetingSummaryClient {
         return sections.joined(separator: "\n\n")
     }
 
-    static func summaryInstructions(for template: MeetingTemplateSnapshot, existingNotes: String? = nil, manualNotes: String? = nil) -> String {
+    static func summaryInstructions(for template: MeetingTemplateSnapshot, existingNotes: String? = nil, manualNotes: String? = nil, designed: Bool = false) -> String {
         let notePreservationInstructions: String
         let hasManualNotes = !(manualNotes?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         if let existingNotes,
@@ -342,6 +358,18 @@ enum MeetingSummaryClient {
         same structure and order. No part of the output may stay in a different language than \(languageName), \
         regardless of what the template or transcript language is.
         """
+
+        // Designed templates: the registry-generated design prompt replaces the
+        // markdown-oriented instructions entirely; the template's own prompt is
+        // embedded inside it as the content assignment (OpenUI approach).
+        // Language still has top priority; manual-note wording stays because
+        // the notes are provided in the user prompt either way.
+        if designed {
+            return SummaryComponentRegistry.designedInstructions(templatePrompt: template.prompt)
+                + notePreservationInstructions
+                + manualNoteInstructions
+                + languageInstructions
+        }
 
         // Custom (user-authored) templates: their prompt is authoritative — use
         // the instruction-following framing so creative prompts aren't reduced to
@@ -404,6 +432,26 @@ enum MeetingSummaryClient {
         guard !missingNotes.isEmpty else {
             return trimmedGeneratedNotes
         }
+
+        // Designed markup: splicing a markdown section would corrupt the
+        // layout language — retain the notes as a trailing card instead.
+        if SummaryLayout.isDesignedMarkup(trimmedGeneratedNotes) {
+            let cardTitle = L10n.shared.isRussian ? "Ваши заметки" : "Your notes"
+            var lines = ["card | \(cardTitle) | doc.text | gray"]
+            for note in missingNotes {
+                let flattened = note
+                    .replacingOccurrences(of: "\n", with: " ")
+                    .trimmingCharacters(in: .whitespaces)
+                let content = flattened
+                    .replacingOccurrences(of: #"^[-*•]\s*(\[[ xX]\]\s*)?"#, with: "", options: .regularExpression)
+                if !content.isEmpty {
+                    lines.append("li | \(content)")
+                }
+            }
+            guard lines.count > 1 else { return trimmedGeneratedNotes }
+            return "\(trimmedGeneratedNotes)\n\(lines.joined(separator: "\n"))"
+        }
+
         let manualSection = "### Written notes\n\n\(missingNotes.joined(separator: "\n"))"
         if trimmedGeneratedNotes.isEmpty {
             return manualSection
@@ -501,7 +549,7 @@ enum MeetingSummaryClient {
             return rawTranscriptFallback(transcript: transcript, meetingTitle: meetingTitle)
         }
 
-        let instructions = summaryInstructions(for: template, existingNotes: existingNotes, manualNotes: manualNotes)
+        let instructions = summaryInstructions(for: template, existingNotes: existingNotes, manualNotes: manualNotes, designed: config.designedTemplateIDs.contains(template.id))
         let userPrompt = summaryUserPrompt(
             transcript: transcript,
             meetingTitle: meetingTitle,
@@ -561,7 +609,7 @@ enum MeetingSummaryClient {
 
         let configuredModel = config.openRouterModel.trimmingCharacters(in: .whitespacesAndNewlines)
         let model = configuredModel.isEmpty ? defaultOpenRouterModel : configuredModel
-        let instructions = summaryInstructions(for: template, existingNotes: existingNotes, manualNotes: manualNotes)
+        let instructions = summaryInstructions(for: template, existingNotes: existingNotes, manualNotes: manualNotes, designed: config.designedTemplateIDs.contains(template.id))
         let userPrompt = summaryUserPrompt(
             transcript: transcript,
             meetingTitle: meetingTitle,
@@ -614,7 +662,7 @@ enum MeetingSummaryClient {
         visualContext: String? = nil
     ) async throws -> String {
         do {
-            let instructions = summaryInstructions(for: template, existingNotes: existingNotes, manualNotes: manualNotes)
+            let instructions = summaryInstructions(for: template, existingNotes: existingNotes, manualNotes: manualNotes, designed: config.designedTemplateIDs.contains(template.id))
             let text = try await ChatGPTResponsesClient.respond(
                 systemPrompt: instructions,
                 userPrompt: summaryUserPrompt(
@@ -660,7 +708,7 @@ enum MeetingSummaryClient {
 
         let configuredModel = config.ollamaModel.trimmingCharacters(in: .whitespacesAndNewlines)
         let model = configuredModel.isEmpty ? defaultOllamaModel : configuredModel
-        let instructions = summaryInstructions(for: template, existingNotes: existingNotes, manualNotes: manualNotes)
+        let instructions = summaryInstructions(for: template, existingNotes: existingNotes, manualNotes: manualNotes, designed: config.designedTemplateIDs.contains(template.id))
         let userPrompt = summaryUserPrompt(
             transcript: transcript,
             meetingTitle: meetingTitle,
@@ -702,6 +750,78 @@ enum MeetingSummaryClient {
         } catch {
             throw summaryRequestError(backend: "Ollama", error: error)
         }
+    }
+
+    /// Character budget for the transcript passed to the local model, so the
+    /// prompt fits the 8k context. Long meetings keep their start and end.
+    private static let localSummaryTranscriptCharLimit = 18_000
+    /// Designed-mode prompts carry the ~700-token component registry spec on
+    /// top, so the transcript budget shrinks accordingly.
+    private static let localDesignedTranscriptCharLimit = 12_000
+
+    private static func summarizeWithLocalModel(
+        transcript: String,
+        meetingTitle: String,
+        existingNotes: String?,
+        manualNotes: String?,
+        config: AppConfig,
+        template: MeetingTemplateSnapshot,
+        visualContext: String? = nil
+    ) async throws -> String {
+        guard #available(macOS 15, *) else {
+            throw MeetingSummaryError.backendFailed(
+                backend: "Local",
+                statusCode: nil,
+                message: "Local summarization requires macOS 15 or newer."
+            )
+        }
+        let model = LocalSummaryModelOption.defaultOption
+        guard model.isDownloaded else {
+            throw MeetingSummaryError.backendFailed(
+                backend: "Local",
+                statusCode: nil,
+                message: "Local model \(model.label) is not downloaded. Open Models and download it first."
+            )
+        }
+
+        let designed = config.designedTemplateIDs.contains(template.id)
+        let instructions = summaryInstructions(for: template, existingNotes: existingNotes, manualNotes: manualNotes, designed: designed)
+        let userPrompt = summaryUserPrompt(
+            transcript: boundedTranscriptForLocal(
+                transcript,
+                limit: designed ? localDesignedTranscriptCharLimit : localSummaryTranscriptCharLimit
+            ),
+            meetingTitle: meetingTitle,
+            existingNotes: existingNotes,
+            manualNotes: manualNotes,
+            visualContext: visualContext
+        )
+
+        let engine = LocalSummaryEngine(modelURL: model.modelURL)
+        let text: String
+        do {
+            text = try await engine.summarize(systemPrompt: instructions, userPrompt: userPrompt)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw MeetingSummaryError.backendFailed(
+                backend: "Local",
+                statusCode: nil,
+                message: error.localizedDescription
+            )
+        }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw MeetingSummaryError.emptyResponse(backend: "Local")
+        }
+        return text
+    }
+
+    private static func boundedTranscriptForLocal(_ transcript: String, limit: Int = localSummaryTranscriptCharLimit) -> String {
+        guard transcript.count > limit else { return transcript }
+        let half = limit / 2
+        let head = String(transcript.prefix(half))
+        let tail = String(transcript.suffix(half))
+        return head + "\n\n[… середина расшифровки пропущена из-за длины …]\n\n" + tail
     }
 
     private static func summarizeWithLMStudio(
@@ -832,7 +952,7 @@ enum MeetingSummaryClient {
         visualContext: String?,
         timeout: TimeInterval
     ) async throws -> String {
-        let instructions = summaryInstructions(for: template, existingNotes: existingNotes, manualNotes: manualNotes)
+        let instructions = summaryInstructions(for: template, existingNotes: existingNotes, manualNotes: manualNotes, designed: config.designedTemplateIDs.contains(template.id))
         let userPrompt = summaryUserPrompt(
             transcript: transcript,
             meetingTitle: meetingTitle,
@@ -892,7 +1012,7 @@ enum MeetingSummaryClient {
         visualContext: String?,
         timeout: TimeInterval
     ) async throws -> String {
-        let instructions = summaryInstructions(for: template, existingNotes: existingNotes, manualNotes: manualNotes)
+        let instructions = summaryInstructions(for: template, existingNotes: existingNotes, manualNotes: manualNotes, designed: config.designedTemplateIDs.contains(template.id))
         let userPrompt = summaryUserPrompt(
             transcript: transcript,
             meetingTitle: meetingTitle,
@@ -1105,6 +1225,12 @@ enum MeetingSummaryClient {
 
     static func generateTitle(transcript: String, config: AppConfig, outputLanguage: String? = nil) async -> String? {
         let backend = (config.meetingSummaryBackend.isEmpty ? MeetingSummaryBackendOption.chatGPT.backend : config.meetingSummaryBackend).lowercased()
+
+        // Local model: skip loading a 7B model just for a title — the caller
+        // falls back to a heuristic title.
+        if backend == MeetingSummaryBackendOption.localGguf.backend {
+            return nil
+        }
 
         let excerpt = titleTranscriptExcerpt(from: transcript)
 

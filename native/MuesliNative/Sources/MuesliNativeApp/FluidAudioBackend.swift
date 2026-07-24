@@ -2,6 +2,13 @@ import FluidAudio
 import Foundation
 import MuesliCore
 
+/// Benign "there was basically nothing to transcribe" signal — e.g. a too-short
+/// hotkey tap that captured <300ms of audio. Not a hard failure: callers should
+/// reset quietly rather than surface a diagnostic/crash report.
+enum DictationNoSpeechError: Error {
+    case noSpeechDetected
+}
+
 /// Native Swift transcription backend using FluidAudio's Parakeet TDT model
 /// running on Apple's Neural Engine (ANE) via CoreML.
 actor FluidAudioTranscriber {
@@ -71,7 +78,16 @@ actor FluidAudioTranscriber {
     func transcribe(wavURL: URL) async throws -> ASRResult {
         guard let asrManager else { throw TranscriberError.notLoaded }
         var decoderState = TdtDecoderState.make(decoderLayers: await asrManager.decoderLayerCount)
-        return try await asrManager.transcribe(wavURL, decoderState: &decoderState)
+        do {
+            return try await asrManager.transcribe(wavURL, decoderState: &decoderState)
+        } catch let error as ASRError {
+            // "Must be at least 300ms of 16kHz audio" — a too-short/empty capture,
+            // not a real failure. Surface it as a benign no-speech signal.
+            if case .invalidAudioData = error {
+                throw DictationNoSpeechError.noSpeechDetected
+            }
+            throw error
+        }
     }
 
     func shutdown() {

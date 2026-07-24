@@ -877,6 +877,8 @@ struct SettingsView: View {
                                 : "custom-model-id"
                         ) { val in controller.updateConfig { $0.customLLMModel = val } }
                     }
+                } else if appState.selectedMeetingSummaryBackend == .localGguf {
+                    localSummaryBackendInfo
                 } else {
                     settingsRow(tr("API Key", "API-ключ"), controlWidth: meetingControlWidth) {
                         PastableSecureField(
@@ -1170,6 +1172,31 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    private var localSummaryBackendInfo: some View {
+        let model = LocalSummaryModelOption.defaultOption
+        let downloaded = model.isDownloaded
+        return VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+            HStack(alignment: .top, spacing: MuesliTheme.spacing8) {
+                Image(systemName: downloaded ? "checkmark.circle.fill" : "arrow.down.circle")
+                    .foregroundStyle(downloaded ? MuesliTheme.success : MuesliTheme.accent)
+                Text(downloaded
+                    ? tr("\(model.label) is ready — meeting notes are generated fully on-device, no cloud or tokens.", "\(model.label) готова — заметки встреч формируются полностью на устройстве, без облака и токенов.")
+                    : tr("\(model.label) is not downloaded yet.", "\(model.label) ещё не скачана."))
+                    .font(MuesliTheme.callout())
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !downloaded {
+                Text(tr("Open the Models tab and download \(model.label) (\(model.sizeLabel)) to enable offline summaries.", "Откройте вкладку «Модели» и скачайте \(model.label) (\(model.sizeLabel)), чтобы включить офлайн-заметки."))
+                    .font(MuesliTheme.caption())
+                    .foregroundStyle(MuesliTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
     }
 
     private var glassTintPicker: some View {

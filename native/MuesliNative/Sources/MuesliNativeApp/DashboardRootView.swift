@@ -15,6 +15,9 @@ struct DashboardRootView: View {
             .background(MuesliTheme.backgroundDeep)
             .ignoresSafeArea()
             .frame(minWidth: 980, minHeight: 600)
+        // Suppress macOS's blue keyboard focus ring across the whole dashboard —
+        // it appears on tab-bar / control clicks and reads as a stray selection.
+        .focusEffectDisabled()
         .preferredColorScheme(appState.config.darkMode ? .dark : .light)
         .alert(
             appState.contributionMilestonePrompt?.title ?? tr("Muesli milestone", "Достижение Muesli"),

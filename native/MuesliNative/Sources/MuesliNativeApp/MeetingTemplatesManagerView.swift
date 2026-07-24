@@ -302,6 +302,10 @@ struct MeetingTemplatesManagerView: View {
                     languagePicker
                 }
 
+                if let id = selectedTemplateID {
+                    designedToggleRow(templateID: id)
+                }
+
                 VStack(alignment: .leading, spacing: 6) {
                     fieldLabel(tr("Prompt", "Промпт"))
                     TextEditor(text: $draftTemplatePrompt)
@@ -423,6 +427,54 @@ struct MeetingTemplatesManagerView: View {
     // MARK: - Language picker
 
     @ViewBuilder
+    /// "Designed" per-template switch: the summary for this template is
+    /// generated as a card/chart layout instead of markdown text. Instant —
+    /// just flips the template id in config; the design prompt is composed
+    /// from the component registry at summarization time.
+    private func designedToggleRow(templateID: String) -> some View {
+        HStack(spacing: MuesliTheme.spacing12) {
+            Image(systemName: "square.grid.2x2.fill")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(MuesliTheme.accent)
+                .frame(width: 26, height: 26)
+                .background(RoundedRectangle(cornerRadius: 8).fill(MuesliTheme.accentSubtle))
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(tr("Designed", "Дизайнерский"))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(MuesliTheme.textPrimary)
+                Text(tr("Summary is generated as a design: cards, charts, checklists.", "Сводка генерируется как дизайн: карточки, графики, чек-листы."))
+                    .font(.system(size: 11))
+                    .foregroundStyle(MuesliTheme.textSecondary)
+            }
+
+            Spacer()
+
+            Toggle("", isOn: Binding(
+                get: { appState.config.designedTemplateIDs.contains(templateID) },
+                set: { enabled in
+                    controller.updateConfig { config in
+                        if enabled {
+                            if !config.designedTemplateIDs.contains(templateID) {
+                                config.designedTemplateIDs.append(templateID)
+                            }
+                        } else {
+                            config.designedTemplateIDs.removeAll { $0 == templateID }
+                        }
+                    }
+                }
+            ))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .tint(MuesliTheme.accent)
+            .labelsHidden()
+        }
+        .padding(.horizontal, MuesliTheme.spacing12)
+        .padding(.vertical, MuesliTheme.spacing8)
+        .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge).fill(MuesliTheme.backgroundBase))
+        .overlay(RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge).strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+    }
+
     private var languagePicker: some View {
         Menu {
             Button {

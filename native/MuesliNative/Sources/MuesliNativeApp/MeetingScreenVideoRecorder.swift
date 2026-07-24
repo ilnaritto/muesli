@@ -40,6 +40,8 @@ final class MeetingScreenVideoRecorder: NSObject, SCStreamOutput {
         let height = display.height
 
         let writer = try AVAssetWriter(outputURL: tempURL, fileType: .mp4)
+        // H.264 (not HEVC): recordings are shared as self-contained HTML and
+        // must play in any browser; HEVC playback is hardware/OS-dependent.
         let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: width,

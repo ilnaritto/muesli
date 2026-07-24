@@ -892,6 +892,14 @@ struct MeetingDetailView: View {
                 } label: {
                     Label(tr("Export Full Meeting", "Экспорт всей встречи"), systemImage: "doc.on.doc")
                 }
+                if MeetingShareExporter.canShare(meeting) {
+                    Divider()
+                    Button {
+                        MeetingShareExporter.share(meeting: meeting)
+                    } label: {
+                        Label(tr("Share (HTML file)", "Поделиться (HTML-файл)"), systemImage: "globe")
+                    }
+                }
             } label: {
                 Label(tr("Export", "Экспорт"), systemImage: "square.and.arrow.up")
             }
@@ -1189,7 +1197,7 @@ struct MeetingDetailView: View {
                             .allowsHitTesting(false)
                             .accessibilityHidden(documentMode != .notes)
                     } else {
-                        MeetingNotesView(markdown: Self.notesContent(for: meeting))
+                        notesDocumentView(for: meeting)
                             .opacity(documentMode == .notes ? 1 : 0)
                             .allowsHitTesting(documentMode == .notes)
                             .accessibilityHidden(documentMode != .notes)
@@ -2106,6 +2114,22 @@ struct MeetingDetailView: View {
             return "# \(meeting.title)\n\n## Raw Transcript\n\n\(meeting.rawTranscript)"
         }
         return meeting.formattedNotes
+    }
+
+    /// Designed-template summaries are stored as layout markup — detect and
+    /// render them with the card renderer; everything else stays on the plain
+    /// markdown view. Detection is content-based so mixed template tabs, old
+    /// meetings and failure texts all resolve correctly.
+    @ViewBuilder
+    private func notesDocumentView(for meeting: MeetingRecord) -> some View {
+        let content = Self.notesContent(for: meeting)
+        if meeting.notesState == .structuredNotes,
+           SummaryLayout.isDesignedMarkup(content),
+           let blocks = SummaryLayout.blocks(from: content) {
+            SummaryLayoutView(blocks: blocks)
+        } else {
+            MeetingNotesView(markdown: content)
+        }
     }
 
     private static func defaultDocumentMode(for meeting: MeetingRecord) -> MeetingDocumentMode {

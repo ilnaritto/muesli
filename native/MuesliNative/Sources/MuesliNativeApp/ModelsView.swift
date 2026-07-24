@@ -24,6 +24,13 @@ struct ModelsView: View {
     @State private var isEditingSystemPrompt = false
     @State private var editedSystemPrompt = ""
 
+    // Local summarization model (downloadable on-device LLM) state
+    @State private var downloadingSummaryModels: Set<String> = []
+    @State private var downloadProgressSummary: [String: Double] = [:]
+    @State private var downloadedSummaryModels: Set<String> = []
+    @State private var downloadTasksSummary: [String: Task<Void, Never>] = [:]
+    @State private var summaryModelToDelete: LocalSummaryModelOption?
+
     init(appState: AppState, controller: MuesliController) {
         self.appState = appState
         self.controller = controller
@@ -74,6 +81,8 @@ struct ModelsView: View {
 
                 postProcessorSection
 
+                localSummarySection
+
                 if !BackendOption.comingSoon.isEmpty {
                     VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
                         Text(tr("COMING SOON", "СКОРО"))
@@ -97,6 +106,7 @@ struct ModelsView: View {
         .onAppear {
             checkDownloadedModels()
             checkDownloadedPostProcModels()
+            checkDownloadedSummaryModels()
             syncSelectionsFromActiveBackend()
             checkNemotron35Update()
         }
@@ -139,6 +149,165 @@ struct ModelsView: View {
         } message: {
             Text(tr("The downloaded model files will be removed from this Mac. You can download the model again later.", "Файлы скачанной модели будут удалены с этого Mac. Позже модель можно скачать снова."))
         }
+        .alert(
+            tr("Delete \"\(summaryModelToDelete?.label ?? "")\"?", "Удалить «\(summaryModelToDelete?.label ?? "")»?"),
+            isPresented: Binding(
+                get: { summaryModelToDelete != nil },
+                set: { if !$0 { summaryModelToDelete = nil } }
+            )
+        ) {
+            Button(tr("Cancel", "Отмена"), role: .cancel) {
+                summaryModelToDelete = nil
+            }
+            Button(tr("Delete", "Удалить"), role: .destructive) {
+                guard let option = summaryModelToDelete else { return }
+                deleteSummaryModel(option)
+                summaryModelToDelete = nil
+            }
+        } message: {
+            Text(tr("The downloaded model files will be removed from this Mac. You can download the model again later.", "Файлы скачанной модели будут удалены с этого Mac. Позже модель можно скачать снова."))
+        }
+    }
+
+    // MARK: - Local summarization model (on-device meeting notes)
+
+    private var localSummarySection: some View {
+        VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
+            VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
+                Text(tr("LOCAL SUMMARIZATION", "ЛОКАЛЬНАЯ СУММАРИЗАЦИЯ"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(MuesliTheme.textTertiary)
+                    .textCase(.uppercase)
+                    .padding(.leading, 2)
+
+                Text(tr("Optional on-device LLM for meeting notes — runs fully offline, no cloud and no tokens. After downloading, choose \"Локальная (T-lite)\" as the summary backend in Settings.", "Необязательная локальная LLM для заметок встреч — работает полностью офлайн, без облака и токенов. После скачивания выберите «Локальная (T-lite)» как бэкенд суммаризации в Настройках."))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .padding(.leading, 2)
+            }
+            .padding(.top, MuesliTheme.spacing8)
+
+            VStack(spacing: MuesliTheme.spacing12) {
+                ForEach(LocalSummaryModelOption.all) { option in
+                    localSummaryModelCard(option)
+                }
+            }
+        }
+    }
+
+    private func localSummaryModelCard(_ option: LocalSummaryModelOption) -> some View {
+        let isDownloaded = downloadedSummaryModels.contains(option.id)
+        let isDownloading = downloadingSummaryModels.contains(option.id)
+        let progress = downloadProgressSummary[option.id] ?? 0
+        let isActive = isDownloaded
+            && appState.config.meetingSummaryBackend.lowercased() == MeetingSummaryBackendOption.localGguf.backend
+
+        return VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
+            HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
+                brandLogo("qwen-logo")
+                VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
+                    HStack(spacing: MuesliTheme.spacing8) {
+                        Text(option.label)
+                            .font(MuesliTheme.headline())
+                            .foregroundStyle(MuesliTheme.textPrimary)
+
+                        Text(option.sizeLabel)
+                            .font(MuesliTheme.caption())
+                            .foregroundStyle(MuesliTheme.textTertiary)
+                    }
+
+                    Text(option.description)
+                        .font(MuesliTheme.caption())
+                        .foregroundStyle(MuesliTheme.textSecondary)
+                }
+
+                Spacer()
+
+                if isActive {
+                    Text(tr("Active", "Активна"))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(MuesliTheme.success)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(MuesliTheme.success.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                } else if isDownloaded {
+                    Text(tr("Downloaded", "Скачано"))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(MuesliTheme.surfacePrimary)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+            }
+
+            if isDownloading {
+                VStack(alignment: .leading, spacing: 4) {
+                    ProgressView(value: progress)
+                        .tint(MuesliTheme.accent)
+                    Text(tr("\(Int(progress * 100))% downloading...", "Скачивание… \(Int(progress * 100))%"))
+                        .font(.system(size: 11))
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                }
+            }
+
+            HStack(spacing: MuesliTheme.spacing8) {
+                if isDownloading {
+                    Button(tr("Cancel", "Отмена")) {
+                        cancelSummaryDownload(option)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .padding(.horizontal, MuesliTheme.spacing12)
+                    .padding(.vertical, 4)
+                    .background(MuesliTheme.surfacePrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                } else if isDownloaded {
+                    if !isActive {
+                        Button(tr("Use for summaries", "Использовать для заметок")) {
+                            controller.selectMeetingSummaryBackend(.localGguf)
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(MuesliTheme.accent)
+                        .padding(.horizontal, MuesliTheme.spacing12)
+                        .padding(.vertical, 4)
+                        .background(MuesliTheme.accentSubtle)
+                        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                    }
+
+                    Button {
+                        summaryModelToDelete = option
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.red.opacity(0.6))
+                            .frame(width: 20, height: 20)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button(tr("Download", "Скачать")) {
+                        startSummaryDownload(option)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(MuesliTheme.accent)
+                    .padding(.horizontal, MuesliTheme.spacing12)
+                    .padding(.vertical, 4)
+                    .background(MuesliTheme.accentSubtle)
+                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                }
+            }
+        }
+        .padding(MuesliTheme.spacing16)
+        .background(MuesliTheme.backgroundRaised)
+        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
+        .overlay(
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
+                .strokeBorder(isActive ? MuesliTheme.accent.opacity(0.5) : MuesliTheme.surfaceBorder, lineWidth: isActive ? 1.5 : 1)
+        )
     }
 
     private var experimentalSection: some View {
@@ -976,6 +1145,146 @@ struct ModelsView: View {
                 downloadedPostProcModels.insert(option.id)
             }
         }
+    }
+
+    // MARK: - Local Summary Model Actions
+
+    private func checkDownloadedSummaryModels() {
+        downloadedSummaryModels.removeAll()
+        for option in LocalSummaryModelOption.all where option.isDownloaded {
+            downloadedSummaryModels.insert(option.id)
+        }
+    }
+
+    private func startSummaryDownload(_ option: LocalSummaryModelOption) {
+        withAnimation { _ = downloadingSummaryModels.insert(option.id) }
+        downloadProgressSummary[option.id] = 0.02
+
+        let task = Task {
+            let fm = FileManager.default
+            do {
+                try fm.createDirectory(at: option.cacheDirectory, withIntermediateDirectories: true)
+                try await downloadSummaryModel(option)
+
+                await MainActor.run {
+                    withAnimation {
+                        downloadingSummaryModels.remove(option.id)
+                        downloadedSummaryModels.insert(option.id)
+                        downloadProgressSummary.removeValue(forKey: option.id)
+                        downloadTasksSummary.removeValue(forKey: option.id)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    withAnimation {
+                        downloadingSummaryModels.remove(option.id)
+                        downloadProgressSummary.removeValue(forKey: option.id)
+                        downloadTasksSummary.removeValue(forKey: option.id)
+                    }
+                }
+                let isCancelled = error is CancellationError || (error as? URLError)?.code == .cancelled
+                if !isCancelled {
+                    fputs("[muesli-native] Local summary model download failed: \(error)\n", stderr)
+                }
+            }
+        }
+        downloadTasksSummary[option.id] = task
+    }
+
+    private func downloadSummaryModel(_ option: LocalSummaryModelOption, maxRetries: Int = 3) async throws {
+        var lastError: Error?
+        for attempt in 0..<maxRetries {
+            try Task.checkCancellation()
+            if attempt > 0 {
+                let delay = UInt64(pow(2.0, Double(attempt - 1))) * 1_000_000_000
+                try await Task.sleep(nanoseconds: delay)
+                fputs("[download] retry \(attempt)/\(maxRetries) for \(option.filename)\n", stderr)
+                await MainActor.run {
+                    downloadProgressSummary[option.id] = 0.02
+                }
+            }
+            do {
+                let tmpURL = try await downloadSummaryTempFile(option)
+                try installSummaryModel(from: tmpURL, option: option)
+                return
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = error
+            }
+        }
+        let underlying = lastError ?? NSError(domain: "SummaryDownload", code: 0, userInfo: [
+            NSLocalizedDescriptionKey: "No download attempts were made",
+        ])
+        throw DownloadError.retriesExhausted(option.filename, underlying)
+    }
+
+    private func downloadSummaryTempFile(_ option: LocalSummaryModelOption) async throws -> URL {
+        let delegate = PostProcDownloadDelegate { progress in
+            DispatchQueue.main.async {
+                downloadProgressSummary[option.id] = max(progress, 0.02)
+            }
+        }
+        let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+        let invalidator = URLSessionInvalidator()
+        do {
+            let downloadedURL = try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    delegate.setContinuation(continuation)
+                    session.downloadTask(with: option.downloadURL).resume()
+                }
+            } onCancel: {
+                invalidator.cancel(session)
+            }
+            invalidator.finish(session)
+            return downloadedURL
+        } catch {
+            if error is CancellationError {
+                invalidator.cancel(session)
+            } else {
+                invalidator.finish(session)
+            }
+            throw error
+        }
+    }
+
+    private func installSummaryModel(from tmpURL: URL, option: LocalSummaryModelOption) throws {
+        let fm = FileManager.default
+        let stagingURL = option.cacheDirectory.appendingPathComponent(".\(option.filename).download")
+        defer {
+            try? fm.removeItem(at: tmpURL)
+            try? fm.removeItem(at: stagingURL)
+        }
+        try? fm.removeItem(at: stagingURL)
+        try fm.moveItem(at: tmpURL, to: stagingURL)
+        if fm.fileExists(atPath: option.modelURL.path) {
+            _ = try fm.replaceItemAt(
+                option.modelURL,
+                withItemAt: stagingURL,
+                backupItemName: nil,
+                options: []
+            )
+        } else {
+            try fm.moveItem(at: stagingURL, to: option.modelURL)
+        }
+    }
+
+    private func cancelSummaryDownload(_ option: LocalSummaryModelOption) {
+        downloadTasksSummary[option.id]?.cancel()
+        withAnimation {
+            downloadingSummaryModels.remove(option.id)
+            downloadProgressSummary.removeValue(forKey: option.id)
+            downloadTasksSummary.removeValue(forKey: option.id)
+        }
+    }
+
+    private func deleteSummaryModel(_ option: LocalSummaryModelOption) {
+        // If this local backend was selected, fall back to ChatGPT so summaries keep working.
+        if appState.config.meetingSummaryBackend.lowercased() == MeetingSummaryBackendOption.localGguf.backend {
+            controller.selectMeetingSummaryBackend(.chatGPT)
+        }
+        try? FileManager.default.removeItem(at: option.cacheDirectory)
+        downloadedSummaryModels.remove(option.id)
     }
 
     // MARK: - Actions

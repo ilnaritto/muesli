@@ -450,7 +450,14 @@ struct MeetingSummaryBackendOption: Equatable {
         label: "Custom LLM"
     )
 
-    static let all: [MeetingSummaryBackendOption] = [.chatGPT, .openAI, .openRouter, .ollama, .lmStudio, .customLLM]
+    /// Fully on-device summarization via a downloadable local GGUF model
+    /// (T-lite 7B) running on the bundled llama.cpp runtime. No cloud, no tokens.
+    static let localGguf = MeetingSummaryBackendOption(
+        backend: "local_gguf",
+        label: "Локальная (T-lite)"
+    )
+
+    static let all: [MeetingSummaryBackendOption] = [.chatGPT, .openAI, .openRouter, .ollama, .lmStudio, .customLLM, .localGguf]
 
     static func resolved(_ backend: String?) -> MeetingSummaryBackendOption {
         guard let backend, let option = all.first(where: { $0.backend == backend }) else {
@@ -957,6 +964,9 @@ struct AppConfig: Codable {
     /// One-shot migration marker: older configs stored the previous `.never`
     /// default; on first launch after the update the policy flips to `.always`.
     var didMigrateRecordingSavePolicyToAlways: Bool = false
+    /// One-shot marker: flips old defaults (blue accent / mid-right pill) to the
+    /// Pryanik brand defaults (purple accent + top-center pill) on first launch.
+    var didMigratePryanikDefaults: Bool = false
     var enableMeetingScreenVideo: Bool = false
     var meetingRecordingFileFormat: String = MeetingRecordingFileFormat.m4a.rawValue
     var darkMode: Bool = true
@@ -967,7 +977,7 @@ struct AppConfig: Codable {
     var launchAtLogin: Bool = false
     var openDashboardOnLaunch: Bool = true
     var showFloatingIndicator: Bool = true
-    var indicatorAnchor: IndicatorAnchor = .midTrailing
+    var indicatorAnchor: IndicatorAnchor = .topCenter
     var dashboardWindowFrame: WindowFrame? = nil
     var indicatorOrigin: CGPointCodable? = nil
     var openAIAPIKey: String = ""
@@ -1001,7 +1011,7 @@ struct AppConfig: Codable {
     var soundEnabled: Bool = true
     var pauseMediaDuringDictation: Bool = false
     var muteSystemAudioDuringDictation: Bool = false
-    var recordingColorHex: String = "1e1e2e"   // Catppuccin Mocha base, without #
+    var recordingColorHex: String = "8b5cf6"   // Pryanik purple accent preset (without #)
     var menuBarIcon: String = "muesli"
     var showNextMeetingInMenuBar: Bool = true
     var maraudersMapUnlocked: Bool = false
@@ -1011,6 +1021,9 @@ struct AppConfig: Codable {
     var hiddenCalendarEventSourceHints: [String: String] = [:]
     var disabledCalendarIDs: [String] = []
     var enablePostProcessor: Bool = false
+    /// Template ids whose summaries are generated as designed layouts
+    /// (cards/charts markup) instead of markdown.
+    var designedTemplateIDs: [String] = []
     var postProcessorBackend: String = TranscriptCleanupBackendOption.local.backend
     var activePostProcessorId: String = PostProcessorOption.defaultOption.id
     var postProcessorChatGPTModel: String = ""
@@ -1072,6 +1085,7 @@ struct AppConfig: Codable {
         case mutedMeetingDetectionAppBundleIDs = "muted_meeting_detection_app_bundle_ids"
         case meetingRecordingSavePolicy = "meeting_recording_save_policy"
         case didMigrateRecordingSavePolicyToAlways = "did_migrate_recording_save_policy"
+        case didMigratePryanikDefaults = "did_migrate_pryanik_defaults"
         case enableMeetingScreenVideo = "enable_meeting_screen_video"
         case meetingRecordingFileFormat = "meeting_recording_file_format"
         case darkMode = "dark_mode"
@@ -1124,6 +1138,7 @@ struct AppConfig: Codable {
         case hiddenCalendarEventSourceHints = "hidden_calendar_event_source_hints"
         case disabledCalendarIDs = "disabled_calendar_ids"
         case enablePostProcessor = "enable_post_processor"
+        case designedTemplateIDs = "designed_template_ids"
         case postProcessorBackend = "post_processor_backend"
         case activePostProcessorId = "active_post_processor_id"
         case postProcessorChatGPTModel = "post_processor_chatgpt_model"
@@ -1206,6 +1221,7 @@ struct AppConfig: Codable {
         mutedMeetingDetectionAppBundleIDs = (try? c.decode([String].self, forKey: .mutedMeetingDetectionAppBundleIDs)) ?? defaults.mutedMeetingDetectionAppBundleIDs
         meetingRecordingSavePolicy = (try? c.decode(MeetingRecordingSavePolicy.self, forKey: .meetingRecordingSavePolicy)) ?? defaults.meetingRecordingSavePolicy
         didMigrateRecordingSavePolicyToAlways = (try? c.decode(Bool.self, forKey: .didMigrateRecordingSavePolicyToAlways)) ?? defaults.didMigrateRecordingSavePolicyToAlways
+        didMigratePryanikDefaults = (try? c.decode(Bool.self, forKey: .didMigratePryanikDefaults)) ?? defaults.didMigratePryanikDefaults
         enableMeetingScreenVideo = (try? c.decode(Bool.self, forKey: .enableMeetingScreenVideo)) ?? defaults.enableMeetingScreenVideo
         let decodedMeetingRecordingFileFormat = (try? c.decode(String.self, forKey: .meetingRecordingFileFormat))
             ?? defaults.meetingRecordingFileFormat
@@ -1229,7 +1245,7 @@ struct AppConfig: Codable {
         openDashboardOnLaunch = (try? c.decode(Bool.self, forKey: .openDashboardOnLaunch)) ?? defaults.openDashboardOnLaunch
         showFloatingIndicator = (try? c.decode(Bool.self, forKey: .showFloatingIndicator)) ?? defaults.showFloatingIndicator
         indicatorAnchor = (try? c.decode(IndicatorAnchor.self, forKey: .indicatorAnchor))
-            ?? ((try? c.decodeIfPresent(CGPointCodable.self, forKey: .indicatorOrigin)) != nil ? .custom : .midTrailing)
+            ?? ((try? c.decodeIfPresent(CGPointCodable.self, forKey: .indicatorOrigin)) != nil ? .custom : .topCenter)
         dashboardWindowFrame = try? c.decode(WindowFrame.self, forKey: .dashboardWindowFrame)
         indicatorOrigin = try? c.decode(CGPointCodable.self, forKey: .indicatorOrigin)
         openAIAPIKey = (try? c.decode(String.self, forKey: .openAIAPIKey)) ?? defaults.openAIAPIKey
@@ -1287,6 +1303,7 @@ struct AppConfig: Codable {
         )) ?? defaults.hiddenCalendarEventSourceHints
         disabledCalendarIDs = (try? c.decode([String].self, forKey: .disabledCalendarIDs)) ?? defaults.disabledCalendarIDs
         enablePostProcessor = (try? c.decode(Bool.self, forKey: .enablePostProcessor)) ?? defaults.enablePostProcessor
+        designedTemplateIDs = (try? c.decode([String].self, forKey: .designedTemplateIDs)) ?? defaults.designedTemplateIDs
         postProcessorBackend = TranscriptCleanupBackendOption
             .resolved(try? c.decode(String.self, forKey: .postProcessorBackend))
             .backend

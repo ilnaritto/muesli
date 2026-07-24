@@ -99,7 +99,7 @@ struct MeetingExporter {
         switch content {
         case .notes:
             if meeting.notesState == .structuredNotes {
-                parts.append(meeting.formattedNotes)
+                parts.append(SummaryLayout.plainText(meeting.formattedNotes))
             } else {
                 parts.append("*No structured notes available. Raw transcript included below.*")
                 parts.append("")
@@ -113,7 +113,7 @@ struct MeetingExporter {
             parts.append(meeting.rawTranscript)
         case .fullMeeting:
             if meeting.notesState == .structuredNotes {
-                parts.append(meeting.formattedNotes)
+                parts.append(SummaryLayout.plainText(meeting.formattedNotes))
             } else {
                 parts.append("*No structured notes available.*")
             }

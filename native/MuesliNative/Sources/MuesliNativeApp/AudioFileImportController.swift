@@ -9,7 +9,13 @@ import UniformTypeIdentifiers
 /// Converts the source file to 16kHz mono WAV, transcribes it, optionally runs
 /// speaker diarization, and creates a meeting record with the result.
 enum AudioFileImportController {
-    static let supportedExtensions: Set<String> = ["m4a", "mp4", "wav", "mp3"]
+    // Audio + video containers. Video files transcribe via their audio track
+    // (AVAsset extracts it); the video itself is retained separately as playable
+    // meeting media by the caller (see importVideoFile).
+    static let supportedExtensions: Set<String> = ["m4a", "mp4", "wav", "mp3", "mov", "m4v"]
+
+    /// Video containers offered by the "Import Video" picker.
+    static let videoExtensions: Set<String> = ["mp4", "mov", "m4v"]
 
     private static let allowedTypes: [UTType] = {
         var types: [UTType] = [
@@ -20,6 +26,12 @@ enum AudioFileImportController {
         ]
         if let m4a = UTType(filenameExtension: "m4a") { types.append(m4a) }
         if let mp4 = UTType(filenameExtension: "mp4") { types.append(mp4) }
+        return types
+    }()
+
+    private static let allowedVideoTypes: [UTType] = {
+        var types: [UTType] = [.movie, .quickTimeMovie, .mpeg4Movie]
+        if let m4v = UTType(filenameExtension: "m4v") { types.append(m4v) }
         return types
     }()
 
@@ -53,6 +65,32 @@ enum AudioFileImportController {
                         continuation.resume(
                             returning: response == .OK ? panel.url : nil
                         )
+                    }
+                }
+            }
+        }
+    }
+
+    /// Presents an NSOpenPanel for selecting a video file (mp4, mov, m4v).
+    static func selectVideoFile() async -> URL? {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                let panel = NSOpenPanel()
+                panel.title = "Import Video File for Transcription"
+                panel.message = "Choose a video file (mp4, mov, m4v)"
+                panel.allowedContentTypes = allowedVideoTypes
+                panel.allowsMultipleSelection = false
+                panel.canChooseDirectories = false
+                panel.canCreateDirectories = false
+
+                NSApp.activate()
+                if let window = NSApp.keyWindow {
+                    panel.beginSheetModal(for: window) { response in
+                        continuation.resume(returning: response == .OK ? panel.url : nil)
+                    }
+                } else {
+                    panel.begin { response in
+                        continuation.resume(returning: response == .OK ? panel.url : nil)
                     }
                 }
             }

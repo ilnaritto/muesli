@@ -1,4 +1,5 @@
 import AVFoundation
+import AppKit
 import ApplicationServices
 import SwiftUI
 import MuesliCore
@@ -159,11 +160,12 @@ struct OnboardingView: View {
 
             // Bottom bar
             HStack {
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     ForEach(Array(orderedSteps.enumerated()), id: \.offset) { _, step in
-                        Circle()
-                            .fill(step == currentStep ? MuesliTheme.accent : MuesliTheme.textTertiary)
-                            .frame(width: 7, height: 7)
+                        Capsule()
+                            .fill(step == currentStep ? MuesliTheme.accent : MuesliTheme.textTertiary.opacity(0.5))
+                            .frame(width: step == currentStep ? 18 : 7, height: 7)
+                            .animation(.easeInOut(duration: 0.2), value: currentStep)
                     }
                 }
 
@@ -191,7 +193,8 @@ struct OnboardingView: View {
                 }
             }
             .padding(.horizontal, MuesliTheme.spacing32)
-            .padding(.vertical, MuesliTheme.spacing16)
+            .padding(.top, MuesliTheme.spacing16)
+            .padding(.bottom, MuesliTheme.spacing24)
         }
         .background(MuesliTheme.backgroundBase)
         .preferredColorScheme(.dark)
@@ -247,7 +250,7 @@ struct OnboardingView: View {
                 startDownload()
             }
         case 2:
-            onboardingButton("Continue", enabled: true) {
+            onboardingButton(tr("Continue", "Продолжить"), enabled: true) {
                 goToNextStep()
             }
         case 3:
@@ -324,12 +327,12 @@ struct OnboardingView: View {
     private func onboardingButton(_ title: String, enabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.white)
-                .padding(.horizontal, MuesliTheme.spacing20)
-                .padding(.vertical, MuesliTheme.spacing8)
-                .background(enabled ? MuesliTheme.accent : MuesliTheme.accent.opacity(0.4))
-                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                .padding(.horizontal, MuesliTheme.spacing24)
+                .padding(.vertical, 10)
+                .background(enabled ? MuesliTheme.accent : MuesliTheme.accent.opacity(0.35))
+                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium, style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
@@ -475,13 +478,13 @@ struct OnboardingView: View {
                 tr("Compiling CoreML files for the Neural Engine", "Компиляция файлов CoreML для Neural Engine"),
                 tr("Preparing the first dictation test", "Подготовка первой проверки диктовки"),
                 tr("Future launches will skip most of this", "Следующие запуски будут заметно быстрее"),
-                tr("We'll bring Muesli forward when ready", "Muesli откроется, когда всё будет готово"),
+                tr("We'll bring Pryanik forward when ready", "Pryanik откроется, когда всё будет готово"),
             ]
         }
         return [
             tr("Preparing the first dictation test", "Подготовка первой проверки диктовки"),
             tr("Future launches will skip most of this", "Следующие запуски будут заметно быстрее"),
-            tr("We'll bring Muesli forward when ready", "Muesli откроется, когда всё будет готово"),
+            tr("We'll bring Pryanik forward when ready", "Pryanik откроется, когда всё будет готово"),
         ]
     }
 
@@ -491,18 +494,21 @@ struct OnboardingView: View {
         VStack(spacing: MuesliTheme.spacing16) {
             Spacer()
 
-            MWaveformIcon(barCount: 13, spacing: 3)
-                .foregroundStyle(MuesliTheme.accent)
-                .frame(width: 80, height: 48)
+            Image(nsImage: NSApplication.shared.applicationIconImage)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 104, height: 104)
+                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
 
             VStack(spacing: MuesliTheme.spacing8) {
-                Text(tr("Welcome to Muesli", "Добро пожаловать в Muesli"))
+                Text(tr("Welcome to Pryanik", "Добро пожаловать в Pryanik"))
                     .font(MuesliTheme.title1())
                     .foregroundStyle(MuesliTheme.textPrimary)
 
-                Text(tr("Local-first dictation and meeting transcription for macOS.", "Локальная диктовка и транскрипция встреч для macOS."))
+                Text(tr("Your voice, on your Mac. Dictation and meeting notes that stay fully local.", "Твой голос — на твоём Mac. Диктовка и заметки со встреч, всё локально."))
                     .font(MuesliTheme.body())
                     .foregroundStyle(MuesliTheme.textSecondary)
+                    .multilineTextAlignment(.center)
             }
 
             VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
@@ -519,21 +525,21 @@ struct OnboardingView: View {
             }
 
             VStack(spacing: MuesliTheme.spacing8) {
-                Text(tr("What will you use Muesli for?", "Для чего вы будете использовать Muesli?"))
+                Text(tr("What do you want to start with?", "С чего хотите начать?"))
                     .font(MuesliTheme.caption())
                     .foregroundStyle(MuesliTheme.textTertiary)
 
                 LazyVGrid(
                     columns: [
-                        GridItem(.fixed(132), spacing: MuesliTheme.spacing8),
-                        GridItem(.fixed(132), spacing: MuesliTheme.spacing8),
+                        GridItem(.fixed(150), spacing: MuesliTheme.spacing8),
+                        GridItem(.fixed(150), spacing: MuesliTheme.spacing8),
                     ],
                     spacing: MuesliTheme.spacing8
                 ) {
                     useCaseCard(
                         icon: "waveform",
                         title: tr("Voice Notes", "Голосовые заметки"),
-                        subtitle: tr("Record in Muesli", "Запись в Muesli"),
+                        subtitle: tr("Record in Pryanik", "Запись в Pryanik"),
                         selected: selectedUseCase == .voiceNotes
                     ) {
                         selectedUseCase = .voiceNotes
@@ -581,24 +587,33 @@ struct OnboardingView: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            VStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 20, weight: .medium))
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                Text(subtitle)
-                    .font(.system(size: 10))
-                    .foregroundStyle(selected ? .white.opacity(0.72) : MuesliTheme.textTertiary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+            VStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(selected ? Color.white : MuesliTheme.accent)
+                    Image(systemName: icon)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(selected ? MuesliTheme.accent : .white)
+                }
+                .frame(width: 32, height: 32)
+
+                VStack(spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(selected ? .white : MuesliTheme.textPrimary)
+                    Text(subtitle)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(selected ? .white.opacity(0.78) : MuesliTheme.textTertiary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
             }
-            .foregroundStyle(selected ? .white : MuesliTheme.textSecondary)
-            .frame(width: 132, height: 74)
+            .frame(width: 150, height: 96)
             .background(selected ? MuesliTheme.accent : MuesliTheme.backgroundRaised)
-            .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+            .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
-                    .strokeBorder(selected ? MuesliTheme.accent : MuesliTheme.surfaceBorder, lineWidth: 1)
+                RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge, style: .continuous)
+                    .strokeBorder(selected ? Color.clear : MuesliTheme.surfaceBorder, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)

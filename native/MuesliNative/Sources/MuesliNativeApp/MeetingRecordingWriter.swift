@@ -211,6 +211,13 @@ final class MeetingRecordingWriter {
         return slug.isEmpty ? timestamp : "\(timestamp)-\(slug)"
     }
 
+    /// The microphone is typically captured several dB quieter than system
+    /// audio, so in the mixed recording the author's own voice ends up much
+    /// weaker than the "others" heard through the speakers. Boost the mic
+    /// track before mixing to even the two out; `Int16(clamping:)` guards
+    /// against overshoot when the mic is genuinely loud.
+    private static let micGain = 2.5
+
     private static func mix(mic: [Int16], system: [Int16]) -> [Int16] {
         let maxCount = max(mic.count, system.count)
         var output = [Int16]()
@@ -219,7 +226,7 @@ final class MeetingRecordingWriter {
         for index in 0..<maxCount {
             let hasMic = index < mic.count
             let hasSystem = index < system.count
-            let micValue = hasMic ? Int(mic[index]) : 0
+            let micValue = hasMic ? Int((Double(mic[index]) * micGain).rounded()) : 0
             let systemValue = hasSystem ? Int(system[index]) : 0
             let contributors = (hasMic ? 1 : 0) + (hasSystem ? 1 : 0)
             let averaged = contributors == 0 ? 0 : (micValue + systemValue) / contributors
