@@ -47,9 +47,12 @@ struct HomeView: View {
     let appState: AppState
     let controller: MuesliController
     @State private var selectedSection: HomeSection = .overview
-    @State private var insightsPeriod: InsightsPeriod = .week
     @State private var bridgePromptSeen = false
     @State private var isBridgeQRCodePresented = false
+    @State private var insightsDraft = ""
+    @FocusState private var insightsInputFocused: Bool
+    @State private var showInsightsDatePopover = false
+    @State private var insightsCustomDate = Date()
 
     var body: some View {
         HStack(spacing: 5) {
@@ -106,116 +109,345 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Insights (AI)
+    // MARK: - Insights (AI chat over all meetings)
 
     @ViewBuilder
     private var insightsContent: some View {
-        // Cached result only counts if it was generated for the current folder.
-        let cached = appState.meetingInsights[insightsPeriod]
-        let result = (cached?.folderID == appState.insightsFolderID) ? cached : nil
-        let isGenerating = appState.insightsGenerating.contains(insightsPeriod)
-        ScrollView {
-            VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(tr("Insights", "Инсайты"))
-                        .font(MuesliTheme.pageTitle())
-                        .foregroundStyle(MuesliTheme.textPrimary)
-                    Text(tr("Let AI read across your meetings and surface what matters.", "Пусть ИИ пройдётся по твоим встречам и выделит главное."))
-                        .font(MuesliTheme.callout())
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(tr("Insights", "Инсайты"))
+                    .font(MuesliTheme.pageTitle())
+                    .foregroundStyle(MuesliTheme.textPrimary)
+                Text(tr("Ask AI about your meetings — it reads all of them at once.", "Спроси ИИ про свои встречи — он читает сразу все."))
+                    .font(MuesliTheme.callout())
+                    .foregroundStyle(MuesliTheme.textTertiary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, MuesliTheme.spacing24)
+            .padding(.top, MuesliTheme.spacing20)
+            .padding(.bottom, MuesliTheme.spacing12)
 
-                HStack(spacing: 8) {
-                    periodTabsBar
-                    folderDropdown
-                    Spacer(minLength: 0)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    if appState.insightsChatHistory.isEmpty && !appState.insightsChatAwaiting {
+                        insightsEmptyState
+                    } else {
+                        VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+                            ForEach(appState.insightsChatHistory) { turn in
+                                insightsBubble(turn).id(turn.id)
+                            }
+                            if appState.insightsChatAwaiting {
+                                insightsTypingBubble.id("insights-typing")
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(.top, MuesliTheme.spacing8)
+                    }
+                }
+                .padding(.horizontal, MuesliTheme.spacing24)
+                .onChange(of: appState.insightsChatHistory.count) { _, _ in insightsScrollToBottom(proxy) }
+                .onChange(of: appState.insightsChatAwaiting) { _, _ in insightsScrollToBottom(proxy) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if appState.config.insightsHintsEnabled {
+                insightsHintsRow
+                    .padding(.horizontal, MuesliTheme.spacing24)
+                    .padding(.top, MuesliTheme.spacing8)
+            }
+
+            insightsComposer
+                .padding(.horizontal, MuesliTheme.spacing24)
+                .padding(.top, MuesliTheme.spacing8)
+                .padding(.bottom, MuesliTheme.spacing16)
+        }
+        .frame(maxWidth: 900)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .animation(.easeInOut(duration: 0.15), value: appState.config.insightsHintsEnabled)
+    }
+
+    // MARK: Insights — empty state & bubbles
+
+    private var insightsEmptyState: some View {
+        VStack(spacing: MuesliTheme.spacing8) {
+            Spacer(minLength: 0)
+            Image(systemName: "sparkles")
+                .font(.system(size: 30, weight: .light))
+                .foregroundStyle(MuesliTheme.textTertiary)
+            Text(tr("Ask about your meetings", "Спроси про свои встречи"))
+                .font(MuesliTheme.title3())
+                .foregroundStyle(MuesliTheme.textPrimary)
+            Text(tr("The AI reads across all your meetings for the selected period and answers right here.", "ИИ читает все твои встречи за выбранный период и отвечает прямо здесь."))
+                .font(MuesliTheme.caption())
+                .foregroundStyle(MuesliTheme.textTertiary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 380)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: 260)
+    }
+
+    private var insightsTypingBubble: some View {
+        HStack {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.7)
+                Text(tr("Thinking…", "Печатает…"))
+                    .font(MuesliTheme.callout())
+                    .foregroundStyle(MuesliTheme.textTertiary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(MuesliTheme.backgroundBase)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+            Spacer(minLength: 40)
+        }
+    }
+
+    @ViewBuilder
+    private func insightsBubble(_ turn: MeetingChatMessage) -> some View {
+        if turn.role == .system {
+            HStack {
+                Spacer(minLength: 0)
+                Text(turn.content)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(MuesliTheme.textTertiary)
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 4)
+        } else {
+            let isUser = turn.role == .user
+            HStack {
+                if isUser { Spacer(minLength: 40) }
+                Group {
+                    if isUser || turn.isError {
+                        Text(turn.content)
+                            .font(MuesliTheme.callout())
+                            .foregroundStyle(isUser ? .white : MuesliTheme.recording)
+                    } else {
+                        ChatMarkdownText(markdown: turn.content)
+                    }
+                }
+                .textSelection(.enabled)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(isUser ? MuesliTheme.accent.opacity(0.75) : MuesliTheme.backgroundBase)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(isUser ? Color.clear : (turn.isError ? MuesliTheme.recording.opacity(0.4) : MuesliTheme.surfaceBorder), lineWidth: 1)
+                )
+                if !isUser { Spacer(minLength: 40) }
+            }
+        }
+    }
+
+    private func insightsScrollToBottom(_ proxy: ScrollViewProxy) {
+        withAnimation(.easeOut(duration: 0.2)) {
+            if appState.insightsChatAwaiting {
+                proxy.scrollTo("insights-typing", anchor: .bottom)
+            } else if let last = appState.insightsChatHistory.last {
+                proxy.scrollTo(last.id, anchor: .bottom)
+            }
+        }
+    }
+
+    // MARK: Insights — hint chips (1.2)
+
+    private var insightsHintsRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(InsightsHints.all) { hint in
                     Button {
-                        controller.generateInsights(period: insightsPeriod, folderID: appState.insightsFolderID)
+                        sendInsightsHint(hint)
                     } label: {
                         HStack(spacing: 5) {
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 11, weight: .semibold))
-                            Text(result == nil ? tr("Generate", "Собрать") : tr("Refresh", "Обновить"))
-                                .font(.system(size: 12, weight: .semibold))
+                            Image(systemName: hint.icon)
+                                .font(.system(size: 11, weight: .medium))
+                            Text(hint.label)
+                                .font(.system(size: 12, weight: .medium))
                         }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 16)
-                        .frame(height: insightsControlHeight)
-                        .background(Capsule().fill(MuesliTheme.accent))
-                        .contentShape(Capsule())
+                        .foregroundStyle(MuesliTheme.textSecondary)
+                        .padding(.horizontal, 12)
+                        .frame(height: 28)
+                        .background(Capsule().fill(MuesliTheme.backgroundBase))
+                        .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
                     }
                     .buttonStyle(.plain)
-                    .disabled(isGenerating)
                 }
+            }
+        }
+    }
 
-                if isGenerating {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text(tr("AI is reading your meetings…", "ИИ анализирует твои встречи…"))
-                            .font(MuesliTheme.callout())
-                            .foregroundStyle(MuesliTheme.textTertiary)
+    // MARK: Insights — composer (1.1)
+
+    private var insightsComposer: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            TextField(
+                tr("Ask about your meetings…", "Спроси про свои встречи…"),
+                text: $insightsDraft,
+                axis: .vertical
+            )
+            .font(MuesliTheme.callout())
+            .textFieldStyle(.plain)
+            .lineLimit(1...6)
+            .focused($insightsInputFocused)
+            .onSubmit(sendInsightsMessage)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+
+            HStack(spacing: 6) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        insightsModelPill
+                        insightsDatePill
+                        insightsFolderPill
+                        insightsHintsTogglePill
                     }
-                    .padding(.top, MuesliTheme.spacing8)
-                } else if let result {
-                    insightsResultView(result)
-                } else {
-                    insightsIntro
+                }
+                Spacer(minLength: 8)
+                insightsSendButton
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 10)
+        }
+        .background(RoundedRectangle(cornerRadius: 22).fill(MuesliTheme.backgroundBase))
+        .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+        .contentShape(Rectangle())
+        .onTapGesture { insightsInputFocused = true }
+    }
+
+    private func insightsPillLabel(icon: String, text: String, accent: Bool = false) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .medium))
+            Text(text)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundStyle(accent ? MuesliTheme.accent : MuesliTheme.textSecondary)
+        .padding(.horizontal, 10)
+        .frame(height: 27)
+        .background(Capsule().fill(accent ? MuesliTheme.accentSubtle : MuesliTheme.backgroundRaised))
+        .overlay(Capsule().strokeBorder(accent ? Color.clear : MuesliTheme.surfaceBorder, lineWidth: 1))
+    }
+
+    /// Leftmost pill: connected text models, grouped Local/Cloud. Empty
+    /// registry → accent "Model not selected", only menu item routes to
+    /// Models — never a dead dropdown or a network error on send.
+    private var insightsModelPill: some View {
+        let models = controller.configuredModels(role: .textGeneration)
+        let localModels = models.filter { $0.provider.isLocal }
+        let cloudModels = models.filter { !$0.provider.isLocal }
+        let selectedID = controller.insightsModelID()
+        let selectedModel = models.first { $0.id == selectedID }
+
+        return Menu {
+            if !localModels.isEmpty {
+                Section(tr("Local", "Локальные")) {
+                    ForEach(localModels) { model in
+                        Button {
+                            controller.setInsightsModelID(model.id)
+                        } label: {
+                            if model.id == selectedID {
+                                Label(model.displayName, systemImage: "checkmark")
+                            } else {
+                                Text(model.displayName)
+                            }
+                        }
+                    }
                 }
             }
-            .padding(.horizontal, MuesliTheme.spacing24)
-            .padding(.vertical, MuesliTheme.spacing20)
-            .frame(maxWidth: 1000, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    /// Shared height so the period tabs, folder dropdown, and action button
-    /// line up as one clean control row.
-    private var insightsControlHeight: CGFloat { 36 }
-
-    /// Period selector styled like the meeting-page template tabs: an underline
-    /// capsule with Day / Week / Month.
-    private var periodTabsBar: some View {
-        HStack(spacing: MuesliTheme.spacing16) {
-            ForEach(InsightsPeriod.allCases) { period in
-                periodTab(period)
+            if !cloudModels.isEmpty {
+                Section(tr("Cloud", "Облачные")) {
+                    ForEach(cloudModels) { model in
+                        Button {
+                            controller.setInsightsModelID(model.id)
+                        } label: {
+                            if model.id == selectedID {
+                                Label(model.displayName, systemImage: "checkmark")
+                            } else {
+                                Text(model.displayName)
+                            }
+                        }
+                    }
+                }
             }
-        }
-        .padding(.horizontal, 18)
-        .frame(height: insightsControlHeight)
-        .background(Capsule().fill(MuesliTheme.backgroundBase))
-        .clipShape(Capsule())
-        .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
-    }
-
-    private func periodTab(_ period: InsightsPeriod) -> some View {
-        let isSelected = insightsPeriod == period
-        return Button {
-            insightsPeriod = period
+            if !models.isEmpty {
+                Divider()
+            }
+            Button(tr("Manage Models…", "Управление моделями…")) {
+                appState.selectedTab = .settings
+                appState.settingsSection = .models
+            }
         } label: {
-            Text(period.title)
-                .font(.system(size: 13, weight: .regular))
-                .foregroundStyle(isSelected ? MuesliTheme.textPrimary : MuesliTheme.textSecondary)
-                .frame(maxHeight: .infinity)
-                .overlay(alignment: .bottom) {
-                    UnevenRoundedRectangle(topLeadingRadius: 2, bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: 2)
-                        .fill(isSelected ? MuesliTheme.accent : Color.clear)
-                        .frame(height: 2)
-                }
-                .contentShape(Rectangle())
+            insightsPillLabel(
+                icon: "cpu",
+                text: selectedModel?.displayName ?? tr("Model not selected", "Модель не выбрана"),
+                accent: selectedModel == nil
+            )
         }
-        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
     }
 
-    /// Folder filter dropdown, styled like the meeting header folder button.
-    private var folderDropdown: some View {
+    private var insightsDatePill: some View {
+        Menu {
+            ForEach([InsightsDateRange.allTime, .today, .week, .month], id: \.self) { range in
+                Button {
+                    selectInsightsDateRange(range)
+                } label: {
+                    if appState.insightsDateRange == range {
+                        Label(range.title, systemImage: "checkmark")
+                    } else {
+                        Text(range.title)
+                    }
+                }
+            }
+            Divider()
+            Button(tr("Specific date…", "Конкретная дата…")) {
+                showInsightsDatePopover = true
+            }
+        } label: {
+            insightsPillLabel(icon: "calendar", text: appState.insightsDateRange.title)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .popover(isPresented: $showInsightsDatePopover, arrowEdge: .top) {
+            VStack(spacing: 12) {
+                DatePicker("", selection: $insightsCustomDate, displayedComponents: .date)
+                    .datePickerStyle(.graphical)
+                    .labelsHidden()
+                Button(tr("Apply", "Применить")) {
+                    selectInsightsDateRange(.specificDay(insightsCustomDate))
+                    showInsightsDatePopover = false
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+                .background(MuesliTheme.accent)
+                .clipShape(Capsule())
+            }
+            .padding(16)
+        }
+    }
+
+    /// Folder filter — same pattern as the meeting header folder button.
+    private var insightsFolderPill: some View {
         let currentName = appState.insightsFolderID.flatMap { id in
             appState.folders.first(where: { $0.id == id })?.name
         }
         return Menu {
             Button {
-                appState.insightsFolderID = nil
+                selectInsightsFolder(nil)
             } label: {
                 if appState.insightsFolderID == nil {
                     Label(tr("All folders", "Все папки"), systemImage: "checkmark")
@@ -227,7 +459,7 @@ struct HomeView: View {
                 Divider()
                 ForEach(appState.folders) { folder in
                     Button {
-                        appState.insightsFolderID = folder.id
+                        selectInsightsFolder(folder.id)
                     } label: {
                         if appState.insightsFolderID == folder.id {
                             Label(folder.name, systemImage: "checkmark")
@@ -238,91 +470,87 @@ struct HomeView: View {
                 }
             }
         } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "folder")
-                    .font(.system(size: 11, weight: .medium))
-                Text(currentName ?? tr("All folders", "Все папки"))
-                    .font(.system(size: 12, weight: .regular))
-                    .lineLimit(1)
-                    .frame(maxWidth: 140)
-                    .fixedSize(horizontal: true, vertical: false)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-            }
-            .foregroundStyle(MuesliTheme.textSecondary)
+            insightsPillLabel(icon: "folder", text: currentName ?? tr("All folders", "Все папки"))
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .padding(.horizontal, 16)
-        .frame(height: insightsControlHeight)
-        .background(Capsule().fill(MuesliTheme.backgroundBase))
-        .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
-        .contentShape(Capsule())
     }
 
-    @ViewBuilder
-    private func insightsResultView(_ result: InsightsResult) -> some View {
-        if let error = result.errorMessage {
-            insightsMessage(icon: "exclamationmark.triangle.fill", color: MuesliTheme.recording, text: error)
-        } else if result.isEmptyPeriod {
-            insightsMessage(icon: "calendar", color: MuesliTheme.textTertiary, text: tr("No meetings in this period yet.", "За этот период встреч пока нет."))
-        } else {
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 11), GridItem(.flexible(), spacing: 11)], spacing: 11) {
-                ForEach(result.blocks) { block in
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(spacing: 8) {
-                            Image(systemName: block.icon)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .frame(width: 26, height: 26)
-                                .background(RoundedRectangle(cornerRadius: 8).fill(block.color))
-                            Text(block.title)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(MuesliTheme.textPrimary)
-                        }
-                        ChatMarkdownText(markdown: block.markdown)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .padding(MuesliTheme.spacing16)
-                    .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).fill(MuesliTheme.backgroundBase))
-                    .overlay(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
-                }
+    private var insightsHintsTogglePill: some View {
+        let enabled = appState.config.insightsHintsEnabled
+        return Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                controller.updateConfig { $0.insightsHintsEnabled.toggle() }
             }
+        } label: {
+            Image(systemName: "lightbulb")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(enabled ? MuesliTheme.accent : MuesliTheme.textSecondary)
+                .frame(width: 27, height: 27)
+                .background(Circle().fill(enabled ? MuesliTheme.accentSubtle : MuesliTheme.backgroundRaised))
+                .overlay(Circle().strokeBorder(enabled ? Color.clear : MuesliTheme.surfaceBorder, lineWidth: 1))
         }
+        .buttonStyle(.plain)
+        .help(tr("Quick prompts", "Быстрые подсказки"))
     }
 
-    private var insightsIntro: some View {
-        VStack(spacing: MuesliTheme.spacing8) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 28, weight: .light))
-                .foregroundStyle(Color(hex: 0x5856D6))
-            Text(tr("Your meeting briefing", "Сводка по встречам"))
-                .font(MuesliTheme.headline())
-                .foregroundStyle(MuesliTheme.textSecondary)
-            Text(tr("Pick a period and hit Generate — AI gathers your digest, action items, decisions, and open questions in one pass.", "Выбери период и нажми «Собрать» — ИИ соберёт дайджест, задачи, решения и незакрытые вопросы за один проход."))
-                .font(MuesliTheme.caption())
-                .foregroundStyle(MuesliTheme.textTertiary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 420)
+    private var insightsSendButton: some View {
+        let canSend = !insightsDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !appState.insightsChatAwaiting
+            && controller.insightsModelID() != nil
+        return Button {
+            sendInsightsMessage()
+        } label: {
+            Image(systemName: "arrow.up")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(canSend ? Color.white : MuesliTheme.textTertiary)
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(canSend ? MuesliTheme.accent : MuesliTheme.backgroundRaised))
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, MuesliTheme.spacing24)
+        .buttonStyle(.plain)
+        .disabled(!canSend)
+        .help(tr("Send", "Отправить"))
     }
 
-    private func insightsMessage(icon: String, color: Color, text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(color)
-            Text(text)
-                .font(MuesliTheme.callout())
-                .foregroundStyle(MuesliTheme.textSecondary)
-            Spacer(minLength: 0)
-        }
-        .padding(MuesliTheme.spacing16)
-        .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).fill(MuesliTheme.backgroundBase))
-        .overlay(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+    // MARK: Insights — actions
+
+    private func sendInsightsMessage() {
+        let text = insightsDraft
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !appState.insightsChatAwaiting else { return }
+        insightsDraft = ""
+        controller.sendInsightsMessage(text)
+    }
+
+    private func sendInsightsHint(_ hint: InsightsHint) {
+        guard !appState.insightsChatAwaiting else { return }
+        controller.sendInsightsMessage(hint.prompt)
+    }
+
+    private func selectInsightsDateRange(_ range: InsightsDateRange) {
+        guard range != appState.insightsDateRange else { return }
+        appState.insightsDateRange = range
+        insertInsightsContextDivider()
+    }
+
+    private func selectInsightsFolder(_ id: Int64?) {
+        guard id != appState.insightsFolderID else { return }
+        appState.insightsFolderID = id
+        insertInsightsContextDivider()
+    }
+
+    /// Marks the point in the transcript where the material a reply is
+    /// grounded in changed, so a re-read of the chat shows what was in scope.
+    private func insertInsightsContextDivider() {
+        guard !appState.insightsChatHistory.isEmpty else { return }
+        let folderName = appState.insightsFolderID.flatMap { id in
+            appState.folders.first(where: { $0.id == id })?.name
+        } ?? tr("All folders", "Все папки")
+        let text = tr(
+            "Period: \(appState.insightsDateRange.title) · Folder: \(folderName)",
+            "Период: \(appState.insightsDateRange.title) · Папка: \(folderName)"
+        )
+        appState.insightsChatHistory.append(MeetingChatMessage(role: .system, content: text))
     }
 
     @ViewBuilder
@@ -641,7 +869,7 @@ struct HomeView: View {
     }
 
     private var compactFeatures: [IdentifiedView] {
-        [
+        let cards: [IdentifiedView] = [
             IdentifiedView(FeatureCard(
                 accent: Color(hex: 0xAF52DE),
                 icon: "square.text.square.fill",
@@ -691,18 +919,6 @@ struct HomeView: View {
                 compact: true
             )),
             IdentifiedView(FeatureCard(
-                accent: Color(hex: 0x34AADC),
-                icon: "iphone",
-                title: tr("iPhone bridge", "iPhone-мост"),
-                subtitle: tr("Dictate on iPhone — it lands on your Mac.", "Диктуй на iPhone — записи прилетают на Mac."),
-                actions: [
-                    FeatureAction(label: bridgeButtonTitle, isPrimary: true) {
-                        bridgePrimaryAction()
-                    }
-                ],
-                compact: true
-            )),
-            IdentifiedView(FeatureCard(
                 accent: Color(hex: 0x8E8E93),
                 icon: "lock.fill",
                 title: tr("Private by design", "Приватность"),
@@ -711,6 +927,9 @@ struct HomeView: View {
                 compact: true
             )),
         ]
+        // TODO(sync): re-enable when the iPhone app ships — see SettingsView.sectionListPane,
+        // where the Sync settings section is hidden the same way.
+        return cards
     }
 
     // MARK: - iPhone bridge (moved from the Dictations page)

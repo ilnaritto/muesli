@@ -69,7 +69,7 @@ struct FeatureCard: View {
     }
 
     private var illustration: some View {
-        PulsingIcon(
+        FeatureIcon(
             icon: icon,
             accent: accent,
             tileSize: compact ? 40 : 48,
@@ -103,17 +103,14 @@ struct FeatureCard: View {
     }
 }
 
-/// SF Symbol on an accent tile that gently pulses forever — a lightweight
-/// stand-in for looping illustrations (works on all supported macOS versions).
-private struct PulsingIcon: View {
+/// SF Symbol on an accent tile — static illustration for feature cards.
+private struct FeatureIcon: View {
     let icon: String
     let accent: Color
     /// nil → no tile, just the glyph (used inside the large gradient panel).
     let tileSize: CGFloat?
     let iconSize: CGFloat
     let corner: CGFloat
-
-    @State private var pulse = false
 
     var body: some View {
         Group {
@@ -132,8 +129,5 @@ private struct PulsingIcon: View {
                     .foregroundStyle(accent)
             }
         }
-        .scaleEffect(pulse ? 1.06 : 0.97)
-        .animation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true), value: pulse)
-        .onAppear { pulse = true }
     }
 }

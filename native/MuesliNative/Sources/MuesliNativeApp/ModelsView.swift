@@ -1,10 +1,45 @@
 import SwiftUI
 import MuesliCore
 
+/// Role-based tabs on the Models screen (task 8.2.1). Speech and Cleanup
+/// wrap the existing download UI (untouched — the download/state-tracking
+/// logic there already works); Text is the new registry-backed multi-model
+/// list; Catalog surfaces anything not yet downloaded/connected.
+enum ModelsTab: String, CaseIterable, Identifiable {
+    case speech
+    case text
+    case cleanup
+    case catalog
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .speech: return tr("Speech", "Распознавание")
+        case .text: return tr("Text", "Текстовые")
+        case .cleanup: return tr("Cleanup", "Очистка")
+        case .catalog: return tr("Catalog", "Каталог")
+        }
+    }
+
+    /// nil for Catalog — "Add Model" opens with a role picker instead of a
+    /// preselected one.
+    var matchingModelRole: ModelRole? {
+        switch self {
+        case .speech: return .transcription
+        case .text: return .textGeneration
+        case .cleanup: return .cleanup
+        case .catalog: return nil
+        }
+    }
+}
+
 struct ModelsView: View {
     let appState: AppState
     let controller: MuesliController
 
+    @State private var selectedTab: ModelsTab = .speech
+    @State private var showAddModelSheet = false
     @State private var nemotron35UpdateAvailable = false
     @State private var downloadingModels: Set<String> = []
     @State private var downloadProgress: [String: Double] = [:]
@@ -55,53 +90,24 @@ struct ModelsView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                familyCard(
-                    title: tr("Parakeet Family", "Семейство Parakeet"),
-                    subtitle: tr("NVIDIA speech models for fast everyday dictation.", "Речевые модели NVIDIA для быстрой повседневной диктовки."),
-                    defaultBadge: tr("Default: v3", "По умолчанию: v3"),
-                    logo: "nvidia-logo",
-                    selection: $selectedParakeetModel,
-                    options: BackendOption.parakeetFamily
-                )
+                modelsTabBar
 
-                familyCard(
-                    title: "Whisper",
-                    subtitle: tr("OpenAI Whisper variants. Runs on Apple Neural Engine via CoreML.", "Варианты OpenAI Whisper. Работают на Apple Neural Engine через CoreML."),
-                    defaultBadge: tr("Default: Small", "По умолчанию: Small"),
-                    logo: "openai-logo",
-                    selection: $selectedWhisperModel,
-                    options: BackendOption.whisperFamily
-                )
-
-                modelCard(option: .cohereTranscribe, logo: "cohere-logo")
-
-                modelCard(option: .nemotron35Multilingual, logo: "nvidia-logo")
-
-                experimentalSection
-
-                postProcessorSection
-
-                localSummarySection
-
-                if !BackendOption.comingSoon.isEmpty {
-                    VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-                        Text(tr("COMING SOON", "СКОРО"))
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(MuesliTheme.textTertiary)
-                            .textCase(.uppercase)
-                            .padding(.leading, 2)
-                            .padding(.top, MuesliTheme.spacing8)
-
-                        VStack(spacing: MuesliTheme.spacing12) {
-                            ForEach(BackendOption.comingSoon, id: \.model) { option in
-                                comingSoonCard(option: option)
-                            }
-                        }
-                    }
+                switch selectedTab {
+                case .speech:
+                    speechTabContent
+                case .text:
+                    textModelsTabContent
+                case .cleanup:
+                    postProcessorSection
+                case .catalog:
+                    catalogTabContent
                 }
             }
             .padding(MuesliTheme.spacing32)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .sheet(isPresented: $showAddModelSheet) {
+            AddModelSheet(controller: controller, initialRole: selectedTab.matchingModelRole ?? .textGeneration)
         }
         .onAppear {
             checkDownloadedModels()
@@ -167,6 +173,219 @@ struct ModelsView: View {
         } message: {
             Text(tr("The downloaded model files will be removed from this Mac. You can download the model again later.", "Файлы скачанной модели будут удалены с этого Mac. Позже модель можно скачать снова."))
         }
+    }
+
+    // MARK: - Role tabs (task 8.2.1)
+
+    private var modelsTabBar: some View {
+        CapsuleTabBarContainer {
+            ForEach(ModelsTab.allCases) { tab in
+                CapsuleTab(title: tab.title, isSelected: selectedTab == tab) {
+                    selectedTab = tab
+                }
+            }
+        } trailingAccessory: {
+            Button {
+                showAddModelSheet = true
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, MuesliTheme.spacing8)
+            .help(tr("Add model…", "Добавить модель…"))
+        }
+    }
+
+    @ViewBuilder
+    private var speechTabContent: some View {
+        familyCard(
+            title: tr("Parakeet Family", "Семейство Parakeet"),
+            subtitle: tr("NVIDIA speech models for fast everyday dictation.", "Речевые модели NVIDIA для быстрой повседневной диктовки."),
+            defaultBadge: tr("Default: v3", "По умолчанию: v3"),
+            logo: "nvidia-logo",
+            selection: $selectedParakeetModel,
+            options: BackendOption.parakeetFamily
+        )
+
+        familyCard(
+            title: "Whisper",
+            subtitle: tr("OpenAI Whisper variants. Runs on Apple Neural Engine via CoreML.", "Варианты OpenAI Whisper. Работают на Apple Neural Engine через CoreML."),
+            defaultBadge: tr("Default: Small", "По умолчанию: Small"),
+            logo: "openai-logo",
+            selection: $selectedWhisperModel,
+            options: BackendOption.whisperFamily
+        )
+
+        modelCard(option: .cohereTranscribe, logo: "cohere-logo")
+        modelCard(option: .nemotron35Multilingual, logo: "nvidia-logo")
+        experimentalSection
+    }
+
+    @ViewBuilder
+    private var catalogTabContent: some View {
+        if BackendOption.comingSoon.isEmpty {
+            Text(tr("Nothing new to download right now — check back later.", "Пока нечего скачивать — загляните позже."))
+                .font(MuesliTheme.callout())
+                .foregroundStyle(MuesliTheme.textTertiary)
+                .padding(.top, MuesliTheme.spacing8)
+        } else {
+            VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+                Text(tr("COMING SOON", "СКОРО"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(MuesliTheme.textTertiary)
+                    .textCase(.uppercase)
+                    .padding(.leading, 2)
+
+                VStack(spacing: MuesliTheme.spacing12) {
+                    ForEach(BackendOption.comingSoon, id: \.model) { option in
+                        comingSoonCard(option: option)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Text models tab (the registry's real multi-model role)
+
+    @ViewBuilder
+    private var textModelsTabContent: some View {
+        VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
+            let models = controller.allConfiguredModels(role: .textGeneration)
+            let defaultID = controller.defaultConfiguredModelID(role: .textGeneration)
+
+            if models.isEmpty {
+                emptyTextModelsCard
+            } else {
+                VStack(spacing: MuesliTheme.spacing12) {
+                    ForEach(models) { model in
+                        textModelCard(model, isDefault: model.id == defaultID)
+                    }
+                }
+            }
+        }
+
+        localSummarySection
+    }
+
+    private var emptyTextModelsCard: some View {
+        VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+            Text(tr("No text model connected", "Нет подключённой текстовой модели"))
+                .font(MuesliTheme.headline())
+                .foregroundStyle(MuesliTheme.textPrimary)
+            Text(tr("Connect ChatGPT, an API key, or your own endpoint to generate meeting summaries and use the chat features.", "Подключите ChatGPT, API-ключ или свой эндпоинт, чтобы генерировать сводки встреч и пользоваться чатами."))
+                .font(MuesliTheme.callout())
+                .foregroundStyle(MuesliTheme.textSecondary)
+            Button(tr("Add model…", "Добавить модель…")) {
+                showAddModelSheet = true
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, MuesliTheme.spacing12)
+            .padding(.vertical, 6)
+            .background(MuesliTheme.accent)
+            .clipShape(Capsule())
+            .padding(.top, 2)
+        }
+        .padding(MuesliTheme.spacing16)
+        .background(MuesliTheme.backgroundRaised)
+        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
+        .overlay(
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
+                .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+        )
+    }
+
+    private func textModelCard(_ model: ConfiguredModel, isDefault: Bool) -> some View {
+        VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+            HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
+                Image(systemName: model.provider == .chatGPTOAuth ? "sparkles" : "cpu")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(MuesliTheme.accent)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(MuesliTheme.accentSubtle))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 8) {
+                        Text(model.displayName)
+                            .font(MuesliTheme.headline())
+                            .foregroundStyle(MuesliTheme.textPrimary)
+                        Text(model.provider.isLocal ? tr("Local", "Локальная") : tr("Cloud", "Облачная"))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(MuesliTheme.textTertiary)
+                    }
+                    Text(model.modelID.isEmpty ? model.provider.title : model.modelID)
+                        .font(MuesliTheme.caption())
+                        .foregroundStyle(MuesliTheme.textSecondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                if isDefault {
+                    Text(tr("Active", "Активна"))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(MuesliTheme.success)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(MuesliTheme.success.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                } else if !model.isEnabled {
+                    Text(tr("Disabled", "Отключена"))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(MuesliTheme.surfacePrimary)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+            }
+
+            HStack(spacing: MuesliTheme.spacing8) {
+                if !isDefault, model.isEnabled {
+                    modelsTabActionButton(tr("Make default", "Сделать основной"), accent: true) {
+                        controller.setDefaultConfiguredModel(id: model.id, role: .textGeneration)
+                    }
+                }
+                if model.provider != .bundledLocal, model.provider != .localGGUF {
+                    modelsTabActionButton(model.isEnabled ? tr("Disable", "Отключить") : tr("Enable", "Включить")) {
+                        controller.setConfiguredModelEnabled(id: model.id, enabled: !model.isEnabled)
+                    }
+                    Button {
+                        controller.removeConfiguredModel(id: model.id)
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.red.opacity(0.6))
+                            .frame(width: 20, height: 20)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(MuesliTheme.spacing16)
+        .background(MuesliTheme.backgroundRaised)
+        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
+        .overlay(
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
+                .strokeBorder(isDefault ? MuesliTheme.accent.opacity(0.5) : MuesliTheme.surfaceBorder, lineWidth: isDefault ? 1.5 : 1)
+        )
+        .opacity(model.isEnabled ? 1 : 0.6)
+    }
+
+    private func modelsTabActionButton(_ title: String, accent: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .buttonStyle(.plain)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(accent ? MuesliTheme.accent : MuesliTheme.textSecondary)
+            .padding(.horizontal, MuesliTheme.spacing12)
+            .padding(.vertical, 4)
+            .background(accent ? MuesliTheme.accentSubtle : MuesliTheme.surfacePrimary)
+            .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
     }
 
     // MARK: - Local summarization model (on-device meeting notes)
