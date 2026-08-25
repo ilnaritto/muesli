@@ -3,8 +3,22 @@ import Foundation
 import MuesliCore
 @testable import MuesliNativeApp
 
-@Suite("ModelRegistry")
+// Serialized: the suite shares one ModelSecretsStore file via
+// fileURLOverride; parallel save/delete through a single JSON file would
+// clobber each other (writeAll is read-all-then-replace).
+@Suite("ModelRegistry", .serialized)
 struct ModelRegistryTests {
+    /// One process-wide temp file for the whole suite, installed once and
+    /// never cleared: per-instance deinit cleanup is unordered relative to
+    /// the next test's init, so clearing there re-exposed the real path.
+    private static let installSecretsOverride: Void = {
+        ModelSecretsStore.fileURLOverride = FileManager.default.temporaryDirectory
+            .appendingPathComponent("muesli-tests-model-secrets-\(UUID().uuidString).json")
+    }()
+
+    init() {
+        _ = Self.installSecretsOverride
+    }
 
     @Test("resolvedForTextGeneration leaves config untouched with no default model")
     func noDefaultModelLeavesConfigUntouched() {
@@ -159,31 +173,35 @@ struct ModelRegistryTests {
 
 @Suite("ModelSecretsStore")
 struct ModelSecretsStoreTests {
+    /// Per-test temp file: keeps these tests off the shared override file
+    /// (used by the serialized ModelRegistry suite) and off the real path.
+    private let storeURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("muesli-tests-secrets-\(UUID().uuidString).json")
 
     @Test("save then read round-trips the secret")
     func saveThenReadRoundTrips() {
-        let ref = ModelSecretsStore.save("super-secret-key")
-        defer { ModelSecretsStore.delete(ref: ref) }
+        let ref = ModelSecretsStore.save("super-secret-key", in: storeURL)
+        defer { ModelSecretsStore.delete(ref: ref, in: storeURL) }
 
-        #expect(ModelSecretsStore.read(ref: ref) == "super-secret-key")
+        #expect(ModelSecretsStore.read(ref: ref, in: storeURL) == "super-secret-key")
     }
 
     @Test("update overwrites the secret at an existing reference")
     func updateOverwrites() {
-        let ref = ModelSecretsStore.save("old-key")
-        defer { ModelSecretsStore.delete(ref: ref) }
+        let ref = ModelSecretsStore.save("old-key", in: storeURL)
+        defer { ModelSecretsStore.delete(ref: ref, in: storeURL) }
 
-        ModelSecretsStore.update(ref: ref, secret: "new-key")
+        ModelSecretsStore.update(ref: ref, secret: "new-key", in: storeURL)
 
-        #expect(ModelSecretsStore.read(ref: ref) == "new-key")
+        #expect(ModelSecretsStore.read(ref: ref, in: storeURL) == "new-key")
     }
 
     @Test("delete removes the secret")
     func deleteRemoves() {
-        let ref = ModelSecretsStore.save("to-be-deleted")
-        ModelSecretsStore.delete(ref: ref)
+        let ref = ModelSecretsStore.save("to-be-deleted", in: storeURL)
+        ModelSecretsStore.delete(ref: ref, in: storeURL)
 
-        #expect(ModelSecretsStore.read(ref: ref) == nil)
+        #expect(ModelSecretsStore.read(ref: ref, in: storeURL) == nil)
     }
 
     @Test("read returns nil for a reference that was never saved")

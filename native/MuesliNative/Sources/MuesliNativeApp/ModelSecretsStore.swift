@@ -14,11 +14,16 @@ import MuesliCore
 /// on whether the model registry should use real Keychain instead is still
 /// open — do not change this without checking first.
 enum ModelSecretsStore {
+    /// Tests only: redirects the store to a temp file so test runs never
+    /// touch the real app-support directory (or race each other through it).
+    /// Production code must never set this.
+    nonisolated(unsafe) static var fileURLOverride: URL?
+
     private static var fileURL: URL {
-        AppIdentity.supportDirectoryURL.appendingPathComponent("model-secrets.json")
+        fileURLOverride ?? AppIdentity.supportDirectoryURL.appendingPathComponent("model-secrets.json")
     }
 
-    private static func readAll() -> [String: String] {
+    private static func readAll(at fileURL: URL) -> [String: String] {
         guard let data = try? Data(contentsOf: fileURL),
               let dict = try? JSONDecoder().decode([String: String].self, from: data) else {
             return [:]
@@ -26,7 +31,7 @@ enum ModelSecretsStore {
         return dict
     }
 
-    private static func writeAll(_ dict: [String: String]) {
+    private static func writeAll(_ dict: [String: String], at fileURL: URL) {
         do {
             let dir = fileURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -44,30 +49,33 @@ enum ModelSecretsStore {
 
     /// Stores `secret` under a freshly generated reference and returns it.
     @discardableResult
-    static func save(_ secret: String) -> String {
-        var all = readAll()
+    static func save(_ secret: String, in explicitFileURL: URL? = nil) -> String {
+        let url = explicitFileURL ?? fileURL
+        var all = readAll(at: url)
         let ref = UUID().uuidString
         all[ref] = secret
-        writeAll(all)
+        writeAll(all, at: url)
         return ref
     }
 
     /// Overwrites the secret at an existing reference (editing a model).
-    static func update(ref: String, secret: String) {
-        var all = readAll()
+    static func update(ref: String, secret: String, in explicitFileURL: URL? = nil) {
+        let url = explicitFileURL ?? fileURL
+        var all = readAll(at: url)
         all[ref] = secret
-        writeAll(all)
+        writeAll(all, at: url)
     }
 
-    static func read(ref: String?) -> String? {
+    static func read(ref: String?, in explicitFileURL: URL? = nil) -> String? {
         guard let ref else { return nil }
-        return readAll()[ref]
+        return readAll(at: explicitFileURL ?? fileURL)[ref]
     }
 
-    static func delete(ref: String?) {
+    static func delete(ref: String?, in explicitFileURL: URL? = nil) {
         guard let ref else { return }
-        var all = readAll()
+        let url = explicitFileURL ?? fileURL
+        var all = readAll(at: url)
         all.removeValue(forKey: ref)
-        writeAll(all)
+        writeAll(all, at: url)
     }
 }
