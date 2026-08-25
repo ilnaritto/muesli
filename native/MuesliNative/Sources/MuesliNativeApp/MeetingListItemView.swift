@@ -55,82 +55,14 @@ struct MeetingListItemView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: isCompact ? 4 : MuesliTheme.spacing8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(record.title)
-                    .font(isCompact ? .system(size: 13, weight: .medium) : MuesliTheme.headline())
-                    .foregroundStyle(MuesliTheme.textPrimary)
-                    .lineLimit(isCompact ? 1 : 2)
-
-                Spacer(minLength: 4)
-
-                if isCompact {
-                    HStack(spacing: MuesliTheme.spacing4) {
-                        if record.status != .completed {
-                            statusBadge
-                        }
-                        Text(formatDurationShort())
-                            .font(MuesliTheme.caption())
-                            .foregroundStyle(isSelected ? MuesliTheme.textSecondary : MuesliTheme.textTertiary)
-                            .lineLimit(1)
-                    }
-                } else {
-                    HStack(spacing: 6) {
-                        if !folders.isEmpty {
-                            folderMenuButton
-                        }
-                        if onDelete != nil {
-                            deleteButton
-                        }
-                    }
-                }
-            }
-
-            if !isCompact {
-                HStack(spacing: MuesliTheme.spacing4) {
-                    if record.status != .completed {
-                        statusBadge
-                        Text("\u{2022}")
-                            .font(MuesliTheme.caption())
-                            .foregroundStyle(MuesliTheme.textTertiary)
-                    }
-                    Text(formatMeta())
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textSecondary)
-
-                    if let sourceIndicator = sourceIndicator {
-                        sourceIndicator
-                    }
-
-                    // Current folder badge
-                    if let name = currentFolderName {
-                        Text("\u{2022}")
-                            .font(MuesliTheme.caption())
-                            .foregroundStyle(MuesliTheme.textTertiary)
-                        HStack(spacing: 2) {
-                            Image(systemName: "folder")
-                                .font(.system(size: 9))
-                            Text(name)
-                                .font(MuesliTheme.caption())
-                        }
-                        .foregroundStyle(MuesliTheme.accent.opacity(0.8))
-                    }
-                }
-            }
-
+        Group {
             if isCompact {
-                // A fixed two-line preview area keeps every row the same height.
-                Text(previewText())
-                    .font(MuesliTheme.caption())
-                    .foregroundStyle(isSelected ? MuesliTheme.textSecondary : MuesliTheme.textTertiary)
-                    .lineLimit(2)
-                    .frame(height: 30, alignment: .topLeading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(alignment: .top, spacing: 10) {
+                    mediaKindTile
+                    mainContent
+                }
             } else {
-                Text(previewText())
-                    .font(MuesliTheme.caption())
-                    .foregroundStyle(MuesliTheme.textTertiary)
-                    .lineLimit(2)
+                mainContent
             }
         }
         .padding(isCompact ? MuesliTheme.spacing12 : MuesliTheme.spacing16)
@@ -220,6 +152,102 @@ struct MeetingListItemView: View {
             Button(tr("Cancel", "Отмена"), role: .cancel) {}
         } message: {
             Text(tr("Are you sure you want to delete this meeting? Saved notes, transcript, and any retained recording will be removed.", "Удалить эту встречу? Сохранённые заметки, транскрипт и оставленная запись будут удалены."))
+        }
+    }
+
+    /// 32×32 circular tile showing the recording type — Telegram-style avatar
+    /// slot. Compact rows only; the wide row has no room reserved for it.
+    private var mediaKindTile: some View {
+        let kind = MeetingMediaKind.resolve(record)
+        return ZStack {
+            Circle().fill(MuesliTheme.accentSubtle)
+            Image(systemName: kind.symbol)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(MuesliTheme.accent)
+        }
+        .frame(width: 32, height: 32)
+        .help(kind.help)
+    }
+
+    @ViewBuilder
+    private var mainContent: some View {
+        VStack(alignment: .leading, spacing: isCompact ? 4 : MuesliTheme.spacing8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(record.title)
+                    .font(isCompact ? .system(size: 13, weight: .medium) : MuesliTheme.headline())
+                    .foregroundStyle(MuesliTheme.textPrimary)
+                    .lineLimit(isCompact ? 1 : 2)
+
+                Spacer(minLength: 4)
+
+                if isCompact {
+                    HStack(spacing: MuesliTheme.spacing4) {
+                        if record.status != .completed {
+                            statusBadge
+                        }
+                        Text(formatDurationShort())
+                            .font(MuesliTheme.caption())
+                            .foregroundStyle(isSelected ? MuesliTheme.textSecondary : MuesliTheme.textTertiary)
+                            .lineLimit(1)
+                    }
+                } else {
+                    HStack(spacing: 6) {
+                        if !folders.isEmpty {
+                            folderMenuButton
+                        }
+                        if onDelete != nil {
+                            deleteButton
+                        }
+                    }
+                }
+            }
+
+            if !isCompact {
+                HStack(spacing: MuesliTheme.spacing4) {
+                    if record.status != .completed {
+                        statusBadge
+                        Text("\u{2022}")
+                            .font(MuesliTheme.caption())
+                            .foregroundStyle(MuesliTheme.textTertiary)
+                    }
+                    Text(formatMeta())
+                        .font(MuesliTheme.caption())
+                        .foregroundStyle(MuesliTheme.textSecondary)
+
+                    if let sourceIndicator = sourceIndicator {
+                        sourceIndicator
+                    }
+
+                    // Current folder badge
+                    if let name = currentFolderName {
+                        Text("\u{2022}")
+                            .font(MuesliTheme.caption())
+                            .foregroundStyle(MuesliTheme.textTertiary)
+                        HStack(spacing: 2) {
+                            Image(systemName: "folder")
+                                .font(.system(size: 9))
+                            Text(name)
+                                .font(MuesliTheme.caption())
+                        }
+                        .foregroundStyle(MuesliTheme.accent.opacity(0.8))
+                    }
+                }
+            }
+
+            if isCompact {
+                // A fixed two-line preview area keeps every row the same height.
+                Text(previewText())
+                    .font(MuesliTheme.caption())
+                    .foregroundStyle(isSelected ? MuesliTheme.textSecondary : MuesliTheme.textTertiary)
+                    .lineLimit(2)
+                    .frame(height: 30, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(previewText())
+                    .font(MuesliTheme.caption())
+                    .foregroundStyle(MuesliTheme.textTertiary)
+                    .lineLimit(2)
+            }
         }
     }
 

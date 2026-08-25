@@ -108,6 +108,7 @@ struct ShortcutsView: View {
                     }
                 ))
                 .toggleStyle(.switch)
+                .controlSize(.small)
                 .tint(MuesliTheme.accent)
                 .labelsHidden()
             }
@@ -159,6 +160,7 @@ struct ShortcutsView: View {
                     }
                 ))
                 .toggleStyle(.switch)
+                .controlSize(.small)
                 .tint(MuesliTheme.accent)
                 .labelsHidden()
             }
@@ -329,6 +331,7 @@ struct ShortcutsView: View {
                     }
                 ))
                 .toggleStyle(.switch)
+                .controlSize(.small)
                 .tint(MuesliTheme.accent)
                 .labelsHidden()
             }

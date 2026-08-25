@@ -135,10 +135,12 @@ final class AppState {
     var overviewAnalytics: OverviewAnalytics?
     var overviewAnalyticsLoading = false
 
-    /// AI Insights results, cached per period for the session; generated on demand.
-    var meetingInsights: [InsightsPeriod: InsightsResult] = [:]
-    var insightsGenerating: Set<InsightsPeriod> = []
-    /// Folder filter for the Insights page (nil = all folders).
+    /// Insights chat (task 1) — session-only, like the per-meeting chats below.
+    var insightsChatHistory: [MeetingChatMessage] = []
+    var insightsChatAwaiting: Bool = false
+    /// Insights composer filters (session-only — the model pill and hints
+    /// toggle persist in AppConfig instead, see insightsModelID/insightsHintsEnabled).
+    var insightsDateRange: InsightsDateRange = .default
     var insightsFolderID: Int64? = nil
 
     /// In-memory AI chat conversations per meeting (not persisted to disk):

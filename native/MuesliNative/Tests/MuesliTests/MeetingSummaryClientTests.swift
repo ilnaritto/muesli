@@ -535,38 +535,31 @@ struct MeetingSummaryClientTests {
         config.meetingSummaryBackend = "openai"
 
         let title = await MeetingSummaryClient.generateTitle(
-            transcript: "We discussed the quarterly review",
+            source: "We discussed the quarterly review",
             config: config
         )
 
         #expect(title == nil)
     }
 
-    @Test("title excerpt samples opening middle and closing transcript")
-    func titleExcerptSamplesMeetingBreadth() {
-        let transcript = [
-            String(repeating: "opening setup ", count: 80),
-            String(repeating: "middle product strategy ", count: 80),
-            String(repeating: "closing storage roadmap ", count: 80),
-        ].joined(separator: "\n\n")
+    @Test("title source excerpt truncates a long summary to the max length")
+    func titleSourceExcerptTruncatesLongSummary() {
+        let summary = String(repeating: "product strategy roadmap ", count: 400)
+        #expect(summary.count > 4000)
 
-        let excerpt = MeetingSummaryClient.titleTranscriptExcerpt(from: transcript, segmentLength: 120)
+        let excerpt = MeetingSummaryClient.titleSourceExcerpt(from: summary, maxLength: 4000)
 
-        #expect(excerpt.contains("Opening excerpt:"))
-        #expect(excerpt.contains("Middle excerpt:"))
-        #expect(excerpt.contains("Closing excerpt:"))
-        #expect(excerpt.contains("opening setup"))
-        #expect(excerpt.contains("middle product strategy"))
-        #expect(excerpt.contains("closing storage roadmap"))
+        #expect(excerpt.count <= 4000)
+        #expect(summary.hasPrefix(excerpt))
     }
 
-    @Test("short title excerpt keeps full transcript")
-    func shortTitleExcerptKeepsFullTranscript() {
-        let transcript = "Short discussion about customer onboarding"
+    @Test("short title source excerpt keeps the full summary")
+    func shortTitleSourceExcerptKeepsFullSummary() {
+        let summary = "## Meeting Summary\nShort discussion about customer onboarding"
 
-        let excerpt = MeetingSummaryClient.titleTranscriptExcerpt(from: transcript, segmentLength: 120)
+        let excerpt = MeetingSummaryClient.titleSourceExcerpt(from: summary, maxLength: 4000)
 
-        #expect(excerpt == transcript)
+        #expect(excerpt == summary)
     }
 
     @Test("generateTitle returns nil for OpenRouter without key")
@@ -576,7 +569,7 @@ struct MeetingSummaryClientTests {
         config.meetingSummaryBackend = "openrouter"
 
         let title = await MeetingSummaryClient.generateTitle(
-            transcript: "Sprint planning discussion",
+            source: "Sprint planning discussion",
             config: config
         )
 
@@ -627,7 +620,7 @@ struct MeetingSummaryClientTests {
         config.ollamaURL = "http://localhost:1"
 
         let title = await MeetingSummaryClient.generateTitle(
-            transcript: "Sprint planning discussion",
+            source: "Sprint planning discussion",
             config: config
         )
 
@@ -641,7 +634,7 @@ struct MeetingSummaryClientTests {
         config.ollamaURL = "not a valid url"
 
         let title = await MeetingSummaryClient.generateTitle(
-            transcript: "Sprint planning discussion",
+            source: "Sprint planning discussion",
             config: config
         )
 
@@ -969,7 +962,7 @@ struct MeetingSummaryClientTests {
         config.lmStudioModel = "local-model"
 
         let title = await MeetingSummaryClient.generateTitle(
-            transcript: "Sprint planning discussion",
+            source: "Sprint planning discussion",
             config: config
         )
 

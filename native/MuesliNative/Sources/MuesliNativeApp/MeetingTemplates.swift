@@ -159,6 +159,11 @@ enum MeetingTemplates {
 
         ## Notable Quotes
         - Any important or notable statements, if applicable
+
+        ## Tags
+        3-6 short tags, comma-separated, on ONE line. Lowercase, 1-2 words each.
+        Name the substance: project, product, client, topic, decision area.
+        No hashtags, no generic words like "meeting", "call", "discussion".
         """
     )
 
@@ -355,6 +360,16 @@ enum MeetingTemplates {
         builtIns.contains { $0.id == id }
     }
 
+    /// `Auto` with the user's prompt override applied, if they've edited it
+    /// (materialized as a custom entry with id `"auto"`, same model as a
+    /// user-edited built-in). Falls back to the stock definition otherwise.
+    static func resolvedAuto(customTemplates: [CustomMeetingTemplate]) -> MeetingTemplateDefinition {
+        if let override = customTemplates.first(where: { $0.id == autoID }) {
+            return customDefinition(from: override)
+        }
+        return auto
+    }
+
     static func allDefinitions(customTemplates: [CustomMeetingTemplate]) -> [MeetingTemplateDefinition] {
         let overrides = Dictionary(
             customTemplates.filter { isBuiltInID($0.id) }.map { ($0.id, $0) },
@@ -363,14 +378,14 @@ enum MeetingTemplates {
         let mergedBuiltIns = builtIns.map { builtIn in
             overrides[builtIn.id].map(customDefinition(from:)) ?? builtIn
         }
-        let pureCustoms = customTemplates.filter { !isBuiltInID($0.id) }
-        return [auto] + mergedBuiltIns + customDefinitions(from: pureCustoms)
+        let pureCustoms = customTemplates.filter { !isBuiltInID($0.id) && $0.id != autoID }
+        return [resolvedAuto(customTemplates: customTemplates)] + mergedBuiltIns + customDefinitions(from: pureCustoms)
     }
 
     static func resolveDefinition(id: String?, customTemplates: [CustomMeetingTemplate]) -> MeetingTemplateDefinition {
         let normalizedID = id?.trimmingCharacters(in: .whitespacesAndNewlines) ?? autoID
         if normalizedID == autoID {
-            return auto
+            return resolvedAuto(customTemplates: customTemplates)
         }
         // Customs first so an edited built-in wins over the stock definition.
         if let custom = customTemplates.first(where: { $0.id == normalizedID }) {
@@ -379,13 +394,13 @@ enum MeetingTemplates {
         if let builtIn = builtIns.first(where: { $0.id == normalizedID }) {
             return builtIn
         }
-        return auto
+        return resolvedAuto(customTemplates: customTemplates)
     }
 
     static func resolveExactDefinition(id: String?, customTemplates: [CustomMeetingTemplate]) -> MeetingTemplateDefinition? {
         let normalizedID = id?.trimmingCharacters(in: .whitespacesAndNewlines) ?? autoID
         if normalizedID.isEmpty || normalizedID == autoID {
-            return auto
+            return resolvedAuto(customTemplates: customTemplates)
         }
         if let custom = customTemplates.first(where: { $0.id == normalizedID }) {
             return customDefinition(from: custom)
