@@ -675,65 +675,41 @@ struct MeetingsHeaderControls: View {
     private var busy: Bool { appState.isMeetingRecording || appState.isMeetingStarting }
 
     var body: some View {
-        HStack(spacing: 2) {
-            // Start an audio meeting.
+        Menu {
             Button {
                 controller.startQuickNoteMeeting()
             } label: {
-                headerIcon("waveform")
+                Label(tr("New meeting (audio)", "Новая встреча (аудио)"), systemImage: "waveform")
             }
-            .buttonStyle(.plain)
             .disabled(busy)
-            .help(tr("New meeting (audio)", "Новая встреча (аудио)"))
-
-            // Start a meeting recorded with screen video.
             Button {
                 _ = controller.startForegroundMeetingRecording(withScreenVideo: true)
             } label: {
-                headerIcon("video")
+                Label(tr("Meeting with video", "Встреча с видео"), systemImage: "video")
             }
-            .buttonStyle(.plain)
             .disabled(busy)
-            .help(tr("Meeting with video", "Встреча с видео"))
-
-            // Import an existing audio or video file as a meeting.
-            // The icon is drawn as a plain image (identical to the two buttons
-            // on its left); an invisible Menu is overlaid to catch the click.
-            // A borderless Menu label would otherwise re-tint and shift the glyph.
-            headerIcon("square.and.arrow.down")
-                .overlay(
-                    Menu {
-                        Button {
-                            controller.importAudioFile()
-                        } label: {
-                            Label(tr("Import Audio", "Импорт аудио"), systemImage: "waveform")
-                        }
-                        .disabled(busy)
-                        Button {
-                            controller.importVideoFile()
-                        } label: {
-                            Label(tr("Import Video", "Импорт видео"), systemImage: "video")
-                        }
-                        .disabled(busy)
-                    } label: {
-                        Rectangle()
-                            .fill(Color.clear)
-                            .contentShape(Rectangle())
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                )
-                // The arrow-in-box glyph optically sits a touch low; nudge it up.
-                .offset(y: -1)
-                .help(tr("Import audio or video", "Импорт аудио или видео"))
+            Divider()
+            Button {
+                controller.importAudioFile()
+            } label: {
+                Label(tr("Import Audio…", "Импорт аудио…"), systemImage: "square.and.arrow.down")
+            }
+            .disabled(busy)
+            Button {
+                controller.importVideoFile()
+            } label: {
+                Label(tr("Import Video…", "Импорт видео…"), systemImage: "video.badge.plus")
+            }
+            .disabled(busy)
+        } label: {
+            Image(systemName: "plus.circle")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(MuesliTheme.textSecondary)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
         }
-    }
-
-    private func headerIcon(_ systemName: String) -> some View {
-        Image(systemName: systemName)
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(MuesliTheme.textSecondary)
-            .frame(width: 24, height: 22)
-            .contentShape(Rectangle())
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help(tr("New meeting or import", "Новая встреча или импорт"))
     }
 }

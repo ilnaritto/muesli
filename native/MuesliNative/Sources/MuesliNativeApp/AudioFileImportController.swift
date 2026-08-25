@@ -263,30 +263,25 @@ enum AudioFileImportController {
         try Task.checkCancellation()
 
         let wordCount = DictationStore.countWords(in: diarizedTranscript)
-        let generatedTitle: String
-        progress("Generating title...")
         // Imported meetings use the default template — honor its output language.
         let importTitleLanguage = MeetingTemplates.resolveSnapshot(
             id: config.defaultMeetingTemplateID,
             customTemplates: config.customMeetingTemplates
         ).outputLanguage
-        if let autoTitle = await MeetingSummaryClient.generateTitle(transcript: diarizedTranscript, config: config, outputLanguage: importTitleLanguage),
-           !autoTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            generatedTitle = autoTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        } else {
-            generatedTitle = title
-        }
+        var generatedTitle = title
 
         try Task.checkCancellation()
 
         progress("Generating summary...")
         let templateSnapshot = context.templateSnapshot
-        let formattedNotes: String
+        // Registry's default text-generation model (task 8.2), resolved once.
+        let effectiveConfig = config.resolvedForTextGeneration()
+        var formattedNotes: String
         do {
             formattedNotes = try await MeetingSummaryClient.summarize(
                 transcript: diarizedTranscript,
                 meetingTitle: generatedTitle,
-                config: config,
+                config: effectiveConfig,
                 template: templateSnapshot,
                 existingNotes: nil,
                 manualNotesToRetain: ""
@@ -299,6 +294,22 @@ enum AudioFileImportController {
                 error: error,
                 manualNotes: ""
             )
+        }
+
+        try Task.checkCancellation()
+
+        // Title from the finished summary — see MeetingSession for the same reorder.
+        progress("Generating title...")
+        if let autoTitle = await MeetingSummaryClient.generateTitle(source: formattedNotes, config: effectiveConfig, outputLanguage: importTitleLanguage),
+           !autoTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            generatedTitle = autoTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        // Tags are only produced by the Auto template's prompt.
+        let isAutoTemplate = templateSnapshot.id == MeetingTemplates.autoID
+        let parsedTags = MeetingTagsParser.parse(formattedNotes)
+        if isAutoTemplate {
+            formattedNotes = parsedTags.strippedMarkdown
         }
 
         try Task.checkCancellation()
@@ -322,7 +333,8 @@ enum AudioFileImportController {
             selectedTemplateID: templateSnapshot.id,
             selectedTemplateName: templateSnapshot.name,
             selectedTemplateKind: templateSnapshot.kind,
-            selectedTemplatePrompt: templateSnapshot.prompt
+            selectedTemplatePrompt: templateSnapshot.prompt,
+            tags: isAutoTemplate ? parsedTags.tags : []
         )
 
         return ImportResult(

@@ -117,6 +117,15 @@ cp "$ROOT/assets/Qwen_logo.svg.png" "$STAGED_APP_DIR/Contents/Resources/qwen-log
 cp "$ROOT/assets/AI4Bharat_logo.png" "$STAGED_APP_DIR/Contents/Resources/ai4bharat-logo.png"
 cp "$ROOT/assets/x-logo.png" "$STAGED_APP_DIR/Contents/Resources/x-logo.png"
 cp "$ROOT/assets/linkedin-logo.png" "$STAGED_APP_DIR/Contents/Resources/linkedin-logo.png"
+if [[ -f "$ROOT/assets/redesign/about-hero.jpg" ]]; then
+  cp "$ROOT/assets/redesign/about-hero.jpg" "$STAGED_APP_DIR/Contents/Resources/about-hero.jpg"
+fi
+if [[ -f "$ROOT/assets/muesli_app_icon.png" ]]; then
+  cp "$ROOT/assets/muesli_app_icon.png" "$STAGED_APP_DIR/Contents/Resources/muesli_app_icon.png"
+fi
+if [[ -f "$ROOT/assets/PrivacyInfo.xcprivacy" ]]; then
+  cp "$ROOT/assets/PrivacyInfo.xcprivacy" "$STAGED_APP_DIR/Contents/Resources/PrivacyInfo.xcprivacy"
+fi
 if [[ -d "$ROOT/assets/fonts" ]]; then
   ditto "$ROOT/assets/fonts" "$STAGED_APP_DIR/Contents/Resources/fonts"
 fi

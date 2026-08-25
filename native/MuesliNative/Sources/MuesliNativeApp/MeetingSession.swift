@@ -519,34 +519,30 @@ final class MeetingSession {
             meetingStart: meetingStart
         )
 
-        let generatedTitle: String
+        // Priority: user-edited live title > calendar event title > title
+        // generated from the finished summary (below) > the original placeholder.
+        // Only the third step's source changed (summary instead of transcript
+        // excerpts) — the priority order itself stays as-is.
         onProgress?(.generatingTitle)
-        if let liveTitle = await userEditedLiveTitle() {
-            generatedTitle = liveTitle
-        } else if let calendarTitle = Self.calendarTitleCandidate(
-            originalTitle: title,
-            calendarEventID: calendarEventID
-        ) {
-            generatedTitle = calendarTitle
-        } else if let autoTitle = await MeetingSummaryClient.generateTitle(transcript: rawTranscript, config: config, outputLanguage: templateSnapshot.outputLanguage),
-           !autoTitle.isEmpty {
-            generatedTitle = autoTitle
-            fputs("[meeting] auto-generated title: \(generatedTitle)\n", stderr)
-        } else {
-            generatedTitle = title
-        }
+        let liveTitle = await userEditedLiveTitle()
+        let calendarTitle = Self.calendarTitleCandidate(originalTitle: title, calendarEventID: calendarEventID)
+        var generatedTitle: String = liveTitle ?? calendarTitle ?? title
+        let needsAutoTitle = liveTitle == nil && calendarTitle == nil
 
         let visualContext = await screenContextCollector.stopAndDrain()
         Self.logger.info("visual context drained chars=\(visualContext.count) includedInPrompt=\(!visualContext.isEmpty) useOCR=\(self.config.useCoreAudioTap)")
         fputs("[meeting] visual context drained chars=\(visualContext.count) includedInPrompt=\(!visualContext.isEmpty) useOCR=\(config.useCoreAudioTap)\n", stderr)
         onProgress?(.summarizingNotes)
         let manualNotes = await manualNotesProvider?()
+        // Resolved once: picks up the registry's default text-generation
+        // model (task 8.2) regardless of which meeting template is active.
+        let effectiveConfig = config.resolvedForTextGeneration()
         let formattedNotes: String
         do {
             formattedNotes = try await MeetingSummaryClient.summarize(
                 transcript: rawTranscript,
                 meetingTitle: generatedTitle,
-                config: config,
+                config: effectiveConfig,
                 template: templateSnapshot,
                 existingNotes: nil,
                 manualNotesToRetain: manualNotes,
@@ -560,6 +556,16 @@ final class MeetingSession {
                 error: error,
                 manualNotes: manualNotes
             )
+        }
+
+        // Title from the finished summary — cheaper and more accurate than
+        // titling off raw transcript excerpts before the model has "understood"
+        // the meeting as a whole.
+        if needsAutoTitle,
+           let autoTitle = await MeetingSummaryClient.generateTitle(source: formattedNotes, config: effectiveConfig, outputLanguage: templateSnapshot.outputLanguage),
+           !autoTitle.isEmpty {
+            generatedTitle = autoTitle
+            fputs("[meeting] auto-generated title (\(generatedTitle.count) chars)\n", stderr)
         }
 
         diagnostics?.writeFinalReport(
@@ -702,7 +708,7 @@ final class MeetingSession {
                     indicASRLanguage: config.resolvedIndicASRLanguage
                 )
                 if !result.text.isEmpty {
-                    fputs("[meeting] system chunk transcribed: \"\(String(result.text.prefix(60)))...\"\n", stderr)
+                    fputs("[meeting] system chunk transcribed (\(result.text.count) chars)\n", stderr)
                     let normalizedSegments = self.normalizeSystemTranscription(
                         result: result,
                         startTime: chunkOffset,
@@ -892,7 +898,7 @@ final class MeetingSession {
                 indicASRLanguage: config.resolvedIndicASRLanguage
             )
             if !result.text.isEmpty {
-                fputs("[meeting] mic chunk transcribed (raw): \"\(String(result.text.prefix(60)))...\"\n", stderr)
+                fputs("[meeting] mic chunk transcribed (raw, \(result.text.count) chars)\n", stderr)
                 let normalizedSegments = MicTurnNormalizer.normalize(
                     result: result,
                     startTime: chunkOffset,

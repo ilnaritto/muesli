@@ -120,6 +120,17 @@ struct MeetingTemplatesManagerView: View {
                     selection = .newTemplate
                 }
 
+                sidebarSectionHeader(tr("System", "Системный"))
+                sidebarRow(
+                    icon: "sparkles",
+                    title: tr("Auto", "Auto"),
+                    isSelected: selection == .template(MeetingTemplates.autoID),
+                    showsEditedMark: isOverridden(MeetingTemplates.autoID),
+                    toggleID: nil
+                ) {
+                    selection = .template(MeetingTemplates.autoID)
+                }
+
                 let customs = controller.customOnlyMeetingTemplates()
                 if !customs.isEmpty {
                     sidebarSectionHeader(tr("My templates", "Мои шаблоны"))
@@ -208,7 +219,8 @@ struct MeetingTemplatesManagerView: View {
                     set: { controller.setMeetingTemplateEnabled(id: toggleID, enabled: $0) }
                 ))
                 .toggleStyle(.switch)
-                .controlSize(.mini)
+                .controlSize(.small)
+                .tint(MuesliTheme.accent)
                 .labelsHidden()
                 .help(tr("Show as a tab on the meeting page", "Показывать вкладкой на странице встречи"))
             }
@@ -235,8 +247,14 @@ struct MeetingTemplatesManagerView: View {
         MeetingTemplates.isBuiltInID(id)
     }
 
+    /// Built-in templates and Auto are both "stock" definitions that can only
+    /// be overridden (via a same-id custom entry), never deleted outright.
+    private func isProtectedSystemTemplate(_ id: String) -> Bool {
+        isBuiltIn(id) || id == MeetingTemplates.autoID
+    }
+
     private func isOverridden(_ id: String) -> Bool {
-        isBuiltIn(id) && controller.customMeetingTemplates().contains { $0.id == id }
+        isProtectedSystemTemplate(id) && controller.customMeetingTemplates().contains { $0.id == id }
     }
 
     @ViewBuilder
@@ -247,8 +265,12 @@ struct MeetingTemplatesManagerView: View {
                     HStack {
                         fieldLabel(tr("Name", "Название"))
                         Spacer()
-                        if let id = selectedTemplateID, isBuiltIn(id) {
-                            Text(isOverridden(id) ? tr("built-in · edited", "встроенный · изменён") : tr("built-in", "встроенный"))
+                        if let id = selectedTemplateID, isProtectedSystemTemplate(id) {
+                            let isAuto = id == MeetingTemplates.autoID
+                            let label = isOverridden(id)
+                                ? (isAuto ? tr("system · edited", "системный · изменён") : tr("built-in · edited", "встроенный · изменён"))
+                                : (isAuto ? tr("system", "системный") : tr("built-in", "встроенный"))
+                            Text(label)
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(MuesliTheme.textTertiary)
                         }
@@ -334,7 +356,7 @@ struct MeetingTemplatesManagerView: View {
 
                 HStack(spacing: MuesliTheme.spacing8) {
                     if let id = selectedTemplateID {
-                        if isBuiltIn(id) {
+                        if isProtectedSystemTemplate(id) {
                             if isOverridden(id) {
                                 capsuleButton(tr("Reset to Default", "Сбросить к стандартному"), systemImage: "arrow.uturn.backward") {
                                     controller.resetBuiltInMeetingTemplate(id: id)
@@ -587,6 +609,11 @@ struct MeetingTemplatesManagerView: View {
                 draftTemplateName = builtIn.title
                 draftTemplatePrompt = builtIn.promptBody
                 draftTemplateIcon = MeetingTemplates.normalizedCustomIcon(named: builtIn.icon)
+                draftTemplateLanguage = nil
+            } else if id == MeetingTemplates.autoID {
+                draftTemplateName = MeetingTemplates.auto.title
+                draftTemplatePrompt = MeetingTemplates.auto.promptBody
+                draftTemplateIcon = MeetingTemplates.normalizedCustomIcon(named: MeetingTemplates.auto.icon)
                 draftTemplateLanguage = nil
             } else {
                 selection = .newTemplate

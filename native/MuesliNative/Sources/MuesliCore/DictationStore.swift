@@ -27,7 +27,7 @@ public final class DictationStore {
     t.id, t.final_status, t.final_message, t.trace_json, t.created_at
     """
     private static let meetingColumns = """
-    id, title, start_time, duration_seconds, raw_transcript, formatted_notes, word_count, folder_id, calendar_event_id, mic_audio_path, system_audio_path, saved_recording_path, meeting_status, manual_notes, selected_template_id, selected_template_name, selected_template_kind, selected_template_prompt, source, template_summaries, saved_video_path
+    id, title, start_time, duration_seconds, raw_transcript, formatted_notes, word_count, folder_id, calendar_event_id, mic_audio_path, system_audio_path, saved_recording_path, meeting_status, manual_notes, selected_template_id, selected_template_name, selected_template_kind, selected_template_prompt, source, template_summaries, saved_video_path, tags
     """
 
     public init() {
@@ -102,6 +102,7 @@ public final class DictationStore {
             selected_template_prompt TEXT,
             template_summaries TEXT NOT NULL DEFAULT '{}',
             saved_video_path TEXT,
+            tags TEXT NOT NULL DEFAULT '[]',
             source TEXT NOT NULL DEFAULT 'meeting',
             updated_at REAL NOT NULL DEFAULT 0,
             deleted_at REAL,
@@ -198,7 +199,8 @@ public final class DictationStore {
             "ALTER TABLE meetings ADD COLUMN last_synced_at REAL",
             "ALTER TABLE meetings ADD COLUMN sync_dirty INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE meetings ADD COLUMN template_summaries TEXT NOT NULL DEFAULT '{}'",
-            "ALTER TABLE meetings ADD COLUMN saved_video_path TEXT"
+            "ALTER TABLE meetings ADD COLUMN saved_video_path TEXT",
+            "ALTER TABLE meetings ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'"
         ] {
             _ = sqlite3_exec(db, sql, nil, nil, nil)
         }
@@ -881,6 +883,7 @@ public final class DictationStore {
             word_count = 0,
             duration_seconds = 0,
             template_summaries = '{}',
+            tags = '[]',
             saved_video_path = NULL,
             deleted_at = ?,
             updated_at = ?,
@@ -991,6 +994,7 @@ public final class DictationStore {
                 word_count = 0,
                 duration_seconds = 0,
                 template_summaries = '{}',
+                tags = '[]',
                 saved_video_path = NULL,
                 deleted_at = strftime('%s','now'),
                 updated_at = strftime('%s','now'),
@@ -1054,8 +1058,8 @@ public final class DictationStore {
         defer { sqlite3_close(db) }
         let manualNotes = try manualNotesForMeeting(id: id, db: db)
         let wordCount = Self.countWords(in: rawTranscript) + Self.countWords(in: manualNotes)
-        // A changed transcript invalidates every cached per-template summary.
-        let sql = "UPDATE meetings SET raw_transcript = ?, word_count = ?, template_summaries = '{}', updated_at = ?, sync_dirty = 1 WHERE id = ?"
+        // A changed transcript invalidates every cached per-template summary (and the Auto tags derived from it).
+        let sql = "UPDATE meetings SET raw_transcript = ?, word_count = ?, template_summaries = '{}', tags = '[]', updated_at = ?, sync_dirty = 1 WHERE id = ?"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
             throw lastError(db)
@@ -1206,7 +1210,7 @@ public final class DictationStore {
         let endTime = try liveMeetingFallbackEndTime(meetingID: id, durationSeconds: durationSeconds, db: db)
         let sql = """
         UPDATE meetings
-        SET end_time = ?, duration_seconds = ?, raw_transcript = ?, formatted_notes = ?, meeting_status = ?, word_count = ?, template_summaries = '{}', updated_at = ?, sync_dirty = 1
+        SET end_time = ?, duration_seconds = ?, raw_transcript = ?, formatted_notes = ?, meeting_status = ?, word_count = ?, template_summaries = '{}', tags = '[]', updated_at = ?, sync_dirty = 1
         WHERE id = ?
         """
         var statement: OpaquePointer?
@@ -1612,7 +1616,7 @@ public final class DictationStore {
     ) throws {
         let sql = """
         UPDATE meetings
-        SET start_time = ?, end_time = ?, duration_seconds = ?, raw_transcript = ?, formatted_notes = ?, meeting_status = ?, word_count = ?, template_summaries = '{}', updated_at = ?, sync_dirty = 1
+        SET start_time = ?, end_time = ?, duration_seconds = ?, raw_transcript = ?, formatted_notes = ?, meeting_status = ?, word_count = ?, template_summaries = '{}', tags = '[]', updated_at = ?, sync_dirty = 1
         WHERE id = ?
         """
         var statement: OpaquePointer?
@@ -1768,7 +1772,7 @@ public final class DictationStore {
         let wordCount = Self.countWords(in: rawTranscript) + Self.countWords(in: manualNotes)
         let sql = """
         UPDATE meetings
-        SET raw_transcript = ?, formatted_notes = ?, meeting_status = ?, word_count = ?, selected_template_id = ?, selected_template_name = ?, selected_template_kind = ?, selected_template_prompt = ?, template_summaries = '{}', updated_at = ?, sync_dirty = 1
+        SET raw_transcript = ?, formatted_notes = ?, meeting_status = ?, word_count = ?, selected_template_id = ?, selected_template_name = ?, selected_template_kind = ?, selected_template_prompt = ?, template_summaries = '{}', tags = '[]', updated_at = ?, sync_dirty = 1
         WHERE id = ?
         """
         var statement: OpaquePointer?
@@ -2764,6 +2768,7 @@ public final class DictationStore {
         let source = MeetingSource(rawValue: stringColumn(statement, index: 18)) ?? .meeting
         let templateSummaries = Self.decodeTemplateSummaries(stringColumn(statement, index: 19))
         let savedVideoPath: String? = sqlite3_column_type(statement, 20) == SQLITE_NULL ? nil : stringColumn(statement, index: 20)
+        let tags = Self.decodeTags(stringColumn(statement, index: 21))
         return MeetingRecord(
             id: sqlite3_column_int64(statement, 0),
             title: stringColumn(statement, index: 1),
@@ -2785,8 +2790,29 @@ public final class DictationStore {
             selectedTemplatePrompt: selectedTemplatePrompt,
             source: source,
             templateSummaries: templateSummaries,
-            savedVideoPath: savedVideoPath
+            savedVideoPath: savedVideoPath,
+            tags: tags
         )
+    }
+
+    /// Auto-template tags are the only writer of this column — resummarizing
+    /// with any other template must not touch it (see MeetingTagsParser).
+    public func updateMeetingTags(id: Int64, tags: [String]) throws {
+        let db = try openDatabase()
+        defer { sqlite3_close(db) }
+        let sql = "UPDATE meetings SET tags = ?, updated_at = ?, sync_dirty = 1 WHERE id = ?"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw lastError(db)
+        }
+        defer { sqlite3_finalize(statement) }
+        let json = Self.encodeTags(tags)
+        sqlite3_bind_text(statement, 1, (json as NSString).utf8String, -1, nil)
+        sqlite3_bind_double(statement, 2, Date().timeIntervalSince1970)
+        sqlite3_bind_int64(statement, 3, id)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw lastError(db)
+        }
     }
 
     public func updateMeetingVideoPath(id: Int64, path: String?) throws {
@@ -2824,6 +2850,22 @@ public final class DictationStore {
         guard let data = try? encoder.encode(summaries),
               let json = String(data: data, encoding: .utf8) else {
             return "{}"
+        }
+        return json
+    }
+
+    private static func decodeTags(_ json: String) -> [String] {
+        guard let data = json.data(using: .utf8),
+              let tags = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return tags
+    }
+
+    private static func encodeTags(_ tags: [String]) -> String {
+        guard let data = try? JSONEncoder().encode(tags),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
         }
         return json
     }

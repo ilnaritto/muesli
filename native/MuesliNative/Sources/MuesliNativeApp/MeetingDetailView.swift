@@ -395,15 +395,17 @@ struct MeetingDetailView: View {
 
     @ViewBuilder
     private func headerPill(_ meeting: MeetingRecord) -> some View {
+        let mediaKind = MeetingMediaKind.resolve(meeting)
         HStack(spacing: MuesliTheme.spacing8) {
             ZStack {
                 Circle()
                     .fill(MuesliTheme.accentSubtle)
-                Image(systemName: "person.2.fill")
+                Image(systemName: mediaKind.symbol)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(MuesliTheme.accent)
             }
             .frame(width: 30, height: 30)
+            .help(mediaKind.help)
 
             VStack(alignment: .leading, spacing: 0) {
                 MarqueeTitleTextField(
@@ -624,20 +626,16 @@ struct MeetingDetailView: View {
 
     @ViewBuilder
     private func templateTabsCapsule(_ meeting: MeetingRecord) -> some View {
-        HStack(alignment: .center, spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .center, spacing: MuesliTheme.spacing16) {
-                    // One unified list: an edited built-in keeps its slot and
-                    // shows the customized name in place.
-                    ForEach(controller.enabledMeetingTemplates()) { template in
-                        templateTab(id: template.id, title: template.title, for: meeting)
-                    }
-                }
-                .padding(.leading, 20)
-                .padding(.trailing, 70)
-                .frame(height: 40)
+        CapsuleTabBarContainer(
+            gearAction: { controller.showMeetingTemplatesManager() },
+            gearHelp: tr("Manage templates", "Управление шаблонами")
+        ) {
+            // One unified list: an edited built-in keeps its slot and
+            // shows the customized name in place.
+            ForEach(controller.enabledMeetingTemplates()) { template in
+                templateTab(id: template.id, title: template.title, for: meeting)
             }
-
+        } trailingAccessory: {
             if isRetranscribing {
                 HStack(spacing: 6) {
                     ProgressView()
@@ -649,48 +647,6 @@ struct MeetingDetailView: View {
                 .padding(.trailing, MuesliTheme.spacing12)
             }
         }
-        .frame(height: 40)
-        .background(Capsule().fill(MuesliTheme.backgroundBase))
-        .overlay(alignment: .trailing) {
-            templateGearOverlay
-        }
-        .clipShape(Capsule())
-        .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
-    }
-
-    /// Fixed gear pinned inside the right edge of the tabs capsule; tabs
-    /// scrolling underneath fade out through the gradient (same pattern as
-    /// the folder tabs in the meetings list). Opens the templates manager.
-    private var templateGearOverlay: some View {
-        HStack(spacing: 0) {
-            LinearGradient(
-                stops: [
-                    .init(color: MuesliTheme.backgroundBase.opacity(0), location: 0),
-                    .init(color: MuesliTheme.backgroundBase, location: 1)
-                ],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-            .frame(width: 24)
-            .allowsHitTesting(false)
-
-            Button {
-                controller.showMeetingTemplatesManager()
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(MuesliTheme.textSecondary)
-                    // 40pt zone flush with the capsule edge: the glyph center
-                    // lands 20pt from the right, on the same vertical axis as
-                    // the "⋯" chip above.
-                    .frame(width: 40, height: 40)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .background(MuesliTheme.backgroundBase)
-            .help(tr("Manage templates", "Управление шаблонами"))
-        }
-        .frame(height: 40)
     }
 
     /// A tab that selects the notes view; the template only generates when the
@@ -710,20 +666,19 @@ struct MeetingDetailView: View {
         }
         .disabled(isEditingNotes || isEditingTranscript || isSummarizing)
         .contextMenu {
-            if id != MeetingTemplates.autoID {
-                Button(tr("Edit…", "Редактировать…")) {
-                    controller.showMeetingTemplateEditor(templateID: id)
+            let isAuto = id == MeetingTemplates.autoID
+            Button(tr("Edit…", "Редактировать…")) {
+                controller.showMeetingTemplateEditor(templateID: id)
+            }
+            if isBuiltIn || isAuto, hasCustomEntry {
+                Button(tr("Reset to Default", "Сбросить к стандартному")) {
+                    controller.resetBuiltInMeetingTemplate(id: id)
                 }
-                if isBuiltIn, hasCustomEntry {
-                    Button(tr("Reset to Default", "Сбросить к стандартному")) {
-                        controller.resetBuiltInMeetingTemplate(id: id)
-                    }
-                }
-                if !isBuiltIn, hasCustomEntry {
-                    Divider()
-                    Button(tr("Delete", "Удалить"), role: .destructive) {
-                        controller.deleteCustomMeetingTemplate(id: id)
-                    }
+            }
+            if !isBuiltIn, !isAuto, hasCustomEntry {
+                Divider()
+                Button(tr("Delete", "Удалить"), role: .destructive) {
+                    controller.deleteCustomMeetingTemplate(id: id)
                 }
             }
         }
@@ -978,26 +933,7 @@ struct MeetingDetailView: View {
     }
 
     private func contentTab(_ title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            // Text is vertically centered in the row; the underline hugs the
-            // bottom edge regardless of the row height.
-            Text(title)
-                .font(.system(size: 13, weight: .regular))
-                .foregroundStyle(isSelected ? MuesliTheme.textPrimary : MuesliTheme.textSecondary)
-                .frame(maxHeight: .infinity)
-                .overlay(alignment: .bottom) {
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 2,
-                        bottomLeadingRadius: 0,
-                        bottomTrailingRadius: 0,
-                        topTrailingRadius: 2
-                    )
-                    .fill(isSelected ? MuesliTheme.accent : Color.clear)
-                    .frame(height: 2)
-                }
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+        CapsuleTab(title: title, isSelected: isSelected, action: action)
     }
 
     private func performEditToggle(for meeting: MeetingRecord) {
@@ -1190,6 +1126,10 @@ struct MeetingDetailView: View {
             }
         } else {
             VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
+                if documentMode == .notes, pendingTemplateID == MeetingTemplates.autoID, !meeting.tags.isEmpty {
+                    MeetingTagsRow(tags: meeting.tags)
+                }
+
                 ZStack(alignment: .topLeading) {
                     if isSummarizing {
                         summaryGenerationPlaceholder(for: meeting)
@@ -2998,7 +2938,7 @@ private struct MeetingAIChatPage: View {
             manualNotes: meeting.manualNotes,
             transcript: meeting.rawTranscript
         )
-        let config = controller.config
+        let config = controller.config.resolvedForTextGeneration()
         let appState = appState
 
         // Writes land in AppState, so the reply arrives even if the user
