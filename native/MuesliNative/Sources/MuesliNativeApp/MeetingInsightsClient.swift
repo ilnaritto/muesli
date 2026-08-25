@@ -1,129 +1,56 @@
 import Foundation
-import SwiftUI
 import MuesliCore
 
-enum InsightsPeriod: String, CaseIterable, Identifiable, Sendable {
-    case day
+/// How far back the Insights chat (task 1) reads when it assembles context
+/// from the user's meetings. Replaces the old `InsightsPeriod` — a chat can
+/// jump between "everything" and one specific day, not just three fixed windows.
+enum InsightsDateRange: Equatable, Hashable, Sendable {
+    case allTime
+    case today
     case week
     case month
-    var id: String { rawValue }
+    case specificDay(Date)
+
+    static let `default`: InsightsDateRange = .week
 
     var title: String {
         switch self {
-        case .day: return tr("Today", "Сегодня")
-        case .week: return tr("This week", "Эта неделя")
-        case .month: return tr("This month", "Этот месяц")
+        case .allTime: return tr("All time", "Всё время")
+        case .today: return tr("Today", "Сегодня")
+        case .week: return tr("Week", "Неделя")
+        case .month: return tr("Month", "Месяц")
+        case .specificDay(let date):
+            let formatter = DateFormatter()
+            formatter.setLocalizedDateFormatFromTemplate("d MMM")
+            return formatter.string(from: date)
         }
     }
 
-    var days: Int {
+    /// The half-open interval `[start, end)` a meeting's start time must fall
+    /// into. `nil` means no filtering (all time).
+    func interval(now: Date = Date(), calendar: Calendar = .current) -> (start: Date, end: Date)? {
         switch self {
-        case .day: return 1
-        case .week: return 7
-        case .month: return 31
+        case .allTime:
+            return nil
+        case .today:
+            let start = calendar.startOfDay(for: now)
+            let end = calendar.date(byAdding: .day, value: 1, to: start) ?? now.addingTimeInterval(1)
+            return (start, end)
+        case .week:
+            let start = calendar.date(byAdding: .day, value: -7, to: now) ?? now
+            return (start, now.addingTimeInterval(1))
+        case .month:
+            let start = calendar.date(byAdding: .day, value: -31, to: now) ?? now
+            return (start, now.addingTimeInterval(1))
+        case .specificDay(let date):
+            let start = calendar.startOfDay(for: date)
+            let end = calendar.date(byAdding: .day, value: 1, to: start) ?? date.addingTimeInterval(86400)
+            return (start, end)
         }
     }
 }
 
-/// One rendered insight card (markdown body) with a colored icon tile.
-struct InsightBlock: Identifiable, Sendable {
-    let id = UUID()
-    let title: String
-    let markdown: String
-    let icon: String
-    let color: Color
-}
-
-struct InsightsResult: Sendable {
-    var blocks: [InsightBlock] = []
-    var errorMessage: String? = nil
-    var isEmptyPeriod: Bool = false
-    /// Folder the result was generated for (nil = all folders). Used to decide
-    /// whether a cached result still matches the current filter.
-    var folderID: Int64? = nil
-}
-
-/// Runs ONE aggregate LLM pass over the meeting summaries in a period, on the
-/// user's selected meeting-summary backend, and splits the markdown answer
-/// into cards (Digest / Your tasks / Decisions / Might have missed).
-enum MeetingInsightsClient {
-    /// Section markers the model is asked to use, mapped to card title + icon tile.
-    private static let sections: [(key: String, title: String, icon: String, color: Color)] = [
-        ("DIGEST", tr("Digest", "Дайджест"), "text.alignleft", Color(hex: 0x007AFF)),
-        ("TASKS", tr("Your action items", "Твои задачи"), "checklist", Color(hex: 0x34C759)),
-        ("DECISIONS", tr("Decisions", "Решения"), "checkmark.seal.fill", Color(hex: 0xAF52DE)),
-        ("MISSED", tr("Might have missed", "Возможно, упустил"), "exclamationmark.circle.fill", Color(hex: 0xFF9500)),
-    ]
-
-    static func generate(meetings: [MeetingDigestInput], config: AppConfig) async -> InsightsResult {
-        guard !meetings.isEmpty else {
-            return InsightsResult(isEmptyPeriod: true)
-        }
-
-        let language = L10n.shared.isRussian ? "Russian" : "English"
-        let system = """
-        You are an executive assistant analyzing a set of meetings that belong to ONE person. \
-        From the meeting summaries provided, produce a crisp, useful briefing. \
-        Write everything in \(language). Use markdown bullets. Do not invent facts — rely only on the material. \
-        Return EXACTLY these four sections, each starting with its marker on its own line, in this order:
-
-        ###DIGEST### — 3-5 sentences: what these meetings were about and where things landed.
-        ###TASKS### — action items and follow-ups that belong to this person, as bullets ("- …"). If none, write "None.".
-        ###DECISIONS### — concrete decisions that were made, as bullets. If none, write "None.".
-        ###MISSED### — open questions, unresolved threads, or things worth returning to, as bullets. If none, write "None.".
-
-        Output only these sections and their content — no preamble.
-        """
-
-        var lines: [String] = []
-        for meeting in meetings {
-            lines.append("## \(meeting.date) — \(meeting.title)")
-            lines.append(meeting.summary)
-            lines.append("")
-        }
-        let user = "Here are \(meetings.count) meetings:\n\n" + lines.joined(separator: "\n")
-
-        do {
-            let answer = try await MeetingChatClient.complete(system: system, user: user, config: config)
-            return InsightsResult(blocks: parse(answer))
-        } catch {
-            let message = (error as? MeetingSummaryError)?.errorDescription ?? error.localizedDescription
-            return InsightsResult(errorMessage: message)
-        }
-    }
-
-    private static func parse(_ answer: String) -> [InsightBlock] {
-        var blocks: [InsightBlock] = []
-        for (index, section) in sections.enumerated() {
-            let startMarker = "###\(section.key)###"
-            guard let startRange = answer.range(of: startMarker) else { continue }
-            let afterStart = startRange.upperBound
-            // Body runs until the next section marker (or end of string).
-            var end = answer.endIndex
-            for next in sections[(index + 1)...] {
-                if let r = answer.range(of: "###\(next.key)###", range: afterStart..<answer.endIndex) {
-                    end = r.lowerBound
-                    break
-                }
-            }
-            let body = String(answer[afterStart..<end])
-                .trimmingCharacters(in: CharacterSet(charactersIn: " —-\n\r\t"))
-            if !body.isEmpty {
-                blocks.append(InsightBlock(title: section.title, markdown: body, icon: section.icon, color: section.color))
-            }
-        }
-        // Fallback: model ignored markers — show the whole answer as one card.
-        if blocks.isEmpty {
-            let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                blocks.append(InsightBlock(title: tr("Insights", "Инсайты"), markdown: trimmed, icon: "sparkles", color: MuesliTheme.accent))
-            }
-        }
-        return blocks
-    }
-}
-
-/// Compact per-meeting input for the aggregate pass.
+/// Compact per-meeting input for the Insights chat's context.
 struct MeetingDigestInput: Sendable {
     let date: String
     let title: String

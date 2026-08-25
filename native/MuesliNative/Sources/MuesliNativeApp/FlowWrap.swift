@@ -22,6 +22,25 @@ struct FlowWrap: View {
     }
 }
 
+/// Accent-colored tag capsules for the Auto template tab — same wrapping
+/// layout as FlowWrap, different (accent, not neutral) chip styling.
+struct MeetingTagsRow: View {
+    let tags: [String]
+
+    var body: some View {
+        FlowLayout(spacing: 6) {
+            ForEach(tags, id: \.self) { tag in
+                Text(tag)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(MuesliTheme.accent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(MuesliTheme.accentSubtle))
+            }
+        }
+    }
+}
+
 /// Minimal flow layout: places subviews left-to-right, wrapping rows.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 6

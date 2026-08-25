@@ -233,6 +233,10 @@ public struct MeetingRecord: Identifiable, Codable, Sendable {
     public let templateSummaries: [String: String]
     /// Saved screen-video recording (local file, not synced).
     public let savedVideoPath: String?
+    /// Tags parsed from the Auto template's "## Tags" section. Re-generated
+    /// only when the Auto summary is (re)generated; other templates leave
+    /// this untouched.
+    public let tags: [String]
 
     public init(
         id: Int64,
@@ -255,7 +259,8 @@ public struct MeetingRecord: Identifiable, Codable, Sendable {
         selectedTemplatePrompt: String? = nil,
         source: MeetingSource = .meeting,
         templateSummaries: [String: String] = [:],
-        savedVideoPath: String? = nil
+        savedVideoPath: String? = nil,
+        tags: [String] = []
     ) {
         self.id = id
         self.title = title
@@ -278,6 +283,7 @@ public struct MeetingRecord: Identifiable, Codable, Sendable {
         self.source = source
         self.templateSummaries = templateSummaries
         self.savedVideoPath = savedVideoPath
+        self.tags = tags
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -302,6 +308,7 @@ public struct MeetingRecord: Identifiable, Codable, Sendable {
         case source
         case templateSummaries
         case savedVideoPath
+        case tags
     }
 
     public init(from decoder: Decoder) throws {
@@ -327,7 +334,8 @@ public struct MeetingRecord: Identifiable, Codable, Sendable {
             selectedTemplatePrompt: try c.decodeIfPresent(String.self, forKey: .selectedTemplatePrompt),
             source: (try? c.decode(MeetingSource.self, forKey: .source)) ?? .meeting,
             templateSummaries: (try? c.decode([String: String].self, forKey: .templateSummaries)) ?? [:],
-            savedVideoPath: try c.decodeIfPresent(String.self, forKey: .savedVideoPath)
+            savedVideoPath: try c.decodeIfPresent(String.self, forKey: .savedVideoPath),
+            tags: (try? c.decode([String].self, forKey: .tags)) ?? []
         )
     }
 
