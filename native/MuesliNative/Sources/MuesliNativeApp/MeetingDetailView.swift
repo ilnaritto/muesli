@@ -2540,56 +2540,95 @@ private struct MeetingTranscriptView: View {
     }
 }
 
+/// Task 11: transcript reads as a stream of messages (avatar, name + time,
+/// plain text) rather than a "dialogue window" of left/right bubbles — the
+/// same row view backs both the finished-meeting transcript
+/// (`MeetingTranscriptView` below) and the live feed while recording
+/// (`LiveTranscriptView.liveBubble`).
 struct TranscriptChatBubble: View {
     let message: TranscriptChatMessage
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: MuesliTheme.spacing8) {
-            if message.isUser {
-                Spacer(minLength: 80)
-            }
+        TranscriptSpeakerRow(
+            speaker: message.speaker,
+            timestamp: message.timestamp,
+            lines: [message.text],
+            isUser: message.isUser
+        )
+    }
+}
 
-            VStack(alignment: .leading, spacing: 4) {
-                if let metadata = metadata {
-                    Text(metadata)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                        .textSelection(.enabled)
-                }
-                Text(message.text)
-                    .font(.system(size: 14))
-                    .foregroundStyle(MuesliTheme.textPrimary)
-                    .lineSpacing(2)
-                    .textSelection(.enabled)
-            }
-            .padding(.horizontal, MuesliTheme.spacing12)
-            .padding(.vertical, 8)
-            .background(message.isUser ? MuesliTheme.accent.opacity(0.18) : MuesliTheme.surfacePrimary)
-            .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-            .overlay(
-                RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
-                    .strokeBorder(message.isUser ? MuesliTheme.accent.opacity(0.25) : MuesliTheme.surfaceBorder, lineWidth: 1)
-            )
-            .frame(maxWidth: 680, alignment: message.isUser ? .trailing : .leading)
+/// Shared chat-stream row: avatar circle (accent for "You", a stable color
+/// per other speaker) + name/time header + plain text lines underneath, no
+/// bubble fill or border. `speaker` is nil-safe — an unlabeled line still
+/// renders with a neutral avatar and no name row.
+struct TranscriptSpeakerRow: View {
+    let speaker: String?
+    let timestamp: String?
+    let lines: [String]
+    let isUser: Bool
 
-            if !message.isUser {
-                Spacer(minLength: 80)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: message.isUser ? .trailing : .leading)
+    private var displayName: String? { speaker }
+
+    private var avatarColor: Color {
+        if isUser { return MuesliTheme.accent }
+        guard let speaker else { return MuesliTheme.textTertiary }
+        return Self.stableColor(for: speaker)
     }
 
-    private var metadata: String? {
-        switch (message.speaker, message.timestamp) {
-        case let (speaker?, timestamp?):
-            return "\(speaker) \(timestamp)"
-        case let (speaker?, nil):
-            return speaker
-        case let (nil, timestamp?):
-            return timestamp
-        case (nil, nil):
-            return nil
+    private var avatarInitial: String {
+        guard let name = displayName, let first = name.trimmingCharacters(in: .whitespaces).first else {
+            return "?"
         }
+        return String(first).uppercased()
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Circle()
+                .fill(avatarColor)
+                .frame(width: 26, height: 26)
+                .overlay(
+                    Text(avatarInitial)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white)
+                )
+
+            VStack(alignment: .leading, spacing: 3) {
+                if displayName != nil || timestamp != nil {
+                    HStack(spacing: 6) {
+                        if let displayName {
+                            Text(displayName)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(MuesliTheme.textPrimary)
+                        }
+                        if let timestamp {
+                            Text(timestamp)
+                                .font(.system(size: 11))
+                                .foregroundStyle(MuesliTheme.textTertiary)
+                        }
+                    }
+                    .textSelection(.enabled)
+                }
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    Text(line)
+                        .font(.system(size: 14))
+                        .foregroundStyle(MuesliTheme.textPrimary)
+                        .lineSpacing(2)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Deterministic (not Swift's per-process-randomized String.hashValue)
+    /// so the same speaker label keeps the same color for the whole meeting.
+    private static func stableColor(for speaker: String) -> Color {
+        let sum = speaker.utf8.reduce(0) { $0 + Int($1) }
+        return SummaryPalette.seriesColor(at: sum)
     }
 }
 

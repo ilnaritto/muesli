@@ -95,37 +95,16 @@ struct LiveTranscriptView: View {
         }
     }
 
+    // Task 11: same TranscriptSpeakerRow as the finished-meeting transcript
+    // (MeetingDetailView.swift) — avatar + name/time + plain text, one
+    // shared view for both live and post-meeting reading.
     @ViewBuilder
     private func liveBubble(for group: LiveTranscriptGroup) -> some View {
-        let isUser = group.isUser
-        HStack(alignment: .bottom, spacing: 6) {
-            if isUser { Spacer(minLength: 40) }
-            VStack(alignment: .leading, spacing: 2) {
-                if let speaker = group.speaker {
-                    Text(speaker + (group.timestamp.map { "  \($0)" } ?? ""))
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                }
-                ForEach(Array(group.lines.enumerated()), id: \.offset) { _, line in
-                    Text(line)
-                        .font(.system(size: 13))
-                        .foregroundStyle(MuesliTheme.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(isUser ? MuesliTheme.accent.opacity(0.15) : MuesliTheme.surfacePrimary)
-            .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-            .overlay(
-                RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
-                    .strokeBorder(
-                        isUser ? MuesliTheme.accent.opacity(0.2) : MuesliTheme.surfaceBorder,
-                        lineWidth: 1
-                    )
-            )
-            if !isUser { Spacer(minLength: 40) }
-        }
-        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+        TranscriptSpeakerRow(
+            speaker: group.speaker,
+            timestamp: group.timestamp,
+            lines: group.lines,
+            isUser: group.isUser
+        )
     }
 }
