@@ -1745,7 +1745,7 @@ struct SettingsView: View {
             }
         }
         .frame(minHeight: 32)
-        .padding(.vertical, MuesliTheme.spacing4)
+        .padding(.vertical, MuesliTheme.spacing8)
     }
 
     @ViewBuilder
@@ -1774,7 +1774,7 @@ struct SettingsView: View {
                 .frame(width: width, alignment: .trailing)
         }
         .frame(minHeight: 44)
-        .padding(.vertical, MuesliTheme.spacing4)
+        .padding(.vertical, MuesliTheme.spacing8)
     }
 
     private func settingsDescription(_ text: String) -> some View {

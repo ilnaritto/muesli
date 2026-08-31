@@ -2,14 +2,17 @@ import SwiftUI
 import MuesliCore
 
 /// Task 5: full-width onboarding-style banner for the Features tour — one
-/// per flagship feature, image + description + one action, replacing the
-/// grid-of-cards showcase for the first-run path. `assetName` looks up
+/// per flagship feature, illustration + description + one action, replacing
+/// the grid-of-cards showcase for the first-run path. `assetName` looks up
 /// `Contents/Resources/features-tour/<assetName>.png` in the bundle (copied
-/// there by `scripts/build_native_app.sh`/`dev-test.sh`, matching the
-/// `about-hero.jpg` pattern) — when the file isn't there, the banner
-/// renders without the image instead of leaving a gap or crashing.
+/// there by `scripts/build_native_app.sh`, matching the `about-hero.jpg`
+/// pattern). Real screenshots/GIFs aren't wired up yet — until they are, a
+/// gradient tile with the feature's own glyph fills the same slot, so the
+/// banner still has visual weight instead of reading as a bare text bar.
 struct FeatureTourBanner: View {
     let assetName: String
+    let icon: String
+    let accent: Color
     let title: String
     let description: String
     let action: FeatureAction?
@@ -24,41 +27,29 @@ struct FeatureTourBanner: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: MuesliTheme.spacing16) {
-            VStack(alignment: .leading, spacing: 5) {
+        HStack(alignment: .center, spacing: MuesliTheme.spacing20) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(MuesliTheme.textPrimary)
 
                 Text(description)
-                    .font(.system(size: 12))
+                    .font(.system(size: 12.5))
                     .foregroundStyle(MuesliTheme.textSecondary)
                     .lineSpacing(2)
-                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if let action {
                     tourActionButton(action)
-                        .padding(.top, 2)
+                        .padding(.top, 4)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if let tourImage {
-                Image(nsImage: tourImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: 180, height: 96)
-                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
-                            .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
-                    )
-                    .fixedSize()
-            }
+            illustration
         }
-        .padding(.horizontal, MuesliTheme.spacing16)
-        .padding(.vertical, MuesliTheme.spacing12)
+        .padding(.horizontal, MuesliTheme.spacing20)
+        .padding(.vertical, MuesliTheme.spacing16)
         .frame(maxWidth: 1100, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .center)
         .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge).fill(MuesliTheme.backgroundBase))
@@ -66,6 +57,42 @@ struct FeatureTourBanner: View {
             RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge)
                 .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
         )
+    }
+
+    @ViewBuilder
+    private var illustration: some View {
+        if let tourImage {
+            Image(nsImage: tourImage)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 220, height: 128)
+                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
+                .overlay(
+                    RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
+                        .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                )
+                .fixedSize()
+        } else {
+            // Placeholder until a real screenshot/GIF exists for this
+            // feature — a gradient tile with the feature's own glyph, so
+            // the banner keeps its visual weight either way.
+            ZStack {
+                LinearGradient(
+                    colors: [accent.opacity(0.35), accent.opacity(0.12)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                Image(systemName: icon)
+                    .font(.system(size: 34, weight: .medium))
+                    .foregroundStyle(accent)
+            }
+            .frame(width: 220, height: 128)
+            .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
+            .overlay(
+                RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
+                    .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+            )
+        }
     }
 
     @ViewBuilder

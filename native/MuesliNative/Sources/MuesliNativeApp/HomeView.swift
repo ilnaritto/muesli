@@ -913,6 +913,8 @@ struct HomeView: View {
         [
             IdentifiedView(FeatureTourBanner(
                 assetName: "dictation",
+                icon: "mic.fill",
+                accent: Color(hex: 0xFF3B30),
                 title: tr("Voice dictation", "Диктовка голосом"),
                 description: tr("Hold your hotkey, speak, release — text appears under your cursor.", "Зажми клавишу, говори, отпусти — текст появится под курсором."),
                 action: FeatureAction(label: tr("Set up dictation", "Настроить диктовку"), systemImage: "keyboard") {
@@ -921,6 +923,8 @@ struct HomeView: View {
             )),
             IdentifiedView(FeatureTourBanner(
                 assetName: "meetings",
+                icon: "person.2.fill",
+                accent: Color(hex: 0x34C759),
                 title: tr("Meetings, summarized", "Встречи в готовых заметках"),
                 description: tr("Muesli listens, then hands you a clean recap in your own template.", "Muesli слушает встречу, а после выдаёт аккуратную сводку по твоему шаблону."),
                 action: FeatureAction(label: tr("Meeting settings", "Настройки встреч"), systemImage: "gearshape.fill") {
@@ -929,6 +933,8 @@ struct HomeView: View {
             )),
             IdentifiedView(FeatureTourBanner(
                 assetName: "templates",
+                icon: "square.text.square.fill",
+                accent: Color(hex: 0xAF52DE),
                 title: tr("Note templates", "Шаблоны заметок"),
                 description: tr("Choose how notes are structured, or write your own prompt.", "Выбери, как оформлять заметки, или напиши свой шаблон и промпт."),
                 action: FeatureAction(label: tr("Manage templates", "Управление шаблонами"), systemImage: "square.text.square.fill") {
@@ -937,6 +943,8 @@ struct HomeView: View {
             )),
             IdentifiedView(FeatureTourBanner(
                 assetName: "meeting-chat",
+                icon: "bubble.left.and.text.bubble.right.fill",
+                accent: Color(hex: 0x5856D6),
                 title: tr("Chat with your meeting", "Чат с встречей"),
                 description: tr("Ask any meeting a question, get an answer grounded in it.", "Задай вопрос по встрече — получи ответ строго по этому разговору."),
                 action: FeatureAction(label: tr("Connect a model", "Подключить модель"), systemImage: "sparkles") {
@@ -945,6 +953,8 @@ struct HomeView: View {
             )),
             IdentifiedView(FeatureTourBanner(
                 assetName: "insights",
+                icon: "sparkles",
+                accent: Color(hex: 0x5856D6),
                 title: tr("Insights — ask across all meetings", "Инсайты — вопросы по всем встречам"),
                 description: tr("One chat that reads every meeting in the period you pick.", "Один чат, который читает сразу все встречи за выбранный период."),
                 action: FeatureAction(label: tr("Open Insights", "Открыть Инсайты"), systemImage: "sparkles") {
@@ -953,6 +963,8 @@ struct HomeView: View {
             )),
             IdentifiedView(FeatureTourBanner(
                 assetName: "models",
+                icon: "square.and.arrow.down.fill",
+                accent: Color(hex: 0x007AFF),
                 title: tr("On-device models", "Модели на устройстве"),
                 description: tr("11 speech models, all offline — nothing leaves your Mac.", "11 моделей распознавания, всё офлайн — ничего не уходит в облако."),
                 action: FeatureAction(label: tr("Manage models", "Управление моделями"), systemImage: "square.and.arrow.down.fill") {
