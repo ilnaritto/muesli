@@ -23,6 +23,11 @@ struct FeatureAction: Identifiable {
 /// a title + subtitle, and one or two action buttons that deep-link into the
 /// relevant setting. Styled like the meeting-page cards (backgroundBase,
 /// rounded, hairline border). `compact` renders the smaller 3-per-row variant.
+///
+/// When there's exactly one action, the whole card is the tap target and
+/// highlights on hover — same treatment as the tour banners above it, per
+/// live feedback. A card with zero or several actions (no single obvious
+/// destination) keeps its own per-action buttons instead.
 struct FeatureCard: View {
     let accent: Color
     let icon: String
@@ -31,7 +36,30 @@ struct FeatureCard: View {
     let actions: [FeatureAction]
     var compact: Bool = false
 
+    @State private var isHovered = false
+
+    private var singleAction: FeatureAction? {
+        actions.count == 1 ? actions.first : nil
+    }
+
     var body: some View {
+        Group {
+            if let singleAction {
+                Button(action: singleAction.action) { cardBody }
+                    .buttonStyle(.plain)
+            } else {
+                cardBody
+            }
+        }
+        .onHover { hovering in
+            guard singleAction != nil else { return }
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+    }
+
+    private var cardBody: some View {
         VStack(alignment: .leading, spacing: compact ? 8 : 12) {
             illustration
 
@@ -50,7 +78,9 @@ struct FeatureCard: View {
 
             Spacer(minLength: 0)
 
-            if !actions.isEmpty {
+            if let singleAction {
+                actionLabel(singleAction)
+            } else if !actions.isEmpty {
                 HStack(spacing: 8) {
                     ForEach(actions) { action in
                         actionButton(action)
@@ -61,11 +91,15 @@ struct FeatureCard: View {
         }
         .padding(MuesliTheme.spacing16)
         .frame(maxWidth: .infinity, minHeight: compact ? 150 : 230, maxHeight: .infinity, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).fill(MuesliTheme.backgroundBase))
+        .background(
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
+                .fill(isHovered ? MuesliTheme.backgroundHover : MuesliTheme.backgroundBase)
+        )
         .overlay(
             RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
-                .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                .strokeBorder(isHovered ? accent.opacity(0.55) : MuesliTheme.surfaceBorder, lineWidth: isHovered ? 1.5 : 1)
         )
+        .scaleEffect(isHovered ? 1.012 : 1)
     }
 
     private var illustration: some View {
@@ -76,6 +110,26 @@ struct FeatureCard: View {
             iconSize: compact ? 18 : 22,
             corner: compact ? 10 : 12
         )
+    }
+
+    /// Visual-only chip (not a nested Button) for the single-action case,
+    /// since the whole card is already the button.
+    @ViewBuilder
+    private func actionLabel(_ action: FeatureAction) -> some View {
+        HStack(spacing: 5) {
+            if let systemImage = action.systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            Text(action.label)
+                .font(.system(size: 12, weight: .semibold))
+                .lineLimit(1)
+        }
+        .foregroundStyle(MuesliTheme.textSecondary)
+        .padding(.horizontal, 12)
+        .frame(height: 30)
+        .background(Capsule().fill(MuesliTheme.backgroundBase))
+        .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
     }
 
     @ViewBuilder
