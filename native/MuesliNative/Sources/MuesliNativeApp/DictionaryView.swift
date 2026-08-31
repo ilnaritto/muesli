@@ -79,15 +79,10 @@ struct DictionaryView: View {
                         Text(tr("Add new", "Добавить"))
                             .font(.system(size: 13, weight: .medium))
                     }
-                    .foregroundStyle(MuesliTheme.textPrimary)
-                    .padding(.horizontal, MuesliTheme.spacing12)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, MuesliTheme.spacing16)
                     .padding(.vertical, MuesliTheme.spacing8)
-                    .background(MuesliTheme.surfacePrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
-                            .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
-                    )
+                    .background(Capsule().fill(MuesliTheme.accent))
                 }
                 .buttonStyle(.plain)
             }
@@ -130,10 +125,10 @@ struct DictionaryView: View {
                 suggestionPaginationControls
             }
         }
-        .background(MuesliTheme.backgroundRaised)
-        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
+        .background(MuesliTheme.backgroundBase)
+        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL))
         .overlay(
-            RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
                 .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
         )
     }
@@ -213,10 +208,10 @@ struct DictionaryView: View {
                 }
             }
         }
-        .background(MuesliTheme.backgroundRaised)
-        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
+        .background(MuesliTheme.backgroundBase)
+        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL))
         .overlay(
-            RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
                 .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
         )
     }
