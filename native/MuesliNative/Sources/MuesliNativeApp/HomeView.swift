@@ -1029,14 +1029,6 @@ struct HomeView: View {
                 ],
                 compact: true
             )),
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0x8E8E93),
-                icon: "lock.fill",
-                title: tr("Private by design", "Приватность"),
-                subtitle: tr("Speech-to-text runs on your Mac — data stays with you.", "Речь в текст — на твоём Mac, данные остаются у тебя."),
-                actions: [],
-                compact: true
-            )),
             // Task 5 point 7: minor items, compact — moved out of the
             // flagship tour above.
             IdentifiedView(FeatureCard(
