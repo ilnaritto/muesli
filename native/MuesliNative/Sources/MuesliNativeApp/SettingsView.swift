@@ -59,8 +59,10 @@ struct SettingsView: View {
     @State private var googleCalSignInError: String?
     @State private var isSigningInGoogleCal = false
     @State private var pendingDataDestruction: PendingDataDestruction?
-    @State private var dictationAdvancedExpanded = false
-    @State private var meetingsAdvancedExpanded = false
+    // Expanded by default per feedback round 2 task 14.3 — the author wants
+    // to see these without an extra click.
+    @State private var dictationAdvancedExpanded = true
+    @State private var meetingsAdvancedExpanded = true
     @State private var postProcessorRedirectReason: String?
     @State private var isShowingDictionaryAccessibilityPrompt = false
     @State private var isPreviewingClip = false
@@ -630,6 +632,13 @@ struct SettingsView: View {
                 }
             }
 
+            // Same control as the consolidated Shortcuts page (task 14.2) —
+            // available here too so users don't have to leave the section
+            // they're already tuning.
+            settingsSection(tr("Hotkey", "Горячая клавиша")) {
+                HotkeyRecorderControl(appState: appState, controller: controller, target: .dictation)
+            }
+
             collapsibleSettingsSection(tr("Advanced", "Дополнительно"), isExpanded: $dictationAdvancedExpanded) {
                 settingsRow(tr("Pause media during dictation", "Приостанавливать медиа во время диктовки")) {
                     settingsSwitch(isOn: appState.config.pauseMediaDuringDictation) { newValue in
@@ -683,6 +692,26 @@ struct SettingsView: View {
                             .foregroundStyle(MuesliTheme.textPrimary)
                     }
                 }
+            }
+
+            // Same control as the consolidated Shortcuts page (task 14.2).
+            settingsSection(tr("Hotkey", "Горячая клавиша")) {
+                HStack {
+                    Text(tr("Enable hotkey", "Включить горячую клавишу"))
+                        .font(MuesliTheme.body())
+                        .foregroundStyle(MuesliTheme.textPrimary)
+                    Spacer()
+                    settingsSwitch(isOn: appState.config.enableComputerUseHotkey) { newValue in
+                        _ = controller.updateComputerUseHotkeyEnabled(newValue)
+                    }
+                }
+                Divider().background(MuesliTheme.surfaceBorder)
+                HotkeyRecorderControl(
+                    appState: appState,
+                    controller: controller,
+                    target: .computerUse,
+                    isEnabled: appState.config.enableComputerUseHotkey
+                )
             }
         }
     }
@@ -795,6 +824,26 @@ struct SettingsView: View {
                     }
                 }
                 settingsDescription(tr("Captures the main display during meetings and saves an .mp4 with the meeting audio. Uses significant disk space (roughly 1 GB per hour).", "Записывает основной экран во время встреч и сохраняет .mp4 со звуком встречи. Занимает много места на диске (примерно 1 ГБ в час)."))
+            }
+
+            // Same control as the consolidated Shortcuts page (task 14.2).
+            settingsSection(tr("Hotkey", "Горячая клавиша")) {
+                HStack {
+                    Text(tr("Enable hotkey", "Включить горячую клавишу"))
+                        .font(MuesliTheme.body())
+                        .foregroundStyle(MuesliTheme.textPrimary)
+                    Spacer()
+                    settingsSwitch(isOn: appState.config.enableMeetingRecordingHotkey) { newValue in
+                        _ = controller.updateMeetingRecordingHotkeyEnabled(newValue)
+                    }
+                }
+                Divider().background(MuesliTheme.surfaceBorder)
+                HotkeyRecorderControl(
+                    appState: appState,
+                    controller: controller,
+                    target: .meetingRecording,
+                    isEnabled: appState.config.enableMeetingRecordingHotkey
+                )
             }
 
             settingsSection(tr("Auto Export", "Автоэкспорт")) {
