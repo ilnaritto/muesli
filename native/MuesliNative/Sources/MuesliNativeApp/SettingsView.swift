@@ -665,6 +665,15 @@ struct SettingsView: View {
                     }
                 }
                 Divider().background(MuesliTheme.surfaceBorder)
+                settingsRow(
+                    tr("Show in floating pill", "Показывать в пипке"),
+                    description: tr("Adds a Computer Use circle next to dictation and meeting in the floating pill's hover menu.", "Добавляет кружок режима «Компьютер» рядом с диктовкой и встречей в меню плавающей пипки при наведении.")
+                ) {
+                    settingsSwitch(isOn: appState.config.computerUseVisibleInPill) { newValue in
+                        controller.updateConfig { $0.computerUseVisibleInPill = newValue }
+                    }
+                }
+                Divider().background(MuesliTheme.surfaceBorder)
                 settingsRow(tr("Account", "Аккаунт")) {
                     chatGPTAccountControl
                 }
