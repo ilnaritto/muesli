@@ -274,7 +274,9 @@ final class FloatingIndicatorController: NSObject {
             setWaveBarsHidden(true)
         }
         let collapsedColor = NSColor.colorWith(hexString: "1e1e1e", alpha: collapsedTintAlpha).cgColor
-        let hoveredColor = NSColor.colorWith(hexString: "1e1e1e", alpha: 0.45).cgColor
+        // Live feedback: the hover launcher should show just its circular
+        // buttons, not a dark backdrop panel behind them — was 0.45 alpha.
+        let hoveredColor = NSColor.colorWith(hexString: "1e1e1e", alpha: 0).cgColor
 
         // A repaint while ALREADY expanded (e.g. idle→idle right after a
         // dictation stops under the cursor) must not replay the morph under

@@ -24,21 +24,22 @@ struct FeatureTourBanner: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: MuesliTheme.spacing24) {
-            VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+        HStack(alignment: .center, spacing: MuesliTheme.spacing16) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(title)
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(MuesliTheme.textPrimary)
 
                 Text(description)
-                    .font(.system(size: 13))
+                    .font(.system(size: 12))
                     .foregroundStyle(MuesliTheme.textSecondary)
-                    .lineSpacing(3)
+                    .lineSpacing(2)
+                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if let action {
                     tourActionButton(action)
-                        .padding(.top, MuesliTheme.spacing4)
+                        .padding(.top, 2)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -47,22 +48,22 @@ struct FeatureTourBanner: View {
                 Image(nsImage: tourImage)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .frame(width: 300, height: 190)
-                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge))
+                    .frame(width: 180, height: 96)
+                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
                     .overlay(
-                        RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge)
+                        RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
                             .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
                     )
-                    .shadow(color: .black.opacity(0.18), radius: 14, y: 8)
                     .fixedSize()
             }
         }
-        .padding(MuesliTheme.spacing24)
+        .padding(.horizontal, MuesliTheme.spacing16)
+        .padding(.vertical, MuesliTheme.spacing12)
         .frame(maxWidth: 1100, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .center)
-        .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).fill(MuesliTheme.backgroundBase))
+        .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge).fill(MuesliTheme.backgroundBase))
         .overlay(
-            RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge)
                 .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
         )
     }

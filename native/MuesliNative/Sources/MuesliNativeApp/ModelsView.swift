@@ -31,6 +31,18 @@ enum ModelsTab: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Telegram-style distinct tile color per role, matching the Settings
+    /// sidebar's per-section colors — live feedback preferred this over one
+    /// flat accent color for every row.
+    var sidebarColor: Color {
+        switch self {
+        case .speech: return Color(hex: 0x34AADC)   // cyan
+        case .text: return Color(hex: 0x5856D6)     // indigo
+        case .cleanup: return Color(hex: 0x00C7BE)  // teal
+        case .catalog: return Color(hex: 0x8E8E93)  // gray
+        }
+    }
+
     /// nil for Catalog — "Add Model" opens with a role picker instead of a
     /// preselected one.
     var matchingModelRole: ModelRole? {
@@ -213,7 +225,8 @@ struct ModelsView: View {
                 SecondaryColumnRow(
                     icon: tab.sidebarIcon,
                     title: tab.title,
-                    isSelected: selectedTab == tab
+                    isSelected: selectedTab == tab,
+                    tileColor: tab.sidebarColor
                 ) {
                     selectedTab = tab
                 }

@@ -44,6 +44,7 @@ struct MeetingTemplatesManagerView: View {
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
+            .frame(maxHeight: .infinity)
         }
         .padding(isEmbedded ? 0 : MuesliTheme.spacing24)
         .frame(minWidth: isEmbedded ? nil : 920, minHeight: isEmbedded ? nil : 580)
@@ -127,6 +128,7 @@ struct MeetingTemplatesManagerView: View {
                     icon: "sparkles",
                     title: tr("Auto", "Auto"),
                     isSelected: selection == .template(MeetingTemplates.autoID),
+                    iconTint: Self.rowColorPalette[0],
                     showsEditedMark: isOverridden(MeetingTemplates.autoID),
                     toggleID: nil
                 ) {
@@ -136,11 +138,12 @@ struct MeetingTemplatesManagerView: View {
                 let customs = controller.customOnlyMeetingTemplates()
                 if !customs.isEmpty {
                     sidebarSectionHeader(tr("My templates", "Мои шаблоны"))
-                    ForEach(customs) { template in
+                    ForEach(Array(customs.enumerated()), id: \.element.id) { index, template in
                         sidebarRow(
                             icon: MeetingTemplates.normalizedCustomIcon(named: template.icon),
                             title: template.name,
                             isSelected: selection == .template(template.id),
+                            iconTint: Self.rowColorPalette[(index + 1) % Self.rowColorPalette.count],
                             toggleID: template.id
                         ) {
                             selection = .template(template.id)
@@ -149,11 +152,12 @@ struct MeetingTemplatesManagerView: View {
                 }
 
                 sidebarSectionHeader(tr("Built-in", "Встроенные"))
-                ForEach(controller.builtInMeetingTemplates()) { template in
+                ForEach(Array(controller.builtInMeetingTemplates().enumerated()), id: \.element.id) { index, template in
                     sidebarRow(
                         icon: template.icon,
                         title: template.title,
                         isSelected: selection == .template(template.id),
+                        iconTint: Self.rowColorPalette[(index + 2) % Self.rowColorPalette.count],
                         showsEditedMark: isOverridden(template.id),
                         toggleID: template.id
                     ) {
@@ -164,6 +168,20 @@ struct MeetingTemplatesManagerView: View {
             .padding(MuesliTheme.spacing8)
         }
     }
+
+    /// Telegram-style distinct tile color per row (like the Settings sidebar's
+    /// per-section colors) — live feedback preferred this over one flat
+    /// accent color for every row.
+    private static let rowColorPalette: [Color] = [
+        Color(hex: 0x5856D6), // indigo
+        Color(hex: 0x34C759), // green
+        Color(hex: 0xFF9500), // orange
+        Color(hex: 0x00C7BE), // teal
+        Color(hex: 0xFF3B30), // red
+        Color(hex: 0xAF52DE), // purple
+        Color(hex: 0x34AADC), // cyan
+        Color(hex: 0xFF2D55), // pink
+    ]
 
     private func sidebarSectionHeader(_ title: String) -> some View {
         Text(title)

@@ -143,12 +143,11 @@ struct HomeView: View {
                         }
                     }
                     .contentMargins(.top, insightsHeaderClearance + MuesliTheme.spacing8, for: .scrollContent)
-                    .contentMargins(.bottom, MuesliTheme.spacing12, for: .scrollContent)
+                    .contentMargins(.bottom, MuesliTheme.spacing20, for: .scrollContent)
                     .padding(.horizontal, MuesliTheme.spacing24)
                     .onChange(of: appState.insightsChatHistory.count) { _, _ in insightsScrollToBottom(proxy) }
                     .onChange(of: appState.insightsChatAwaiting) { _, _ in insightsScrollToBottom(proxy) }
                 }
-                .overlay(alignment: .bottom) { insightsBottomBackdropGradient }
 
                 insightsHeaderBackdropGradient
                 insightsFloatingHeader
@@ -206,33 +205,26 @@ struct HomeView: View {
         .allowsHitTesting(false)
     }
 
-    /// Mirror of the top fade, above the hint chips/composer, so the last
-    /// messages ease out instead of cutting off at the scroll boundary.
-    private var insightsBottomBackdropGradient: some View {
-        LinearGradient(
-            stops: [
-                .init(color: MuesliTheme.backgroundDeep.opacity(0), location: 0),
-                .init(color: MuesliTheme.backgroundDeep.opacity(0.6), location: 1)
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-        .frame(height: 28)
-        .allowsHitTesting(false)
-    }
-
     @ViewBuilder
     private var insightsFloatingHeader: some View {
-        HStack(alignment: .top, spacing: 11) {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .center, spacing: 11) {
+            // Actual pill chip now, matching the meeting page's headerPill —
+            // was bare text over the gradient before, which didn't read as
+            // a pill at all.
+            VStack(alignment: .leading, spacing: 1) {
                 Text(tr("Insights", "Инсайты"))
-                    .font(MuesliTheme.pageTitle())
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(MuesliTheme.textPrimary)
-                Text(tr("Ask AI about your meetings — it reads all of them at once.", "Спроси ИИ про свои встречи — он читает сразу все."))
-                    .font(MuesliTheme.callout())
+                Text(tr("Ask AI about your meetings", "Спроси ИИ про свои встречи"))
+                    .font(.system(size: 10))
                     .foregroundStyle(MuesliTheme.textTertiary)
+                    .lineLimit(1)
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Capsule().fill(MuesliTheme.backgroundBase))
+            .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
 
             insightsMoreMenu
         }
@@ -922,7 +914,7 @@ struct HomeView: View {
             IdentifiedView(FeatureTourBanner(
                 assetName: "dictation",
                 title: tr("Voice dictation", "Диктовка голосом"),
-                description: tr("Hold your hotkey, speak the way you think, release — polished text appears under your cursor in any app. Set it up once in Settings → Dictation.", "Зажми свою клавишу, говори как думаешь, отпусти — готовый текст появляется под курсором в любом приложении. Настрой один раз в Настройки → Диктовка."),
+                description: tr("Hold your hotkey, speak, release — text appears under your cursor.", "Зажми клавишу, говори, отпусти — текст появится под курсором."),
                 action: FeatureAction(label: tr("Set up dictation", "Настроить диктовку"), systemImage: "keyboard") {
                     openSettings(.dictation)
                 }
@@ -930,7 +922,7 @@ struct HomeView: View {
             IdentifiedView(FeatureTourBanner(
                 assetName: "meetings",
                 title: tr("Meetings, summarized", "Встречи в готовых заметках"),
-                description: tr("Start a meeting and Muesli listens to you and everyone else, then hands you a clean recap — decisions, action items, agreements — in your own template.", "Начни встречу — Muesli слушает и тебя, и собеседников, а после выдаёт аккуратную сводку: решения, задачи, договорённости — по твоему шаблону."),
+                description: tr("Muesli listens, then hands you a clean recap in your own template.", "Muesli слушает встречу, а после выдаёт аккуратную сводку по твоему шаблону."),
                 action: FeatureAction(label: tr("Meeting settings", "Настройки встреч"), systemImage: "gearshape.fill") {
                     openSettings(.meetings)
                 }
@@ -938,7 +930,7 @@ struct HomeView: View {
             IdentifiedView(FeatureTourBanner(
                 assetName: "templates",
                 title: tr("Note templates", "Шаблоны заметок"),
-                description: tr("Choose how your meeting notes are structured — or write your own template and prompt. Auto, the default, adapts to whatever the meeting was about.", "Выбери, как оформлять заметки со встреч — или напиши свой шаблон и промпт. Auto, шаблон по умолчанию, сам подстраивается под тему встречи."),
+                description: tr("Choose how notes are structured, or write your own prompt.", "Выбери, как оформлять заметки, или напиши свой шаблон и промпт."),
                 action: FeatureAction(label: tr("Manage templates", "Управление шаблонами"), systemImage: "square.text.square.fill") {
                     controller.showMeetingTemplatesManager()
                 }
@@ -946,15 +938,15 @@ struct HomeView: View {
             IdentifiedView(FeatureTourBanner(
                 assetName: "meeting-chat",
                 title: tr("Chat with your meeting", "Чат с встречей"),
-                description: tr("Stop re-reading transcripts. Open any meeting and just ask — “what did we decide on the budget?” — for an answer grounded in that exact meeting.", "Не перечитывай транскрипт. Открой любую встречу и спроси — «что решили по бюджету?» — получишь ответ строго по этой встрече."),
+                description: tr("Ask any meeting a question, get an answer grounded in it.", "Задай вопрос по встрече — получи ответ строго по этому разговору."),
                 action: FeatureAction(label: tr("Connect a model", "Подключить модель"), systemImage: "sparkles") {
                     openSettings(.meetings)
                 }
             )),
             IdentifiedView(FeatureTourBanner(
                 assetName: "insights",
-                title: tr("Insights — ask across all your meetings", "Инсайты — вопросы по всем встречам сразу"),
-                description: tr("One chat that reads every meeting in the period you pick. Ask what you promised, what's still open, who's waiting on you.", "Один чат, который читает сразу все встречи за выбранный период. Спроси, что ты пообещал, что осталось нерешённым, кто ждёт ответа от тебя."),
+                title: tr("Insights — ask across all meetings", "Инсайты — вопросы по всем встречам"),
+                description: tr("One chat that reads every meeting in the period you pick.", "Один чат, который читает сразу все встречи за выбранный период."),
                 action: FeatureAction(label: tr("Open Insights", "Открыть Инсайты"), systemImage: "sparkles") {
                     selectedSection = .insights
                 }
@@ -962,7 +954,7 @@ struct HomeView: View {
             IdentifiedView(FeatureTourBanner(
                 assetName: "models",
                 title: tr("On-device models", "Модели на устройстве"),
-                description: tr("11 speech models, all offline — nothing leaves your Mac. Connect cloud models too, for summaries and the meeting/Insights chats.", "11 моделей распознавания, всё офлайн — ничего не уходит в облако. Можно подключить и облачные — для сводок и чатов по встречам/Инсайтам."),
+                description: tr("11 speech models, all offline — nothing leaves your Mac.", "11 моделей распознавания, всё офлайн — ничего не уходит в облако."),
                 action: FeatureAction(label: tr("Manage models", "Управление моделями"), systemImage: "square.and.arrow.down.fill") {
                     openSettings(.models)
                 }
