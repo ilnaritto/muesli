@@ -884,11 +884,11 @@ struct HomeView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Task 5: onboarding-style tour — one full-width banner per
-                // flagship feature, in new-user order — replaces the flagship
-                // grid. Same 11pt rhythm (task 4) between it and the compact
-                // grid below.
-                VStack(alignment: .leading, spacing: 11) {
+                // Task 5: onboarding-style tour, in new-user order — replaces
+                // the flagship grid. 3 per row per feedback (one full-width
+                // banner per row needed too much scrolling). Same 11pt rhythm
+                // (task 4) as the compact grid below.
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 11), count: 3), spacing: 11) {
                     ForEach(featureTourBanners) { $0 }
                 }
 
