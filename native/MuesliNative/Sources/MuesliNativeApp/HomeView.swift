@@ -63,6 +63,15 @@ struct HomeView: View {
             sectionContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .onAppear {
+            // Task 5: land on Features once after onboarding, so a new user
+            // sees the tour before the empty Overview stats. The permissions
+            // wizard itself is a separate flow — untouched.
+            if !appState.config.hasSeenFeaturesTour {
+                selectedSection = .functions
+                controller.updateConfig { $0.hasSeenFeaturesTour = true }
+            }
+        }
         .sheet(isPresented: $isBridgeQRCodePresented) {
             IPhoneBridgeQRCodeSheet(
                 deepLinkURL: IPhoneBridgeLinks.iOSSyncDeepLinkURL,
@@ -794,12 +803,13 @@ struct HomeView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Flagship features — 2 per row, larger.
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 11), GridItem(.flexible(), spacing: 11)], spacing: 11) {
-                    ForEach(flagshipFeatures) { $0 }
+                // Task 5: onboarding-style tour — one full-width banner per
+                // flagship feature, in new-user order — replaces the flagship
+                // grid. The smaller compact grid below is unchanged.
+                VStack(alignment: .leading, spacing: 11) {
+                    ForEach(featureTourBanners) { $0 }
                 }
 
-                // Secondary features — 3 per row, compact.
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 11), count: 3), spacing: 11) {
                     ForEach(compactFeatures) { $0 }
                 }
@@ -811,61 +821,68 @@ struct HomeView: View {
         }
     }
 
+    // MARK: - Features tour (task 5)
+
+    /// New-user order: dictation → meetings → templates → meeting chat →
+    /// Insights chat → models, per spec. Images are optional (see
+    /// FeatureTourBanner) — ships without real screenshots for now; drop
+    /// PNGs into assets/features-tour/ and the banners pick them up.
+    private var featureTourBanners: [IdentifiedView] {
+        [
+            IdentifiedView(FeatureTourBanner(
+                assetName: "dictation",
+                title: tr("Voice dictation", "Диктовка голосом"),
+                description: tr("Hold your hotkey, speak the way you think, release — polished text appears under your cursor in any app. Set it up once in Settings → Dictation.", "Зажми свою клавишу, говори как думаешь, отпусти — готовый текст появляется под курсором в любом приложении. Настрой один раз в Настройки → Диктовка."),
+                action: FeatureAction(label: tr("Set up dictation", "Настроить диктовку"), systemImage: "keyboard") {
+                    openSettings(.dictation)
+                }
+            )),
+            IdentifiedView(FeatureTourBanner(
+                assetName: "meetings",
+                title: tr("Meetings, summarized", "Встречи в готовых заметках"),
+                description: tr("Start a meeting and Muesli listens to you and everyone else, then hands you a clean recap — decisions, action items, agreements — in your own template.", "Начни встречу — Muesli слушает и тебя, и собеседников, а после выдаёт аккуратную сводку: решения, задачи, договорённости — по твоему шаблону."),
+                action: FeatureAction(label: tr("Meeting settings", "Настройки встреч"), systemImage: "gearshape.fill") {
+                    openSettings(.meetings)
+                }
+            )),
+            IdentifiedView(FeatureTourBanner(
+                assetName: "templates",
+                title: tr("Note templates", "Шаблоны заметок"),
+                description: tr("Choose how your meeting notes are structured — or write your own template and prompt. Auto, the default, adapts to whatever the meeting was about.", "Выбери, как оформлять заметки со встреч — или напиши свой шаблон и промпт. Auto, шаблон по умолчанию, сам подстраивается под тему встречи."),
+                action: FeatureAction(label: tr("Manage templates", "Управление шаблонами"), systemImage: "square.text.square.fill") {
+                    controller.showMeetingTemplatesManager()
+                }
+            )),
+            IdentifiedView(FeatureTourBanner(
+                assetName: "meeting-chat",
+                title: tr("Chat with your meeting", "Чат с встречей"),
+                description: tr("Stop re-reading transcripts. Open any meeting and just ask — “what did we decide on the budget?” — for an answer grounded in that exact meeting.", "Не перечитывай транскрипт. Открой любую встречу и спроси — «что решили по бюджету?» — получишь ответ строго по этой встрече."),
+                action: FeatureAction(label: tr("Connect a model", "Подключить модель"), systemImage: "sparkles") {
+                    openSettings(.meetings)
+                }
+            )),
+            IdentifiedView(FeatureTourBanner(
+                assetName: "insights",
+                title: tr("Insights — ask across all your meetings", "Инсайты — вопросы по всем встречам сразу"),
+                description: tr("One chat that reads every meeting in the period you pick. Ask what you promised, what's still open, who's waiting on you.", "Один чат, который читает сразу все встречи за выбранный период. Спроси, что ты пообещал, что осталось нерешённым, кто ждёт ответа от тебя."),
+                action: FeatureAction(label: tr("Open Insights", "Открыть Инсайты"), systemImage: "sparkles") {
+                    selectedSection = .insights
+                }
+            )),
+            IdentifiedView(FeatureTourBanner(
+                assetName: "models",
+                title: tr("On-device models", "Модели на устройстве"),
+                description: tr("11 speech models, all offline — nothing leaves your Mac. Connect cloud models too, for summaries and the meeting/Insights chats.", "11 моделей распознавания, всё офлайн — ничего не уходит в облако. Можно подключить и облачные — для сводок и чатов по встречам/Инсайтам."),
+                action: FeatureAction(label: tr("Manage models", "Управление моделями"), systemImage: "square.and.arrow.down.fill") {
+                    openSettings(.models)
+                }
+            )),
+        ]
+    }
+
     private func openSettings(_ section: SettingsSection) {
         appState.settingsSection = section
         appState.selectedTab = .settings
-    }
-
-    private var flagshipFeatures: [IdentifiedView] {
-        [
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0xFF3B30),
-                icon: "mic.fill",
-                title: tr("Voice dictation", "Диктовка голосом"),
-                subtitle: tr("Forget the keyboard. Hold your hotkey, speak the way you think — polished text appears under your cursor in any app, instantly.", "Забудь про клавиатуру. Зажми клавишу, говори как думаешь — готовый текст мгновенно появляется под курсором в любом приложении."),
-                actions: [
-                    FeatureAction(label: tr("Set hotkey", "Настроить клавишу"), systemImage: "keyboard", isPrimary: true) {
-                        openSettings(.shortcuts)
-                    }
-                ]
-            )),
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0x34C759),
-                icon: "person.2.fill",
-                title: tr("Meetings, summarized", "Встречи в готовых заметках"),
-                subtitle: tr("Muesli listens to you and everyone else, then hands you a clean recap — decisions, action items, agreements — in your own template.", "Muesli слушает и тебя, и собеседников, а после встречи выдаёт аккуратную сводку — решения, задачи, договорённости — по твоему шаблону."),
-                actions: [
-                    FeatureAction(label: tr("Templates", "Шаблоны"), systemImage: "square.text.square.fill", isPrimary: true) {
-                        controller.showMeetingTemplatesManager()
-                    },
-                    FeatureAction(label: tr("Recording", "Запись"), systemImage: "gearshape.fill") {
-                        openSettings(.meetings)
-                    }
-                ]
-            )),
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0x5856D6),
-                icon: "bubble.left.and.text.bubble.right.fill",
-                title: tr("Chat with your meeting", "Чат с встречей"),
-                subtitle: tr("Stop re-reading transcripts. Just ask — “what did we decide on the budget?” — and get an answer grounded in that exact meeting.", "Не перечитывай транскрипт. Просто спроси — «что решили по бюджету?» — и получи ответ строго по этой встрече."),
-                actions: [
-                    FeatureAction(label: tr("Connect a model", "Подключить модель"), systemImage: "sparkles", isPrimary: true) {
-                        openSettings(.meetings)
-                    }
-                ]
-            )),
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0xFF9500),
-                icon: "display",
-                title: tr("Screen video with sound", "Видео экрана со звуком"),
-                subtitle: tr("Record the screen together with the audio — demos, calls, walkthroughs — and replay it right on the meeting page.", "Записывай экран вместе со звуком — демо, созвоны, разборы — и пересматривай прямо на странице встречи."),
-                actions: [
-                    FeatureAction(label: tr("Enable in settings", "Включить в настройках"), systemImage: "gearshape.fill", isPrimary: true) {
-                        openSettings(.meetings)
-                    }
-                ]
-            )),
-        ]
     }
 
     private var compactFeatures: [IdentifiedView] {
@@ -924,6 +941,32 @@ struct HomeView: View {
                 title: tr("Private by design", "Приватность"),
                 subtitle: tr("Speech-to-text runs on your Mac — data stays with you.", "Речь в текст — на твоём Mac, данные остаются у тебя."),
                 actions: [],
+                compact: true
+            )),
+            // Task 5 point 7: minor items, compact — moved out of the
+            // flagship tour above.
+            IdentifiedView(FeatureCard(
+                accent: Color(hex: 0xFF9500),
+                icon: "display",
+                title: tr("Screen video with sound", "Видео экрана со звуком"),
+                subtitle: tr("Record the screen together with the audio, replay it on the meeting page.", "Записывай экран вместе со звуком, пересматривай на странице встречи."),
+                actions: [
+                    FeatureAction(label: tr("Enable", "Включить"), isPrimary: true) {
+                        openSettings(.meetings)
+                    }
+                ],
+                compact: true
+            )),
+            IdentifiedView(FeatureCard(
+                accent: Color(hex: 0x30B0C7),
+                icon: "character.book.closed.fill",
+                title: tr("Dictionary", "Словарь"),
+                subtitle: tr("Custom words for names and terms transcription often gets wrong.", "Свои слова для имён и терминов, которые транскрипция часто путает."),
+                actions: [
+                    FeatureAction(label: tr("Open", "Открыть"), isPrimary: true) {
+                        openSettings(.dictionary)
+                    }
+                ],
                 compact: true
             )),
         ]

@@ -942,6 +942,9 @@ struct AppConfig: Codable {
     var enableComputerUsePlanner: Bool = true
     var computerUsePlannerModel: String = ""
     var computerUseTimeoutSeconds: Int = 120
+    /// Task 5: shows the Features onboarding tour once, then falls back to
+    /// the normal default Home tab.
+    var hasSeenFeaturesTour: Bool = false
     var sttBackend: String = BackendOption.whisper.backend
     var sttModel: String = BackendOption.whisper.model
     var dictationInputDeviceUID: String? = nil
@@ -1079,6 +1082,7 @@ struct AppConfig: Codable {
         case enableComputerUsePlanner = "enable_computer_use_planner"
         case computerUsePlannerModel = "computer_use_planner_model"
         case computerUseTimeoutSeconds = "computer_use_timeout_seconds"
+        case hasSeenFeaturesTour = "has_seen_features_tour"
         case sttBackend = "stt_backend"
         case sttModel = "stt_model"
         case dictationInputDeviceUID = "dictation_input_device_uid"
@@ -1208,6 +1212,7 @@ struct AppConfig: Codable {
         enableComputerUsePlanner = (try? c.decode(Bool.self, forKey: .enableComputerUsePlanner)) ?? defaults.enableComputerUsePlanner
         computerUsePlannerModel = (try? c.decode(String.self, forKey: .computerUsePlannerModel)) ?? defaults.computerUsePlannerModel
         computerUseTimeoutSeconds = (try? c.decode(Int.self, forKey: .computerUseTimeoutSeconds)) ?? defaults.computerUseTimeoutSeconds
+        hasSeenFeaturesTour = (try? c.decode(Bool.self, forKey: .hasSeenFeaturesTour)) ?? defaults.hasSeenFeaturesTour
         sttBackend = (try? c.decode(String.self, forKey: .sttBackend)) ?? defaults.sttBackend
         sttModel = (try? c.decode(String.self, forKey: .sttModel)) ?? defaults.sttModel
         dictationInputDeviceUID = try? c.decode(String.self, forKey: .dictationInputDeviceUID)
