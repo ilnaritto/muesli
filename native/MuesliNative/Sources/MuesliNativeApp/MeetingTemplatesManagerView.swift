@@ -37,9 +37,11 @@ struct MeetingTemplatesManagerView: View {
             header
 
             HStack(alignment: .top, spacing: MuesliTheme.spacing16) {
-                sidebar
-                    .frame(width: isEmbedded ? 220 : 250)
+                SecondaryColumn(title: tr("Templates", "Шаблоны"), width: isEmbedded ? 240 : 260) {
+                    sidebar
+                }
                 editorPane
+                    .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
         }
@@ -161,12 +163,6 @@ struct MeetingTemplatesManagerView: View {
             }
             .padding(MuesliTheme.spacing8)
         }
-        .background(MuesliTheme.backgroundBase)
-        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge))
-        .overlay(
-            RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge)
-                .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
-        )
     }
 
     private func sidebarSectionHeader(_ title: String) -> some View {
@@ -190,48 +186,28 @@ struct MeetingTemplatesManagerView: View {
         action: @escaping () -> Void
     ) -> some View {
         let isEnabled = toggleID.map { controller.isMeetingTemplateEnabled(id: $0) } ?? true
-        HStack(spacing: MuesliTheme.spacing8) {
-            Button(action: action) {
-                HStack(spacing: MuesliTheme.spacing8) {
-                    Image(systemName: icon)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(isSelected ? MuesliTheme.accent : (iconTint ?? MuesliTheme.textSecondary))
-                        .frame(width: 16)
-                    Text(title)
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundStyle(isSelected ? MuesliTheme.textPrimary : MuesliTheme.textSecondary)
-                        .lineLimit(1)
-                    if showsEditedMark {
-                        Circle()
-                            .fill(MuesliTheme.accent)
-                            .frame(width: 5, height: 5)
-                            .help(tr("Edited", "Изменён"))
-                    }
-                    Spacer(minLength: 0)
+        SecondaryColumnRow(
+            icon: icon,
+            title: title,
+            isSelected: isSelected,
+            tileColor: iconTint ?? MuesliTheme.accent,
+            showsEditedMark: showsEditedMark,
+            isDimmed: !isEnabled,
+            trailing: {
+                if let toggleID {
+                    Toggle("", isOn: Binding(
+                        get: { controller.isMeetingTemplateEnabled(id: toggleID) },
+                        set: { controller.setMeetingTemplateEnabled(id: toggleID, enabled: $0) }
+                    ))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .tint(MuesliTheme.accent)
+                    .labelsHidden()
+                    .help(tr("Show as a tab on the meeting page", "Показывать вкладкой на странице встречи"))
                 }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if let toggleID {
-                Toggle("", isOn: Binding(
-                    get: { controller.isMeetingTemplateEnabled(id: toggleID) },
-                    set: { controller.setMeetingTemplateEnabled(id: toggleID, enabled: $0) }
-                ))
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .tint(MuesliTheme.accent)
-                .labelsHidden()
-                .help(tr("Show as a tab on the meeting page", "Показывать вкладкой на странице встречи"))
-            }
-        }
-        .padding(.horizontal, MuesliTheme.spacing8)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
-                .fill(isSelected ? MuesliTheme.accentSubtle : Color.clear)
+            },
+            action: action
         )
-        .opacity(isEnabled ? 1 : 0.55)
     }
 
     // MARK: - Editor pane
@@ -262,14 +238,13 @@ struct MeetingTemplatesManagerView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        fieldLabel(tr("Name", "Название"))
-                        Spacer()
-                        if let id = selectedTemplateID, isProtectedSystemTemplate(id) {
-                            let isAuto = id == MeetingTemplates.autoID
-                            let label = isOverridden(id)
-                                ? (isAuto ? tr("system · edited", "системный · изменён") : tr("built-in · edited", "встроенный · изменён"))
-                                : (isAuto ? tr("system", "системный") : tr("built-in", "встроенный"))
+                    if let id = selectedTemplateID, isProtectedSystemTemplate(id) {
+                        let isAuto = id == MeetingTemplates.autoID
+                        let label = isOverridden(id)
+                            ? (isAuto ? tr("system · edited", "системный · изменён") : tr("built-in · edited", "встроенный · изменён"))
+                            : (isAuto ? tr("system", "системный") : tr("built-in", "встроенный"))
+                        HStack {
+                            Spacer()
                             Text(label)
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(MuesliTheme.textTertiary)
@@ -294,64 +269,73 @@ struct MeetingTemplatesManagerView: View {
                             iconPickerPopover
                         }
 
-                        TextField(tr("Customer follow-up", "Встреча с клиентом"), text: $draftTemplateName)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 13))
-                            .foregroundStyle(MuesliTheme.textPrimary)
-                            .padding(.horizontal, 16)
-                            .frame(height: 40)
-                            .frame(maxWidth: .infinity)
-                            .background(Capsule().fill(MuesliTheme.backgroundBase))
-                            .overlay(
-                                Capsule().strokeBorder(
-                                    showNameValidationError ? MuesliTheme.recording.opacity(0.75) : MuesliTheme.surfaceBorder,
-                                    lineWidth: 1
-                                )
+                        // Label lives inside the field now (task 7): a small
+                        // caption line above the text, same rounded container.
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(tr("Name", "Название"))
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(MuesliTheme.textTertiary)
+                            TextField(tr("Customer follow-up", "Встреча с клиентом"), text: $draftTemplateName)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 13))
+                                .foregroundStyle(MuesliTheme.textPrimary)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
+                        .frame(height: 52)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Capsule().fill(MuesliTheme.backgroundBase))
+                        .overlay(
+                            Capsule().strokeBorder(
+                                showNameValidationError ? MuesliTheme.recording.opacity(0.75) : MuesliTheme.surfaceBorder,
+                                lineWidth: 1
                             )
-                            .onChange(of: draftTemplateName) { _, newValue in
-                                if !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                    showNameValidationError = false
-                                }
+                        )
+                        .onChange(of: draftTemplateName) { _, newValue in
+                            if !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                showNameValidationError = false
                             }
+                        }
                     }
                     if showNameValidationError {
                         validationText(tr("Enter a template name.", "Введите название шаблона."))
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    fieldLabel(tr("Output language", "Язык выдачи"))
-                    languagePicker
-                }
+                languagePicker
 
                 if let id = selectedTemplateID {
                     designedToggleRow(templateID: id)
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    fieldLabel(tr("Prompt", "Промпт"))
+                    // Label as the first line inside the same rounded block —
+                    // no separate heading above the editor (task 7).
+                    Text(tr("Prompt", "Промпт"))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(MuesliTheme.textTertiary)
                     TextEditor(text: $draftTemplatePrompt)
                         .font(.system(size: 12))
                         .foregroundStyle(MuesliTheme.textPrimary)
                         .scrollContentBackground(.hidden)
-                        .frame(minHeight: 180)
-                        .padding(MuesliTheme.spacing12)
-                        .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).fill(MuesliTheme.backgroundBase))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
-                                .strokeBorder(
-                                    showPromptValidationError ? MuesliTheme.recording.opacity(0.75) : MuesliTheme.surfaceBorder,
-                                    lineWidth: 1
-                                )
+                        .frame(minHeight: 168)
+                }
+                .padding(MuesliTheme.spacing12)
+                .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).fill(MuesliTheme.backgroundBase))
+                .overlay(
+                    RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
+                        .strokeBorder(
+                            showPromptValidationError ? MuesliTheme.recording.opacity(0.75) : MuesliTheme.surfaceBorder,
+                            lineWidth: 1
                         )
-                        .onChange(of: draftTemplatePrompt) { _, newValue in
-                            if !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                showPromptValidationError = false
-                            }
-                        }
-                    if showPromptValidationError {
-                        validationText(tr("Enter the prompt instructions for this template.", "Введите инструкции промпта для этого шаблона."))
+                )
+                .onChange(of: draftTemplatePrompt) { _, newValue in
+                    if !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        showPromptValidationError = false
                     }
+                }
+                if showPromptValidationError {
+                    validationText(tr("Enter the prompt instructions for this template.", "Введите инструкции промпта для этого шаблона."))
                 }
 
                 HStack(spacing: MuesliTheme.spacing8) {
@@ -382,13 +366,6 @@ struct MeetingTemplatesManagerView: View {
             }
             .padding(.vertical, 2)
         }
-    }
-
-    private func fieldLabel(_ title: String) -> some View {
-        Text(title)
-            .font(MuesliTheme.caption())
-            .foregroundStyle(MuesliTheme.textSecondary)
-            .padding(.leading, 16)
     }
 
     private func validationText(_ message: String) -> some View {
@@ -524,6 +501,13 @@ struct MeetingTemplatesManagerView: View {
             HStack(spacing: 6) {
                 Image(systemName: "globe")
                     .font(.system(size: 12, weight: .medium))
+                // Label lives inside the dropdown now (task 7): a small
+                // caption before the value, no separate heading above it.
+                Text(tr("Output language", "Язык выдачи"))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(MuesliTheme.textTertiary)
+                Text("·")
+                    .foregroundStyle(MuesliTheme.textTertiary)
                 Text(MeetingOutputLanguage.displayName(for: draftTemplateLanguage))
                     .font(.system(size: 13, weight: .medium))
                 Image(systemName: "chevron.down")

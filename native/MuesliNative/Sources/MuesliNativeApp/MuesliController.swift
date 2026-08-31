@@ -593,6 +593,17 @@ final class MuesliController: NSObject {
         }
         indicator.onDiscardMeeting = { [weak self] in self?.discardMeetingWithConfirmation() }
         indicator.onToggleMeetingPause = { [weak self] in self?.toggleMeetingRecordingPause() }
+        // Task 14.1: Computer Use in the pill, opt-in via
+        // config.computerUseVisibleInPill. Toggle semantics (click to start
+        // a held-open command, click again to stop) mirror the pill's
+        // dictation circle.
+        indicator.onStartComputerUse = { [weak self] in self?.handleComputerUseToggleStart() }
+        indicator.onStopComputerUse = { [weak self] in self?.handleComputerUseToggleStop() }
+        indicator.onCancelComputerUse = { [weak self] in
+            guard let self else { return }
+            self.handleComputerUseCancel()
+            self.computerUseHotkeyMonitor.cancelToggleMode()
+        }
         indicator.onStopToggleDictation = { [weak self] in
             guard let self else { return }
             if self.hotkeyMonitor.isToggleRecording {
@@ -6967,6 +6978,7 @@ final class MuesliController: NSObject {
                 self?.computerUseRecorder.currentPower() ?? -160
             }
             indicator.setDictationCapturing(true, config: config)
+            indicator.setComputerUseCapturing(true, config: config)
             setState(.recording)
             SoundController.playDictationStart(enabled: shouldPlayDictationLifecycleSounds && !isDictationTestMode)
         } catch {
