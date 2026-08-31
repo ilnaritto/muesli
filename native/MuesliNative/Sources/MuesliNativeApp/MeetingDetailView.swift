@@ -7,11 +7,6 @@ private enum MeetingDocumentMode: Hashable {
     case transcript
 }
 
-private enum RecordingContentMode: Hashable {
-    case notes
-    case live
-}
-
 private enum ManualNotesSaveStatus {
     case saved
     case saving
@@ -21,25 +16,6 @@ private enum ManualNotesSaveStatus {
         case .saved: return tr("Saved", "Сохранено")
         case .saving: return tr("Saving...", "Сохранение...")
         }
-    }
-}
-
-// Wrapper views that isolate observation of liveMeetingTranscript.
-// Without these, MeetingDetailView.body would observe the property and
-// re-evaluate on every chunk (every ~5s), re-rendering the entire detail view.
-// Each wrapper is the sole observer — MeetingDetailView passes appState by
-// reference and never reads liveMeetingTranscript in its own body.
-private struct LiveTranscriptSection: View {
-    let appState: AppState
-    let transcriptPrefix: String
-
-    var body: some View {
-        LiveTranscriptView(
-            transcript: MeetingResumePolicy.combinedResumeTranscript(
-                prior: transcriptPrefix,
-                new: appState.liveMeetingTranscript
-            )
-        )
     }
 }
 
@@ -64,7 +40,6 @@ struct MeetingDetailView: View {
     @State private var documentMode: MeetingDocumentMode
     @State private var showTranscriptSearch = false
     @State private var isAIChatMode = false
-    @State private var recordingMode: RecordingContentMode = .notes
     @State private var titleSaveTask: DispatchWorkItem?
     @State private var notesSaveTask: DispatchWorkItem?
     @State private var transcriptSaveTask: DispatchWorkItem?
@@ -258,10 +233,6 @@ struct MeetingDetailView: View {
             }
 
             headerRow(meeting, appliedTemplate: appliedTemplate)
-
-            if meeting.status == .recording {
-                contentTabsCard(meeting)
-            }
 
             if let savedRecordingPath = meeting.savedRecordingPath,
                FileManager.default.fileExists(atPath: savedRecordingPath) {
@@ -883,54 +854,6 @@ struct MeetingDetailView: View {
         .help(tr("More actions", "Другие действия"))
     }
 
-    @ViewBuilder
-    private func contentTabsCard(_ meeting: MeetingRecord) -> some View {
-        HStack(alignment: .center, spacing: MuesliTheme.spacing16) {
-            if showsManualNotesEditor(for: meeting) {
-                contentTab(tr("Notes", "Заметки"), isSelected: recordingMode == .notes) {
-                    recordingMode = .notes
-                }
-                contentTab(tr("Live", "Онлайн"), isSelected: recordingMode == .live) {
-                    recordingMode = .live
-                }
-            } else {
-                contentTab(tr("Summary", "Сводка"), isSelected: documentMode == .notes) {
-                    documentMode = .notes
-                }
-                .disabled(isEditingNotes || isEditingTranscript)
-                contentTab(tr("Transcript", "Транскрипт"), isSelected: documentMode == .transcript) {
-                    documentMode = .transcript
-                }
-                .disabled(isEditingNotes || isEditingTranscript)
-            }
-
-            Spacer(minLength: 0)
-
-            if isSummarizing {
-                HStack(spacing: 6) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(tr("Summarizing...", "Создание сводки..."))
-                        .font(.system(size: 11))
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                }
-                .padding(.bottom, 8)
-            } else if isRetranscribing {
-                HStack(spacing: 6) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(tr("Re-transcribing...", "Повторная транскрипция..."))
-                        .font(.system(size: 11))
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                }
-                .padding(.bottom, 8)
-            }
-        }
-        .padding(.horizontal, MuesliTheme.spacing16)
-        .frame(height: 40)
-        .background(Capsule().fill(MuesliTheme.backgroundBase))
-        .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
-    }
 
     private func contentTab(_ title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
         CapsuleTab(title: title, isSelected: isSelected, action: action)
@@ -1040,61 +963,45 @@ struct MeetingDetailView: View {
     private func content(for meeting: MeetingRecord) -> some View {
         if showsManualNotesEditor(for: meeting) {
             if meeting.status == .recording {
-                let isManualNotesEditable = canEditManualNotes(for: meeting)
+                // Task 12: "Notes"/"Live" tabs merged into one screen — the
+                // live feed is always visible, with a note composer pinned
+                // below it. A prior segment's saved notes (resuming a
+                // finished meeting) still show above, read-only, for context.
                 let persistedNotes = Self.notesContent(for: meeting)
                 let hasPersistedNotes = !meeting.formattedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     || !meeting.rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ZStack {
-                    VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
-                        if hasPersistedNotes {
-                            MeetingNotesView(markdown: persistedNotes)
-                                .frame(maxWidth: 980, maxHeight: .infinity, alignment: .topLeading)
-                                .background(MuesliTheme.backgroundBase)
-                                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
-                                        .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
-                                )
-                        }
-
-                        VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
-                            manualNotesToolbar(for: meeting)
-                                .disabled(!isManualNotesEditable)
-                            MarkdownRichTextEditor(
-                                text: $editableManualNotes,
-                                command: $manualEditorCommand,
-                                shouldFocus: isManualNotesEditable,
-                                isEditable: isManualNotesEditable,
-                                onTextChange: { notes in
-                                    guard isManualNotesEditable else { return }
-                                    saveManualNotes(meetingID: meeting.id, notes: notes)
-                                }
-                            )
+                VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
+                    if hasPersistedNotes {
+                        MeetingNotesView(markdown: persistedNotes)
+                            .frame(maxWidth: 980, maxHeight: 200, alignment: .topLeading)
                             .background(MuesliTheme.backgroundBase)
                             .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
                             .overlay(
                                 RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
                                     .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
                             )
-                            .frame(maxHeight: hasPersistedNotes ? 260 : .infinity)
-                        }
-                        .frame(maxWidth: 980, maxHeight: hasPersistedNotes ? nil : .infinity, alignment: .topLeading)
                     }
-                    .padding(.horizontal, 40)
-                    .padding(.top, 12)
-                    .padding(.bottom, 24)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .opacity(recordingMode == .notes ? 1 : 0)
-                    .allowsHitTesting(recordingMode == .notes)
-                    .accessibilityHidden(recordingMode != .notes)
 
-                    LiveTranscriptSection(appState: appState, transcriptPrefix: meeting.rawTranscript)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .opacity(recordingMode == .live ? 1 : 0)
-                        .allowsHitTesting(recordingMode == .live)
-                        .accessibilityHidden(recordingMode != .live)
-
+                    LiveMeetingFeedView(
+                        appState: appState,
+                        transcriptPrefix: meeting.rawTranscript,
+                        manualNotes: $editableManualNotes,
+                        onNotesChanged: { notes in
+                            saveManualNotes(meetingID: meeting.id, notes: notes)
+                        }
+                    )
+                    .frame(maxWidth: 980, maxHeight: .infinity)
+                    .background(MuesliTheme.backgroundBase)
+                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                            .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                    )
                 }
+                .padding(.horizontal, 40)
+                .padding(.top, 12)
+                .padding(.bottom, 24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else {
                 let isManualNotesEditable = canEditManualNotes(for: meeting)
                 VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
@@ -1165,16 +1072,6 @@ struct MeetingDetailView: View {
         .tint(MuesliTheme.accent)
         .frame(width: 220)
         .disabled(isEditingNotes || isEditingTranscript)
-    }
-
-    private var recordingModePicker: some View {
-        Picker("", selection: $recordingMode) {
-            Text(tr("Notes", "Заметки")).tag(RecordingContentMode.notes)
-            Text(tr("Live", "Онлайн")).tag(RecordingContentMode.live)
-        }
-        .pickerStyle(.segmented)
-        .tint(MuesliTheme.accent)
-        .frame(width: 180)
     }
 
     private func showsManualNotesEditor(for meeting: MeetingRecord) -> Bool {
@@ -1785,6 +1682,9 @@ struct MeetingDetailView: View {
         .help(tr("Resume recording", "Возобновить запись"))
     }
 
+    /// Task 10: red now lives only in the recording indicator dot
+    /// (statusChip) — the Stop button itself matches the rest of the page's
+    /// plain chips instead of a solid red fill.
     private var stopRecordingButton: some View {
         Button {
             if let meeting {
@@ -1798,11 +1698,15 @@ struct MeetingDetailView: View {
                 Text(tr("Stop", "Стоп"))
                     .font(.system(size: 12, weight: .semibold))
             }
-            .foregroundStyle(.white)
+            .foregroundStyle(MuesliTheme.textPrimary)
             .padding(.horizontal, MuesliTheme.spacing12)
             .padding(.vertical, 7)
-            .background(MuesliTheme.recording)
+            .background(MuesliTheme.surfacePrimary)
             .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+            .overlay(
+                RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                    .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
         .disabled(!appState.isMeetingRecording)
@@ -2280,14 +2184,11 @@ struct MeetingDetailView: View {
 }
 
 private extension View {
+    /// Task 10: dropped the extra wrapping card — every chip inside
+    /// (status, pause/resume, stop, discard) already has its own
+    /// background/border, so this used to read as a duplicate frame.
     func recordingControlsBackground() -> some View {
         padding(5)
-            .background(MuesliTheme.backgroundRaised)
-            .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-            .overlay(
-                RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
-                    .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
-            )
     }
 }
 
