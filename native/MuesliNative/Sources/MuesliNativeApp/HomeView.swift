@@ -53,6 +53,8 @@ struct HomeView: View {
     @FocusState private var insightsInputFocused: Bool
     @State private var showInsightsDatePopover = false
     @State private var insightsCustomDate = Date()
+    @State private var insightsHeaderMeasuredHeight: CGFloat?
+    @State private var showClearInsightsHistoryConfirmation = false
 
     var body: some View {
         HStack(spacing: 5) {
@@ -114,39 +116,38 @@ struct HomeView: View {
     @ViewBuilder
     private var insightsContent: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(tr("Insights", "Инсайты"))
-                    .font(MuesliTheme.pageTitle())
-                    .foregroundStyle(MuesliTheme.textPrimary)
-                Text(tr("Ask AI about your meetings — it reads all of them at once.", "Спроси ИИ про свои встречи — он читает сразу все."))
-                    .font(MuesliTheme.callout())
-                    .foregroundStyle(MuesliTheme.textTertiary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, MuesliTheme.spacing24)
-            .padding(.top, MuesliTheme.spacing20)
-            .padding(.bottom, MuesliTheme.spacing12)
-
-            ScrollViewReader { proxy in
-                ScrollView {
-                    if appState.insightsChatHistory.isEmpty && !appState.insightsChatAwaiting {
-                        insightsEmptyState
-                    } else {
-                        VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-                            ForEach(appState.insightsChatHistory) { turn in
-                                insightsBubble(turn).id(turn.id)
+            ZStack(alignment: .top) {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        if appState.insightsChatHistory.isEmpty && !appState.insightsChatAwaiting {
+                            insightsEmptyState
+                        } else {
+                            VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+                                ForEach(appState.insightsChatHistory) { turn in
+                                    insightsBubble(turn).id(turn.id)
+                                }
+                                if appState.insightsChatAwaiting {
+                                    insightsTypingBubble.id("insights-typing")
+                                }
                             }
-                            if appState.insightsChatAwaiting {
-                                insightsTypingBubble.id("insights-typing")
-                            }
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
                         }
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .padding(.top, MuesliTheme.spacing8)
                     }
+                    .contentMargins(.top, insightsHeaderClearance + MuesliTheme.spacing8, for: .scrollContent)
+                    .contentMargins(.bottom, MuesliTheme.spacing12, for: .scrollContent)
+                    .padding(.horizontal, MuesliTheme.spacing24)
+                    .onChange(of: appState.insightsChatHistory.count) { _, _ in insightsScrollToBottom(proxy) }
+                    .onChange(of: appState.insightsChatAwaiting) { _, _ in insightsScrollToBottom(proxy) }
                 }
-                .padding(.horizontal, MuesliTheme.spacing24)
-                .onChange(of: appState.insightsChatHistory.count) { _, _ in insightsScrollToBottom(proxy) }
-                .onChange(of: appState.insightsChatAwaiting) { _, _ in insightsScrollToBottom(proxy) }
+                .overlay(alignment: .bottom) { insightsBottomBackdropGradient }
+
+                insightsHeaderBackdropGradient
+                insightsFloatingHeader
+                    .onGeometryChange(for: CGFloat.self) { proxy in
+                        proxy.size.height
+                    } action: { height in
+                        insightsHeaderMeasuredHeight = height
+                    }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -164,6 +165,94 @@ struct HomeView: View {
         .frame(maxWidth: 900)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(.easeInOut(duration: 0.15), value: appState.config.insightsHintsEnabled)
+        .alert(tr("Clear History", "Очистить историю"), isPresented: $showClearInsightsHistoryConfirmation) {
+            Button(tr("Clear", "Очистить"), role: .destructive) {
+                appState.insightsChatHistory.removeAll()
+            }
+            Button(tr("Cancel", "Отмена"), role: .cancel) {}
+        } message: {
+            Text(tr("This clears the conversation. Your date, folder, and model selection stay as they are.", "Это очистит переписку. Выбранные период, папка и модель останутся прежними."))
+        }
+    }
+
+    // MARK: Insights — floating pill header (task 3)
+
+    private var insightsHeaderClearance: CGFloat {
+        insightsHeaderMeasuredHeight ?? 74
+    }
+
+    /// Soft fade under the floating pill so messages scrolling behind it
+    /// dim out instead of getting clipped — mirrors `headerBackdropGradient`
+    /// on the meeting page.
+    private var insightsHeaderBackdropGradient: some View {
+        LinearGradient(
+            stops: [
+                .init(color: MuesliTheme.backgroundDeep.opacity(0.7), location: 0),
+                .init(color: MuesliTheme.backgroundDeep.opacity(0), location: 1)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .frame(height: insightsHeaderClearance + 20)
+        .allowsHitTesting(false)
+    }
+
+    /// Mirror of the top fade, above the hint chips/composer, so the last
+    /// messages ease out instead of cutting off at the scroll boundary.
+    private var insightsBottomBackdropGradient: some View {
+        LinearGradient(
+            stops: [
+                .init(color: MuesliTheme.backgroundDeep.opacity(0), location: 0),
+                .init(color: MuesliTheme.backgroundDeep.opacity(0.6), location: 1)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .frame(height: 28)
+        .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private var insightsFloatingHeader: some View {
+        HStack(alignment: .top, spacing: 11) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(tr("Insights", "Инсайты"))
+                    .font(MuesliTheme.pageTitle())
+                    .foregroundStyle(MuesliTheme.textPrimary)
+                Text(tr("Ask AI about your meetings — it reads all of them at once.", "Спроси ИИ про свои встречи — он читает сразу все."))
+                    .font(MuesliTheme.callout())
+                    .foregroundStyle(MuesliTheme.textTertiary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            insightsMoreMenu
+        }
+        .padding(.horizontal, MuesliTheme.spacing24)
+        .padding(.top, MuesliTheme.spacing20)
+        .padding(.bottom, MuesliTheme.spacing12)
+    }
+
+    private var insightsMoreMenu: some View {
+        Menu {
+            Button(role: .destructive) {
+                showClearInsightsHistoryConfirmation = true
+            } label: {
+                Label(tr("Clear History", "Очистить историю"), systemImage: "trash")
+            }
+            .disabled(appState.insightsChatHistory.isEmpty)
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(MuesliTheme.textSecondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .frame(width: 40, height: 40)
+        .background(Circle().fill(MuesliTheme.backgroundBase))
+        .overlay(Circle().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+        .contentShape(Circle())
+        .help(tr("More actions", "Другие действия"))
     }
 
     // MARK: Insights — empty state & bubbles
@@ -794,14 +883,18 @@ struct HomeView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Flagship features — 2 per row, larger.
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 11), GridItem(.flexible(), spacing: 11)], spacing: 11) {
-                    ForEach(flagshipFeatures) { $0 }
-                }
+                // Both grids share one 11pt rhythm — nested in their own VStack so the
+                // gap between the two grids matches the gap between cards inside each.
+                VStack(alignment: .leading, spacing: 11) {
+                    // Flagship features — 2 per row, larger.
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 11), GridItem(.flexible(), spacing: 11)], spacing: 11) {
+                        ForEach(flagshipFeatures) { $0 }
+                    }
 
-                // Secondary features — 3 per row, compact.
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 11), count: 3), spacing: 11) {
-                    ForEach(compactFeatures) { $0 }
+                    // Secondary features — 3 per row, compact.
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 11), count: 3), spacing: 11) {
+                        ForEach(compactFeatures) { $0 }
+                    }
                 }
             }
             .padding(.horizontal, MuesliTheme.spacing24)

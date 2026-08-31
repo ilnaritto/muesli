@@ -55,16 +55,7 @@ struct MeetingListItemView: View {
     }
 
     var body: some View {
-        Group {
-            if isCompact {
-                HStack(alignment: .top, spacing: 10) {
-                    mediaKindTile
-                    mainContent
-                }
-            } else {
-                mainContent
-            }
-        }
+        mainContent
         .padding(isCompact ? MuesliTheme.spacing12 : MuesliTheme.spacing16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
@@ -155,28 +146,26 @@ struct MeetingListItemView: View {
         }
     }
 
-    /// 32×32 circular tile showing the recording type — Telegram-style avatar
-    /// slot. Compact rows only; the wide row has no room reserved for it.
-    private var mediaKindTile: some View {
-        let kind = MeetingMediaKind.resolve(record)
-        return ZStack {
-            Circle().fill(MuesliTheme.accentSubtle)
-            Image(systemName: kind.symbol)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(MuesliTheme.accent)
-        }
-        .frame(width: 32, height: 32)
-        .help(kind.help)
-    }
+    /// Recording-type glyph shown inline before the title, one theme color
+    /// for every kind — distinguished by glyph only, not color or a circle.
+    private var mediaKind: MeetingMediaKind { MeetingMediaKind.resolve(record) }
 
     @ViewBuilder
     private var mainContent: some View {
         VStack(alignment: .leading, spacing: isCompact ? 4 : MuesliTheme.spacing8) {
             HStack(alignment: .firstTextBaseline) {
-                Text(record.title)
-                    .font(isCompact ? .system(size: 13, weight: .medium) : MuesliTheme.headline())
-                    .foregroundStyle(MuesliTheme.textPrimary)
-                    .lineLimit(isCompact ? 1 : 2)
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    if isCompact {
+                        Image(systemName: mediaKind.symbol)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(MuesliTheme.accent)
+                            .help(mediaKind.help)
+                    }
+                    Text(record.title)
+                        .font(isCompact ? .system(size: 13, weight: .medium) : MuesliTheme.headline())
+                        .foregroundStyle(MuesliTheme.textPrimary)
+                        .lineLimit(isCompact ? 1 : 2)
+                }
 
                 Spacer(minLength: 4)
 
