@@ -796,7 +796,10 @@ struct SettingsView: View {
                 }
             }
 
-            settingsSection(tr("Recording", "Запись")) {
+            // Renamed per feedback round 2 task 15 (author's working
+            // hypothesis): the old plain "Recording"/"Запись" name read as
+            // unclear next to the screen-video toggle inside it.
+            settingsSection(tr("Meeting Recording", "Запись встречи")) {
                 settingsRow(tr("Auto-record calendar meetings", "Автозапись встреч из календаря")) {
                     settingsSwitch(isOn: appState.config.autoRecordMeetings) { newValue in
                         controller.updateConfig { $0.autoRecordMeetings = newValue }
