@@ -353,12 +353,19 @@ final class FloatingIndicatorController: NSObject {
             // into the capsule alongside the tint, so the finished
             // fill/gradient look exists from the very first frames.
             if let glass = glassView {
-                glass.frame = start
+                // Same rule as tint below: a rapid hover in/out re-enters
+                // mid-morph. Hard-jumping to the bare strip rect here (instead
+                // of resuming from glass's own current on-screen frame) is
+                // what desyncs it from tint's presentation-based resume and
+                // reads as a second, offset pill for a frame or two.
+                let glassStart = glass.layer?.presentation()?.frame ?? start
+                let glassStartRadius = glass.layer?.presentation()?.cornerRadius ?? collapsedSize.height / 2
+                glass.frame = glassStart
                 glass.layer?.masksToBounds = true
-                glass.layer?.cornerRadius = collapsedSize.height / 2
+                glass.layer?.cornerRadius = glassStartRadius
                 glass.isHidden = false
                 let glassRadius = CABasicAnimation(keyPath: "cornerRadius")
-                glassRadius.fromValue = collapsedSize.height / 2
+                glassRadius.fromValue = glassStartRadius
                 glassRadius.toValue = pillHeight / 2
                 glassRadius.duration = morphDuration
                 glassRadius.timingFunction = easeOut
@@ -457,8 +464,13 @@ final class FloatingIndicatorController: NSObject {
             // The blur shrinks alongside the tint — it never blinks off.
             if let glass = glassView {
                 if glass.isHidden {
-                    glass.frame = CGRect(x: 0, y: currentSize.height - 44, width: currentSize.width, height: 44)
-                    glass.layer?.cornerRadius = 22
+                    // Resume from glass's own current on-screen frame when one
+                    // exists (a collapse interrupting a still-running expand),
+                    // not a hard-coded full-pill rect — same fix as the expand
+                    // branch above, for the same reason.
+                    glass.frame = glass.layer?.presentation()?.frame
+                        ?? CGRect(x: 0, y: currentSize.height - 44, width: currentSize.width, height: 44)
+                    glass.layer?.cornerRadius = glass.layer?.presentation()?.cornerRadius ?? 22
                     glass.isHidden = false
                 }
                 glass.layer?.masksToBounds = true
