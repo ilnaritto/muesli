@@ -116,10 +116,18 @@ final class FloatingIndicatorController: NSObject {
     var meetingPowerProvider: (() -> Float)?
     /// True while a dictation capture is live (independent of meetings).
     private(set) var isDictationCapturing = false
+    /// True while a Computer Use command is live. The collapsed strip still
+    /// shares one generic recording visual with dictation (isDictationCapturing
+    /// is also set — unchanged), but the launcher needs this separately so it
+    /// can show the Computer Use circle, not the Dictation circle, as active.
+    private(set) var isComputerUseCapturing = false
     var onStopMeeting: (() -> Void)?
     var onDiscardMeeting: (() -> Void)?
     var onToggleMeetingPause: (() -> Void)?
     var onCancelToggleDictation: (() -> Void)?
+    var onStartComputerUse: (() -> Void)?
+    var onStopComputerUse: (() -> Void)?
+    var onCancelComputerUse: (() -> Void)?
     var onPositionSaved: ((CGPoint) -> Void)?
     var isToggleDictation = false
     /// Top edge of the collapsed strip while hovering — the launcher expands
@@ -266,7 +274,9 @@ final class FloatingIndicatorController: NSObject {
             setWaveBarsHidden(true)
         }
         let collapsedColor = NSColor.colorWith(hexString: "1e1e1e", alpha: collapsedTintAlpha).cgColor
-        let hoveredColor = NSColor.colorWith(hexString: "1e1e1e", alpha: 0.45).cgColor
+        // Live feedback: the hover launcher should show just its circular
+        // buttons, not a dark backdrop panel behind them — was 0.45 alpha.
+        let hoveredColor = NSColor.colorWith(hexString: "1e1e1e", alpha: 0).cgColor
 
         // A repaint while ALREADY expanded (e.g. idle→idle right after a
         // dictation stops under the cursor) must not replay the morph under
@@ -353,12 +363,19 @@ final class FloatingIndicatorController: NSObject {
             // into the capsule alongside the tint, so the finished
             // fill/gradient look exists from the very first frames.
             if let glass = glassView {
-                glass.frame = start
+                // Same rule as tint below: a rapid hover in/out re-enters
+                // mid-morph. Hard-jumping to the bare strip rect here (instead
+                // of resuming from glass's own current on-screen frame) is
+                // what desyncs it from tint's presentation-based resume and
+                // reads as a second, offset pill for a frame or two.
+                let glassStart = glass.layer?.presentation()?.frame ?? start
+                let glassStartRadius = glass.layer?.presentation()?.cornerRadius ?? collapsedSize.height / 2
+                glass.frame = glassStart
                 glass.layer?.masksToBounds = true
-                glass.layer?.cornerRadius = collapsedSize.height / 2
+                glass.layer?.cornerRadius = glassStartRadius
                 glass.isHidden = false
                 let glassRadius = CABasicAnimation(keyPath: "cornerRadius")
-                glassRadius.fromValue = collapsedSize.height / 2
+                glassRadius.fromValue = glassStartRadius
                 glassRadius.toValue = pillHeight / 2
                 glassRadius.duration = morphDuration
                 glassRadius.timingFunction = easeOut
@@ -457,8 +474,13 @@ final class FloatingIndicatorController: NSObject {
             // The blur shrinks alongside the tint — it never blinks off.
             if let glass = glassView {
                 if glass.isHidden {
-                    glass.frame = CGRect(x: 0, y: currentSize.height - 44, width: currentSize.width, height: 44)
-                    glass.layer?.cornerRadius = 22
+                    // Resume from glass's own current on-screen frame when one
+                    // exists (a collapse interrupting a still-running expand),
+                    // not a hard-coded full-pill rect — same fix as the expand
+                    // branch above, for the same reason.
+                    glass.frame = glass.layer?.presentation()?.frame
+                        ?? CGRect(x: 0, y: currentSize.height - 44, width: currentSize.width, height: 44)
+                    glass.layer?.cornerRadius = glass.layer?.presentation()?.cornerRadius ?? 22
                     glass.isHidden = false
                 }
                 glass.layer?.masksToBounds = true
@@ -599,6 +621,17 @@ final class FloatingIndicatorController: NSObject {
         }
     }
 
+    /// Task 14.1: Computer Use's own active flag for the launcher circle —
+    /// call alongside setDictationCapturing, which still drives the strip's
+    /// shared recording visual as before.
+    func setComputerUseCapturing(_ active: Bool, config: AppConfig) {
+        guard isComputerUseCapturing != active else { return }
+        isComputerUseCapturing = active
+        if active || isMeetingRecording || isDictationCapturing {
+            setState(.recording, config: config)
+        }
+    }
+
     func setMeetingRecording(_ recording: Bool, withVideo: Bool = false, config: AppConfig) {
         isMeetingRecording = recording
         isMeetingVideoRecording = recording && withVideo
@@ -670,6 +703,7 @@ final class FloatingIndicatorController: NSObject {
         // meeting still records, the pill stays in the recording composite.
         if state == .idle || state == .transcribing {
             isDictationCapturing = false
+            isComputerUseCapturing = false
             dictationPowerProvider = nil
             if isMeetingRecording {
                 state = .recording
@@ -1278,6 +1312,8 @@ final class FloatingIndicatorController: NSObject {
     /// these fills stays white.
     static let captureOrange = NSColor(calibratedRed: 0.961, green: 0.573, blue: 0.118, alpha: 1)
     static let captureRed = NSColor(calibratedRed: 0.937, green: 0.294, blue: 0.294, alpha: 1)
+    /// Computer Use launcher circle — same indigo as its Settings section icon.
+    static let captureViolet = NSColor(calibratedRed: 0.345, green: 0.337, blue: 0.839, alpha: 1)
 
     private func waveColor(forKey key: String) -> NSColor {
         switch key {
@@ -2295,13 +2331,17 @@ final class FloatingIndicatorController: NSObject {
     private func makeLauncherRoot() -> IndicatorLauncherView {
         IndicatorLauncherView(
             activeMeeting: isMeetingRecording && !isMeetingVideoRecording,
-            activeDictation: isDictationCapturing,
+            activeDictation: isDictationCapturing && !isComputerUseCapturing,
             activeVideo: isMeetingVideoRecording,
+            activeComputerUse: isComputerUseCapturing,
+            showsComputerUse: configStore.load().computerUseVisibleInPill,
             onDictation: { [weak self] in self?.togglePillDictation() },
             onMeeting: { [weak self] in self?.togglePillMeeting(video: false) },
             onMeetingVideo: { [weak self] in self?.togglePillMeeting(video: true) },
+            onComputerUse: { [weak self] in self?.togglePillComputerUse() },
             onCancelDictation: { [weak self] in self?.onCancelToggleDictation?() },
             onCancelMeeting: { [weak self] in self?.onDiscardMeeting?() },
+            onCancelComputerUse: { [weak self] in self?.onCancelComputerUse?() },
             processingIndex: processingLauncherIndex,
             processingCaption: processingStatus,
             revealToken: launcherRevealToken
@@ -2402,6 +2442,14 @@ final class FloatingIndicatorController: NSObject {
         }
     }
 
+    private func togglePillComputerUse() {
+        if isComputerUseCapturing {
+            onStopComputerUse?()
+            return
+        }
+        startFromPill { [weak self] in self?.onStartComputerUse?() }
+    }
+
     /// ✕ = cancel: discards without transcription/summary. Cancels every
     /// active capture (dictation immediately; meeting with confirmation).
     private func startFromPill(_ action: @escaping () -> Void) {
@@ -2463,11 +2511,18 @@ private struct IndicatorLauncherView: View {
     var activeMeeting = false
     var activeDictation = false
     var activeVideo = false
+    var activeComputerUse = false
+    /// Task 14.1: the 4th circle only exists when the user opted in via
+    /// Settings → Computer Use → "Show in floating pill" — off by default,
+    /// so the launcher's geometry is unchanged for everyone else.
+    var showsComputerUse = false
     let onDictation: () -> Void
     let onMeeting: () -> Void
     let onMeetingVideo: () -> Void
+    var onComputerUse: (() -> Void)? = nil
     var onCancelDictation: (() -> Void)? = nil
     var onCancelMeeting: (() -> Void)? = nil
+    var onCancelComputerUse: (() -> Void)? = nil
     /// Which circle is post-processing (0 call / 1 dictation / 2 video): it
     /// gets a spinning stage ring and its hover caption shows the stage.
     var processingIndex: Int? = nil
@@ -2480,17 +2535,22 @@ private struct IndicatorLauncherView: View {
     @State private var captionWidth: CGFloat = 0
 
     private var pillColor: Color { Color(red: 0.118, green: 0.118, blue: 0.118) }
-    private let rowWidth: CGFloat = 128
+    private var itemCount: Int { showsComputerUse ? 4 : 3 }
+    private var rowWidth: CGFloat { CGFloat(itemCount) * 42 + 2 }
     private var captions: [String] {
-        [
+        var values = [
             activeMeeting ? tr("Stop call", "Стоп звонок") : tr("Call", "Звонок"),
             activeDictation ? tr("Stop dictation", "Стоп диктовка") : tr("Dictation", "Диктовка"),
             activeVideo ? tr("Stop recording", "Стоп запись") : tr("Call with video", "Звонок с видео")
         ]
+        if showsComputerUse {
+            values.append(activeComputerUse ? tr("Stop computer use", "Стоп «Компьютер»") : tr("Computer Use", "Компьютер"))
+        }
+        return values
     }
 
     private var cancelCaptions: [String] {
-        [tr("Cancel", "Отмена"), tr("Cancel", "Отмена"), tr("Cancel", "Отмена")]
+        Array(repeating: tr("Cancel", "Отмена"), count: itemCount)
     }
 
     private func captionText(for index: Int, isCancel: Bool) -> String {
@@ -2533,6 +2593,17 @@ private struct IndicatorLauncherView: View {
                     onCancelHoverChange: { cancelHover(2, $0) },
                     action: onMeetingVideo
                 ) { hover(2, $0) }
+                if showsComputerUse, let onComputerUse {
+                    LauncherCircle(
+                        systemName: "desktopcomputer",
+                        activeColor: activeComputerUse ? Color(nsColor: FloatingIndicatorController.captureViolet) : nil,
+                        activeIconIsDark: true,
+                        hoverTint: Color(nsColor: FloatingIndicatorController.captureViolet),
+                        onCancel: activeComputerUse ? onCancelComputerUse : nil,
+                        onCancelHoverChange: { cancelHover(3, $0) },
+                        action: onComputerUse
+                    ) { hover(3, $0) }
+                }
             }
             .padding(.horizontal, 6)
             .frame(height: 44)

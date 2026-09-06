@@ -132,6 +132,9 @@ fi
 if [[ -d "$ROOT/assets/audio" ]]; then
   ditto "$ROOT/assets/audio" "$STAGED_APP_DIR/Contents/Resources/audio"
 fi
+if [[ -d "$ROOT/assets/features-tour" ]]; then
+  ditto "$ROOT/assets/features-tour" "$STAGED_APP_DIR/Contents/Resources/features-tour"
+fi
 
 cat > "$STAGED_APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -170,6 +173,13 @@ cat > "$STAGED_APP_DIR/Contents/Info.plist" <<PLIST
   <string>$APP_DISPLAY_NAME captures screen content for meeting context.</string>
   <key>NSCalendarsFullAccessUsageDescription</key>
   <string>$APP_DISPLAY_NAME reads calendar events to help with meeting recordings.</string>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>ru</string>
+  </array>
   <key>SUFeedURL</key>
   <string>$SPARKLE_FEED_URL</string>
   <key>SUPublicEDKey</key>
@@ -179,6 +189,28 @@ cat > "$STAGED_APP_DIR/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+# System permission prompts (Screen Recording, Microphone, etc.) render the
+# UsageDescription string from the InfoPlist.strings matching the user's
+# macOS system language, not the Info.plist default above — without these,
+# Russian-locale users see the English fallback string.
+mkdir -p "$STAGED_APP_DIR/Contents/Resources/en.lproj" "$STAGED_APP_DIR/Contents/Resources/ru.lproj"
+
+cat > "$STAGED_APP_DIR/Contents/Resources/en.lproj/InfoPlist.strings" <<STRINGS
+"NSMicrophoneUsageDescription" = "$APP_DISPLAY_NAME records microphone audio for dictation.";
+"NSInputMonitoringUsageDescription" = "$APP_DISPLAY_NAME monitors keyboard events to trigger push-to-talk dictation.";
+"NSAudioCaptureUsageDescription" = "$APP_DISPLAY_NAME captures system audio from other applications during meeting recordings.";
+"NSScreenCaptureUsageDescription" = "$APP_DISPLAY_NAME captures screen content for meeting context.";
+"NSCalendarsFullAccessUsageDescription" = "$APP_DISPLAY_NAME reads calendar events to help with meeting recordings.";
+STRINGS
+
+cat > "$STAGED_APP_DIR/Contents/Resources/ru.lproj/InfoPlist.strings" <<STRINGS
+"NSMicrophoneUsageDescription" = "$APP_DISPLAY_NAME записывает звук с микрофона для диктовки.";
+"NSInputMonitoringUsageDescription" = "$APP_DISPLAY_NAME отслеживает нажатия клавиш для запуска диктовки по горячей клавише.";
+"NSAudioCaptureUsageDescription" = "$APP_DISPLAY_NAME записывает системный звук других приложений во время записи встреч.";
+"NSScreenCaptureUsageDescription" = "$APP_DISPLAY_NAME считывает содержимое экрана для контекста встречи.";
+"NSCalendarsFullAccessUsageDescription" = "$APP_DISPLAY_NAME читает события календаря, чтобы помогать с записью встреч.";
+STRINGS
 
 # Replace existing app (no prompt — that's what this script is for)
 if [[ -d "$APP_DIR" ]]; then

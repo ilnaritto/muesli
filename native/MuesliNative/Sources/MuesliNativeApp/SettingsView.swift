@@ -59,8 +59,10 @@ struct SettingsView: View {
     @State private var googleCalSignInError: String?
     @State private var isSigningInGoogleCal = false
     @State private var pendingDataDestruction: PendingDataDestruction?
-    @State private var dictationAdvancedExpanded = false
-    @State private var meetingsAdvancedExpanded = false
+    // Expanded by default per feedback round 2 task 14.3 — the author wants
+    // to see these without an extra click.
+    @State private var dictationAdvancedExpanded = true
+    @State private var meetingsAdvancedExpanded = true
     @State private var postProcessorRedirectReason: String?
     @State private var isShowingDictionaryAccessibilityPrompt = false
     @State private var isPreviewingClip = false
@@ -358,7 +360,7 @@ struct SettingsView: View {
                         launchAtLoginApprovalPrompt
                     }
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(tr("Open dashboard on launch", "Открывать панель при запуске")) {
                     settingsSwitch(isOn: appState.config.openDashboardOnLaunch) { newValue in
                         controller.updateConfig { $0.openDashboardOnLaunch = newValue }
@@ -444,7 +446,7 @@ struct SettingsView: View {
                 }
                 settingsDescription(tr("Sync dictation text, meeting transcripts, notes, summaries, and manual notes with Muesli for iPhone through your private iCloud account. Audio recordings are never synced.", "Синхронизация текста диктовок, транскриптов встреч, заметок, сводок и ручных заметок с Muesli для iPhone через ваш частный аккаунт iCloud. Аудиозаписи никогда не синхронизируются."))
 
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
 
                 HStack(spacing: MuesliTheme.spacing12) {
                     VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
@@ -481,7 +483,7 @@ struct SettingsView: View {
                 }
                 settingsDescription(tr("Keep the timeline bridge card available while users connect Muesli on iPhone.", "Сохранять карточку подключения на таймлайне, пока Muesli подключается на iPhone."))
 
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
 
                 HStack(spacing: MuesliTheme.spacing12) {
                     VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
@@ -553,7 +555,7 @@ struct SettingsView: View {
                     }
                 }
                 if appState.selectedBackend.backend == BackendOption.cohereTranscribe.backend {
-                    Divider().background(MuesliTheme.surfaceBorder)
+                    Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                     settingsRow(tr("Cohere language", "Язык Cohere")) {
                         settingsMenu(
                             selection: selectedCohereLanguage.label,
@@ -565,7 +567,7 @@ struct SettingsView: View {
                     }
                 }
                 if appState.selectedBackend.backend == BackendOption.indicASR.backend {
-                    Divider().background(MuesliTheme.surfaceBorder)
+                    Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                     settingsRow(tr("Indic language", "Индийский язык")) {
                         FixedWidthPopUp(
                             selection: selectedIndicASRLanguage.label,
@@ -578,7 +580,7 @@ struct SettingsView: View {
                         .frame(height: 24)
                     }
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(
                     tr("Microphone", "Микрофон"),
                     description: tr("Automatic uses system input, or Mac mic with AirPods.", "«Автоматически» использует системный вход или микрофон Mac с AirPods.")
@@ -595,7 +597,7 @@ struct SettingsView: View {
                     )
                     .frame(height: 24)
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(tr("AI transcript cleanup", "ИИ-очистка транскрипта")) {
                     settingsSwitch(isOn: appState.config.enablePostProcessor) { newValue in
                         if let reason = controller.setPostProcessorEnabled(newValue) {
@@ -603,7 +605,7 @@ struct SettingsView: View {
                         }
                     }
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(
                     tr("Dictionary suggestions", "Подсказки словаря"),
                     description: tr("Suggest words after corrections by briefly reading focused app text via Accessibility.", "Предлагает слова после исправлений, кратко считывая текст активного приложения через Универсальный доступ.")
@@ -614,7 +616,7 @@ struct SettingsView: View {
                     .help(tr("Briefly reads focused app text after dictation to detect corrections.", "Кратко считывает текст активного приложения после диктовки для обнаружения исправлений."))
                 }
                 if appState.config.enablePostProcessor {
-                    Divider().background(MuesliTheme.surfaceBorder)
+                    Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                     settingsRow(tr("Cleanup model", "Модель очистки")) {
                         ModelPicker(
                             items: controller.configuredModels(role: .cleanup).map { ModelPickerItem(id: $0.id, title: $0.displayName) },
@@ -630,13 +632,20 @@ struct SettingsView: View {
                 }
             }
 
+            // Same control as the consolidated Shortcuts page (task 14.2) —
+            // available here too so users don't have to leave the section
+            // they're already tuning.
+            settingsSection(tr("Hotkey", "Горячая клавиша")) {
+                HotkeyRecorderControl(appState: appState, controller: controller, target: .dictation)
+            }
+
             collapsibleSettingsSection(tr("Advanced", "Дополнительно"), isExpanded: $dictationAdvancedExpanded) {
                 settingsRow(tr("Pause media during dictation", "Приостанавливать медиа во время диктовки")) {
                     settingsSwitch(isOn: appState.config.pauseMediaDuringDictation) { newValue in
                         controller.updateConfig { $0.pauseMediaDuringDictation = newValue }
                     }
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(tr("Mute system audio during dictation", "Отключать системный звук во время диктовки")) {
                     settingsSwitch(isOn: appState.config.muteSystemAudioDuringDictation) { newValue in
                         controller.updateConfig { $0.muteSystemAudioDuringDictation = newValue }
@@ -655,18 +664,27 @@ struct SettingsView: View {
                         controller.updateConfig { $0.enableComputerUsePlanner = newValue }
                     }
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
+                settingsRow(
+                    tr("Show in floating pill", "Показывать в пипке"),
+                    description: tr("Adds a Computer Use circle next to dictation and meeting in the floating pill's hover menu.", "Добавляет кружок режима «Компьютер» рядом с диктовкой и встречей в меню плавающей пипки при наведении.")
+                ) {
+                    settingsSwitch(isOn: appState.config.computerUseVisibleInPill) { newValue in
+                        controller.updateConfig { $0.computerUseVisibleInPill = newValue }
+                    }
+                }
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(tr("Account", "Аккаунт")) {
                     chatGPTAccountControl
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(tr("Planner model", "Модель планировщика")) {
                     settingsModelMenu(
                         currentModel: appState.config.computerUsePlannerModel,
                         presets: SummaryModelPreset.computerUsePlannerModels
                     ) { val in controller.updateConfig { $0.computerUsePlannerModel = val } }
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(tr("Timeout", "Тайм-аут")) {
                     Stepper(
                         value: Binding(
@@ -683,6 +701,23 @@ struct SettingsView: View {
                             .foregroundStyle(MuesliTheme.textPrimary)
                     }
                 }
+            }
+
+            // Same control as the consolidated Shortcuts page (task 14.2).
+            settingsSection(tr("Hotkey", "Горячая клавиша")) {
+                settingsRow(tr("Enable hotkey", "Включить горячую клавишу")) {
+                    settingsSwitch(isOn: appState.config.enableComputerUseHotkey) { newValue in
+                        _ = controller.updateComputerUseHotkeyEnabled(newValue)
+                    }
+                }
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
+                HotkeyRecorderControl(
+                    appState: appState,
+                    controller: controller,
+                    target: .computerUse,
+                    isEnabled: appState.config.enableComputerUseHotkey
+                )
+                .padding(.top, MuesliTheme.spacing8)
             }
         }
     }
@@ -703,7 +738,7 @@ struct SettingsView: View {
                     }
                 }
                 if appState.selectedMeetingTranscriptionBackend.backend == BackendOption.cohereTranscribe.backend {
-                    Divider().background(MuesliTheme.surfaceBorder)
+                    Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                     settingsRow(tr("Cohere language", "Язык Cohere")) {
                         settingsMenu(
                             selection: selectedCohereLanguage.label,
@@ -715,7 +750,7 @@ struct SettingsView: View {
                     }
                 }
                 if appState.selectedMeetingTranscriptionBackend.backend == BackendOption.indicASR.backend {
-                    Divider().background(MuesliTheme.surfaceBorder)
+                    Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                     settingsRow(tr("Indic language", "Индийский язык")) {
                         FixedWidthPopUp(
                             selection: selectedIndicASRLanguage.label,
@@ -728,7 +763,7 @@ struct SettingsView: View {
                         .frame(height: 24)
                     }
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 screenContextRow(tr("Meeting context", "Контекст встречи"))
             }
 
@@ -744,13 +779,13 @@ struct SettingsView: View {
                     }
                 }
 
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(tr("Default template", "Шаблон по умолчанию")) {
                     meetingTemplateMenu(selectionID: appState.config.defaultMeetingTemplateID) { id in
                         controller.updateDefaultMeetingTemplate(id: id)
                     }
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(tr("Templates", "Шаблоны")) {
                     actionButton(tr("Manage Templates…", "Управление шаблонами…")) {
                         controller.showMeetingTemplateSettings()
@@ -758,13 +793,16 @@ struct SettingsView: View {
                 }
             }
 
-            settingsSection(tr("Recording", "Запись")) {
+            // Renamed per feedback round 2 task 15 (author's working
+            // hypothesis): the old plain "Recording"/"Запись" name read as
+            // unclear next to the screen-video toggle inside it.
+            settingsSection(tr("Meeting Recording", "Запись встречи")) {
                 settingsRow(tr("Auto-record calendar meetings", "Автозапись встреч из календаря")) {
                     settingsSwitch(isOn: appState.config.autoRecordMeetings) { newValue in
                         controller.updateConfig { $0.autoRecordMeetings = newValue }
                     }
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(tr("Save meeting recording", "Сохранять запись встречи")) {
                     settingsMenu(
                         selection: recordingSaveLabel(for: appState.config.meetingRecordingSavePolicy),
@@ -776,7 +814,7 @@ struct SettingsView: View {
                 }
                 settingsDescription(tr("Saved audio can be played back on the meeting page and is also used as the soundtrack of screen video recordings.", "Сохранённое аудио можно прослушать на странице встречи; оно же добавляет звук в видеозапись экрана."))
                 if appState.config.meetingRecordingSavePolicy != .never {
-                    Divider().background(MuesliTheme.surfaceBorder)
+                    Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                     settingsRow(tr("Recording format", "Формат записи")) {
                         settingsMenu(
                             selection: appState.config.resolvedMeetingRecordingFileFormat.displayName,
@@ -788,13 +826,30 @@ struct SettingsView: View {
                     }
                     settingsDescription(tr("M4A is recommended for smaller files. WAV is lossless and uses more storage.", "M4A рекомендуется для файлов меньшего размера. WAV — без потерь, но занимает больше места."))
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(tr("Record screen video", "Записывать видео экрана")) {
                     settingsSwitch(isOn: appState.config.enableMeetingScreenVideo) { newValue in
                         controller.updateConfig { $0.enableMeetingScreenVideo = newValue }
                     }
                 }
                 settingsDescription(tr("Captures the main display during meetings and saves an .mp4 with the meeting audio. Uses significant disk space (roughly 1 GB per hour).", "Записывает основной экран во время встреч и сохраняет .mp4 со звуком встречи. Занимает много места на диске (примерно 1 ГБ в час)."))
+            }
+
+            // Same control as the consolidated Shortcuts page (task 14.2).
+            settingsSection(tr("Hotkey", "Горячая клавиша")) {
+                settingsRow(tr("Enable hotkey", "Включить горячую клавишу")) {
+                    settingsSwitch(isOn: appState.config.enableMeetingRecordingHotkey) { newValue in
+                        _ = controller.updateMeetingRecordingHotkeyEnabled(newValue)
+                    }
+                }
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
+                HotkeyRecorderControl(
+                    appState: appState,
+                    controller: controller,
+                    target: .meetingRecording,
+                    isEnabled: appState.config.enableMeetingRecordingHotkey
+                )
+                .padding(.top, MuesliTheme.spacing8)
             }
 
             settingsSection(tr("Auto Export", "Автоэкспорт")) {
@@ -804,11 +859,11 @@ struct SettingsView: View {
                     }
                 }
                 if appState.config.autoExportMarkdownEnabled {
-                    Divider().background(MuesliTheme.surfaceBorder)
+                    Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                     settingsRow(tr("Destination folder", "Папка назначения")) {
                         autoExportFolderPicker
                     }
-                    Divider().background(MuesliTheme.surfaceBorder)
+                    Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                     settingsRow(tr("Content", "Содержимое")) {
                         settingsMenu(
                             selection: appState.config.resolvedAutoExportMarkdownContent.displayName,
@@ -819,7 +874,7 @@ struct SettingsView: View {
                             controller.updateConfig { $0.autoExportMarkdownContent = content.rawValue }
                         }
                     }
-                    Divider().background(MuesliTheme.surfaceBorder)
+                    Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                     settingsRow(tr("File format", "Формат файла")) {
                         settingsMenu(
                             selection: appState.config.resolvedAutoExportFileFormat.displayName,
@@ -845,7 +900,7 @@ struct SettingsView: View {
                 settingsDescription(tr("Show notifications for calendar meetings with a join link.", "Показывать уведомления о встречах из календаря со ссылкой для подключения."))
 
                 if appState.config.showScheduledMeetingNotifications {
-                    Divider().background(MuesliTheme.surfaceBorder)
+                    Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
 
                     settingsRow(tr("Reminder timing", "Время напоминания")) {
                         settingsMenu(
@@ -859,7 +914,7 @@ struct SettingsView: View {
                     settingsDescription(tr("At start time avoids early calendar-only prompts before you join.", "«В момент начала» позволяет избежать ранних напоминаний из календаря до подключения."))
                 }
 
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
 
                 settingsRow(tr("Auto-detected meetings", "Автоматически обнаруженные встречи")) {
                     settingsSwitch(isOn: appState.config.showMeetingDetectionNotification) { newValue in
@@ -869,7 +924,7 @@ struct SettingsView: View {
                 settingsDescription(tr("Show notifications when a call is detected from browser, camera, microphone, or app audio activity.", "Показывать уведомления, когда звонок обнаружен по активности браузера, камеры, микрофона или звука приложения."))
 
                 if appState.config.showMeetingDetectionNotification {
-                    Divider().background(MuesliTheme.surfaceBorder)
+                    Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                     mutedMeetingDetectionAppsControl
                 }
             }
@@ -885,7 +940,7 @@ struct SettingsView: View {
                     }
                 }
                 settingsDescription(tr("Controls how many calendar days appear in Coming Up, the menu bar, and scheduled meeting checks.", "Определяет, сколько календарных дней отображается в разделе «Скоро», строке меню и проверках запланированных встреч."))
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 calendarSourcesControl
                     .padding(.bottom, MuesliTheme.spacing8)
             }
@@ -904,11 +959,11 @@ struct SettingsView: View {
                         controller.updateConfig { $0.meetingHookEnabled = newValue }
                     }
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(tr("Hook script", "Скрипт хука")) {
                     meetingHookPathPicker
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(tr("Timeout", "Тайм-аут")) {
                     meetingHookTimeoutControl
                 }
@@ -947,7 +1002,7 @@ struct SettingsView: View {
                         controller.refreshIndicatorVisibility()
                     }
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(tr("Indicator position", "Положение индикатора")) {
                     let isCustom = appState.config.indicatorAnchor == .custom
                     let selection = isCustom ? customIndicatorPositionLabel : appState.config.indicatorAnchor.label
@@ -971,21 +1026,21 @@ struct SettingsView: View {
                         controller.updateConfig { $0.darkMode = newValue }
                     }
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(tr("Menu bar icon", "Значок в строке меню")) {
                     menuBarIconPicker
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(tr("Accent color", "Акцентный цвет")) {
                     glassTintPicker
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(tr("Play sound effects", "Звуковые эффекты")) {
                     settingsSwitch(isOn: appState.config.soundEnabled) { newValue in
                         controller.updateConfig { $0.soundEnabled = newValue }
                     }
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 settingsRow(tr("Show next meeting in menu bar", "Показывать следующую встречу в строке меню")) {
                     settingsSwitch(isOn: appState.config.showNextMeetingInMenuBar) { newValue in
                         controller.updateConfig { $0.showNextMeetingInMenuBar = newValue }
@@ -998,7 +1053,7 @@ struct SettingsView: View {
                     settingsRow(tr("Meeting countdown audio", "Звук обратного отсчёта встречи")) {
                         maraudersMapControl
                     }
-                    Divider().background(MuesliTheme.surfaceBorder)
+                    Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                     settingsRow("") {
                         Button {
                             SoundController.stopMaraudersMapClip()
@@ -1387,7 +1442,7 @@ struct SettingsView: View {
                 action: { AVCaptureDevice.requestAccess(for: .audio) { _ in } },
                 pane: "Privacy_Microphone"
             )
-            Divider().background(MuesliTheme.surfaceBorder)
+            Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
             permissionStatusRow(
                 tr("Accessibility", "Универсальный доступ"),
                 granted: accessibilityGranted,
@@ -1397,7 +1452,7 @@ struct SettingsView: View {
                 },
                 pane: "Privacy_Accessibility"
             )
-            Divider().background(MuesliTheme.surfaceBorder)
+            Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
             permissionStatusRow(
                 tr("Input Monitoring", "Мониторинг ввода"),
                 granted: inputMonitoringGranted,
@@ -1408,7 +1463,7 @@ struct SettingsView: View {
                 },
                 pane: "Privacy_ListenEvent"
             )
-            Divider().background(MuesliTheme.surfaceBorder)
+            Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
             permissionStatusRow(
                 tr("Screen Recording", "Запись экрана"),
                 granted: screenRecordingGranted,
@@ -1416,7 +1471,7 @@ struct SettingsView: View {
                 pane: "Privacy_ScreenCapture"
             )
             if appState.config.useCoreAudioTap {
-                Divider().background(MuesliTheme.surfaceBorder)
+                Divider().background(MuesliTheme.surfaceBorder.opacity(0.55))
                 permissionStatusRow(
                     tr("System Audio", "Системный звук"),
                     granted: systemAudioGranted,
@@ -1690,6 +1745,7 @@ struct SettingsView: View {
             }
         }
         .frame(minHeight: 32)
+        .padding(.vertical, MuesliTheme.spacing8)
     }
 
     @ViewBuilder
@@ -1718,6 +1774,7 @@ struct SettingsView: View {
                 .frame(width: width, alignment: .trailing)
         }
         .frame(minHeight: 44)
+        .padding(.vertical, MuesliTheme.spacing8)
     }
 
     private func settingsDescription(_ text: String) -> some View {

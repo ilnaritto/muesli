@@ -940,8 +940,14 @@ struct AppConfig: Codable {
     var enableMeetingRecordingHotkey: Bool = false
     var computerUseHotkeyDefaultDisabledMigrationApplied: Bool = true
     var enableComputerUsePlanner: Bool = true
+    /// Task 14.1: show a Computer Use launcher circle in the floating pill,
+    /// alongside dictation/meeting. Opt-in, like the global hotkey toggle.
+    var computerUseVisibleInPill: Bool = false
     var computerUsePlannerModel: String = ""
     var computerUseTimeoutSeconds: Int = 120
+    /// Task 5: shows the Features onboarding tour once, then falls back to
+    /// the normal default Home tab.
+    var hasSeenFeaturesTour: Bool = false
     var sttBackend: String = BackendOption.whisper.backend
     var sttModel: String = BackendOption.whisper.model
     var dictationInputDeviceUID: String? = nil
@@ -1077,8 +1083,10 @@ struct AppConfig: Codable {
         case enableMeetingRecordingHotkey = "enable_meeting_recording_hotkey"
         case computerUseHotkeyDefaultDisabledMigrationApplied = "computer_use_hotkey_default_disabled_migration_applied"
         case enableComputerUsePlanner = "enable_computer_use_planner"
+        case computerUseVisibleInPill = "computer_use_visible_in_pill"
         case computerUsePlannerModel = "computer_use_planner_model"
         case computerUseTimeoutSeconds = "computer_use_timeout_seconds"
+        case hasSeenFeaturesTour = "has_seen_features_tour"
         case sttBackend = "stt_backend"
         case sttModel = "stt_model"
         case dictationInputDeviceUID = "dictation_input_device_uid"
@@ -1206,8 +1214,10 @@ struct AppConfig: Codable {
         meetingRecordingHotkey = (try? c.decode(HotkeyConfig.self, forKey: .meetingRecordingHotkey)) ?? defaults.meetingRecordingHotkey
         enableMeetingRecordingHotkey = (try? c.decode(Bool.self, forKey: .enableMeetingRecordingHotkey)) ?? defaults.enableMeetingRecordingHotkey
         enableComputerUsePlanner = (try? c.decode(Bool.self, forKey: .enableComputerUsePlanner)) ?? defaults.enableComputerUsePlanner
+        computerUseVisibleInPill = (try? c.decode(Bool.self, forKey: .computerUseVisibleInPill)) ?? defaults.computerUseVisibleInPill
         computerUsePlannerModel = (try? c.decode(String.self, forKey: .computerUsePlannerModel)) ?? defaults.computerUsePlannerModel
         computerUseTimeoutSeconds = (try? c.decode(Int.self, forKey: .computerUseTimeoutSeconds)) ?? defaults.computerUseTimeoutSeconds
+        hasSeenFeaturesTour = (try? c.decode(Bool.self, forKey: .hasSeenFeaturesTour)) ?? defaults.hasSeenFeaturesTour
         sttBackend = (try? c.decode(String.self, forKey: .sttBackend)) ?? defaults.sttBackend
         sttModel = (try? c.decode(String.self, forKey: .sttModel)) ?? defaults.sttModel
         dictationInputDeviceUID = try? c.decode(String.self, forKey: .dictationInputDeviceUID)

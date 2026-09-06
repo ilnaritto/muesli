@@ -253,7 +253,8 @@ final class MuesliController: NSObject {
     private lazy var dictationAudioSessionManager = DictationAudioSessionManager(
         recorder: dictationRecorder,
         duckingController: audioDuckingController,
-        routingController: dictationAudioRoutingController
+        routingController: dictationAudioRoutingController,
+        isMeetingRecordingProvider: { [weak self] in self?.isMeetingRecording() ?? false }
     )
     private let dictationLatencyLogWriter = DictationLatencyLogWriter(
         url: AppIdentity.supportDirectoryURL.appendingPathComponent("dictation-latency.log")
@@ -593,6 +594,17 @@ final class MuesliController: NSObject {
         }
         indicator.onDiscardMeeting = { [weak self] in self?.discardMeetingWithConfirmation() }
         indicator.onToggleMeetingPause = { [weak self] in self?.toggleMeetingRecordingPause() }
+        // Task 14.1: Computer Use in the pill, opt-in via
+        // config.computerUseVisibleInPill. Toggle semantics (click to start
+        // a held-open command, click again to stop) mirror the pill's
+        // dictation circle.
+        indicator.onStartComputerUse = { [weak self] in self?.handleComputerUseToggleStart() }
+        indicator.onStopComputerUse = { [weak self] in self?.handleComputerUseToggleStop() }
+        indicator.onCancelComputerUse = { [weak self] in
+            guard let self else { return }
+            self.handleComputerUseCancel()
+            self.computerUseHotkeyMonitor.cancelToggleMode()
+        }
         indicator.onStopToggleDictation = { [weak self] in
             guard let self else { return }
             if self.hotkeyMonitor.isToggleRecording {
@@ -6967,6 +6979,7 @@ final class MuesliController: NSObject {
                 self?.computerUseRecorder.currentPower() ?? -160
             }
             indicator.setDictationCapturing(true, config: config)
+            indicator.setComputerUseCapturing(true, config: config)
             setState(.recording)
             SoundController.playDictationStart(enabled: shouldPlayDictationLifecycleSounds && !isDictationTestMode)
         } catch {
@@ -7925,39 +7938,19 @@ final class MuesliController: NSObject {
         dictationAudioSessionManager.stop()
     }
 
-    private func cancelDictationAudioSessionForMeetingRecordingIfNeeded() {
-        guard dictationAudioSessionManager.hasActiveSession || isNemotron35Streaming else { return }
-        fputs("[muesli-native] cancelling dictation audio session because meeting is active\n", stderr)
-
-        if isNemotron35Streaming {
-            isNemotron35Streaming = false
-            if #available(macOS 15, *), let controller = _streamingDictationController as? StreamingDictationController {
-                controller.cancel()
-            }
-            _streamingDictationController = nil
-            nemotron35StreamingSessionID = nil
-            previousStreamText = ""
-            indicator.setToggleDictation(false, config: config)
-            dictationAudioSessionManager.endExternalSession(reason: "meeting-active")
-        } else {
-            dictationAudioSessionManager.cancel(reason: "meeting-active")
-        }
-
-        dictationStartedAt = nil
-        clearCapturedDictationSessionContext()
-        pendingDictationStopSessionID = nil
-        pendingDictationStopStartedAt = nil
-        pendingReleaseSoundSessionID = nil
-        resetDictationOutputMode()
-        setState(.idle)
-        if activeMeetingID != nil || isStartingMeetingRecording || isMeetingRecording() {
-            meetingMonitor.suppressWhileActive()
-        } else {
-            meetingMonitor.resumeAfterCooldown()
-        }
-        meetingMonitor.refreshState()
-        finishDictationLatencyTrace("meeting_active_cancel")
-        syncDictationRecorderWarmup(intent: .idlePrewarm(.meetingStateChanged))
+    /// Dictation is meant to work while a meeting is recording (see `handleStart`).
+    /// When it silently comes back empty, tell the difference: an accidental
+    /// brief tap with no meeting running stays silent (existing behavior), but
+    /// while a meeting is recording — where a starved/late mic tap is the more
+    /// likely cause — flash a brief notice instead of letting the text vanish
+    /// with no signal at all.
+    private func notifyDictationUnavailableDuringMeetingIfNeeded() {
+        guard isMeetingRecording() else { return }
+        indicator.showWarning(
+            tr("Dictation didn't capture — meeting recording", "Диктовка не записалась — идёт запись встречи"),
+            icon: "!",
+            duration: 3.0
+        )
     }
 
     private func finishNemotronStreamingStop(
@@ -7988,6 +7981,8 @@ final class MuesliController: NSObject {
                 endedAt: Date()
             )
             scheduleICloudSyncAfterLocalChange()
+        } else {
+            notifyDictationUnavailableDuringMeetingIfNeeded()
         }
 
         statusBarController?.refresh()
@@ -8091,6 +8086,7 @@ final class MuesliController: NSObject {
                         self.resetDictationOutputMode()
                         self.indicator.setProcessingStatus(self.lastMeetingProcessingStatus)
                         self.setState(.idle)
+                        self.notifyDictationUnavailableDuringMeetingIfNeeded()
                         self.restoreMeetingMonitorAfterDictation()
                         self.syncDictationRecorderWarmup(intent: .postDictation(.transcriptionComplete))
                     }
@@ -8153,8 +8149,12 @@ final class MuesliController: NSObject {
                         self.dictationTestFailureCallback?(self.userFacingDictationTestError(error))
                     } else if error is DictationNoSpeechError {
                         // Too short / no speech captured (e.g. an accidental brief
-                        // tap). Benign — reset quietly, no diagnostic prompt.
+                        // tap). Benign — reset quietly, no diagnostic prompt — unless
+                        // a meeting is recording, where a starved mic tap is more
+                        // likely than a genuine accidental press (see
+                        // notifyDictationUnavailableDuringMeetingIfNeeded).
                         fputs("[muesli-native] dictation captured no speech (too short); skipping\n", stderr)
+                        self.notifyDictationUnavailableDuringMeetingIfNeeded()
                     } else {
                         self.recordDiagnosticIncident(
                             kind: .dictationTranscriptionFailed,

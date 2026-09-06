@@ -53,6 +53,8 @@ struct HomeView: View {
     @FocusState private var insightsInputFocused: Bool
     @State private var showInsightsDatePopover = false
     @State private var insightsCustomDate = Date()
+    @State private var insightsHeaderMeasuredHeight: CGFloat?
+    @State private var showClearInsightsHistoryConfirmation = false
 
     var body: some View {
         HStack(spacing: 5) {
@@ -62,6 +64,15 @@ struct HomeView: View {
 
             sectionContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .onAppear {
+            // Task 5: land on Features once after onboarding, so a new user
+            // sees the tour before the empty Overview stats. The permissions
+            // wizard itself is a separate flow — untouched.
+            if !appState.config.hasSeenFeaturesTour {
+                selectedSection = .functions
+                controller.updateConfig { $0.hasSeenFeaturesTour = true }
+            }
         }
         .sheet(isPresented: $isBridgeQRCodePresented) {
             IPhoneBridgeQRCodeSheet(
@@ -114,39 +125,37 @@ struct HomeView: View {
     @ViewBuilder
     private var insightsContent: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(tr("Insights", "Инсайты"))
-                    .font(MuesliTheme.pageTitle())
-                    .foregroundStyle(MuesliTheme.textPrimary)
-                Text(tr("Ask AI about your meetings — it reads all of them at once.", "Спроси ИИ про свои встречи — он читает сразу все."))
-                    .font(MuesliTheme.callout())
-                    .foregroundStyle(MuesliTheme.textTertiary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, MuesliTheme.spacing24)
-            .padding(.top, MuesliTheme.spacing20)
-            .padding(.bottom, MuesliTheme.spacing12)
-
-            ScrollViewReader { proxy in
-                ScrollView {
-                    if appState.insightsChatHistory.isEmpty && !appState.insightsChatAwaiting {
-                        insightsEmptyState
-                    } else {
-                        VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-                            ForEach(appState.insightsChatHistory) { turn in
-                                insightsBubble(turn).id(turn.id)
+            ZStack(alignment: .top) {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        if appState.insightsChatHistory.isEmpty && !appState.insightsChatAwaiting {
+                            insightsEmptyState
+                        } else {
+                            VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+                                ForEach(appState.insightsChatHistory) { turn in
+                                    insightsBubble(turn).id(turn.id)
+                                }
+                                if appState.insightsChatAwaiting {
+                                    insightsTypingBubble.id("insights-typing")
+                                }
                             }
-                            if appState.insightsChatAwaiting {
-                                insightsTypingBubble.id("insights-typing")
-                            }
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
                         }
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .padding(.top, MuesliTheme.spacing8)
                     }
+                    .contentMargins(.top, insightsHeaderClearance + MuesliTheme.spacing8, for: .scrollContent)
+                    .contentMargins(.bottom, MuesliTheme.spacing20, for: .scrollContent)
+                    .padding(.horizontal, MuesliTheme.spacing24)
+                    .onChange(of: appState.insightsChatHistory.count) { _, _ in insightsScrollToBottom(proxy) }
+                    .onChange(of: appState.insightsChatAwaiting) { _, _ in insightsScrollToBottom(proxy) }
                 }
-                .padding(.horizontal, MuesliTheme.spacing24)
-                .onChange(of: appState.insightsChatHistory.count) { _, _ in insightsScrollToBottom(proxy) }
-                .onChange(of: appState.insightsChatAwaiting) { _, _ in insightsScrollToBottom(proxy) }
+
+                insightsHeaderBackdropGradient
+                insightsFloatingHeader
+                    .onGeometryChange(for: CGFloat.self) { proxy in
+                        proxy.size.height
+                    } action: { height in
+                        insightsHeaderMeasuredHeight = height
+                    }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -164,6 +173,87 @@ struct HomeView: View {
         .frame(maxWidth: 900)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(.easeInOut(duration: 0.15), value: appState.config.insightsHintsEnabled)
+        .alert(tr("Clear History", "Очистить историю"), isPresented: $showClearInsightsHistoryConfirmation) {
+            Button(tr("Clear", "Очистить"), role: .destructive) {
+                appState.insightsChatHistory.removeAll()
+            }
+            Button(tr("Cancel", "Отмена"), role: .cancel) {}
+        } message: {
+            Text(tr("This clears the conversation. Your date, folder, and model selection stay as they are.", "Это очистит переписку. Выбранные период, папка и модель останутся прежними."))
+        }
+    }
+
+    // MARK: Insights — floating pill header (task 3)
+
+    private var insightsHeaderClearance: CGFloat {
+        insightsHeaderMeasuredHeight ?? 74
+    }
+
+    /// Soft fade under the floating pill so messages scrolling behind it
+    /// dim out instead of getting clipped — mirrors `headerBackdropGradient`
+    /// on the meeting page.
+    private var insightsHeaderBackdropGradient: some View {
+        LinearGradient(
+            stops: [
+                .init(color: MuesliTheme.backgroundDeep.opacity(0.7), location: 0),
+                .init(color: MuesliTheme.backgroundDeep.opacity(0), location: 1)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .frame(height: insightsHeaderClearance + 20)
+        .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private var insightsFloatingHeader: some View {
+        HStack(alignment: .center, spacing: 11) {
+            // Actual pill chip now, matching the meeting page's headerPill —
+            // was bare text over the gradient before, which didn't read as
+            // a pill at all.
+            VStack(alignment: .leading, spacing: 1) {
+                Text(tr("Insights", "Инсайты"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(MuesliTheme.textPrimary)
+                Text(tr("Ask AI about your meetings", "Спроси ИИ про свои встречи"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(MuesliTheme.textTertiary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Capsule().fill(MuesliTheme.backgroundBase))
+            .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+
+            insightsMoreMenu
+        }
+        .padding(.horizontal, MuesliTheme.spacing24)
+        .padding(.top, MuesliTheme.spacing20)
+        .padding(.bottom, MuesliTheme.spacing12)
+    }
+
+    private var insightsMoreMenu: some View {
+        Menu {
+            Button(role: .destructive) {
+                showClearInsightsHistoryConfirmation = true
+            } label: {
+                Label(tr("Clear History", "Очистить историю"), systemImage: "trash")
+            }
+            .disabled(appState.insightsChatHistory.isEmpty)
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(MuesliTheme.textSecondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .frame(width: 40, height: 40)
+        .background(Circle().fill(MuesliTheme.backgroundBase))
+        .overlay(Circle().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+        .contentShape(Circle())
+        .help(tr("More actions", "Другие действия"))
     }
 
     // MARK: Insights — empty state & bubbles
@@ -647,7 +737,11 @@ struct HomeView: View {
             }
             content()
         }
-        .frame(maxWidth: .infinity, minHeight: 190, alignment: .topLeading)
+        // maxHeight: .infinity lets a card whose own content is shorter
+        // (e.g. filler words with an empty-state hint) stretch to match a
+        // taller sibling in the same grid row, instead of leaving its own
+        // background/border shorter than the row and reading as "smaller".
+        .frame(maxWidth: .infinity, minHeight: 165, maxHeight: .infinity, alignment: .topLeading)
         .padding(MuesliTheme.spacing16)
         .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).fill(MuesliTheme.backgroundBase))
         .overlay(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
@@ -660,11 +754,11 @@ struct HomeView: View {
                     x: .value("Day", day.shortLabel),
                     y: .value("Minutes", day.minutes)
                 )
-                .foregroundStyle(MuesliTheme.accent)
+                .foregroundStyle(Color(hex: 0x34AADC))
                 .cornerRadius(4)
             }
             .chartYAxis { AxisMarks(position: .leading) }
-            .frame(height: 130)
+            .frame(height: 105)
         }
     }
 
@@ -676,16 +770,16 @@ struct HomeView: View {
                         x: .value("Week", point.weekStart),
                         y: .value("Minutes", point.avgMinutes)
                     )
-                    .foregroundStyle(MuesliTheme.accent)
+                    .foregroundStyle(Color(hex: 0x34C759))
                     .interpolationMethod(.catmullRom)
                     PointMark(
                         x: .value("Week", point.weekStart),
                         y: .value("Minutes", point.avgMinutes)
                     )
-                    .foregroundStyle(MuesliTheme.accent)
+                    .foregroundStyle(Color(hex: 0x34C759))
                 }
                 .chartXAxis { AxisMarks(values: .stride(by: .weekOfYear)) { _ in AxisGridLine() } }
-                .frame(height: 130)
+                .frame(height: 105)
             } else {
                 emptyHint(tr("Not enough meetings yet for a trend.", "Пока мало встреч для тренда."))
             }
@@ -698,17 +792,25 @@ struct HomeView: View {
                 emptyHint(tr("No words yet.", "Пока нет слов."))
             } else {
                 let maxCount = a.topWords.first?.count ?? 1
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(a.topWords.prefix(8)) { w in
-                        HStack(spacing: 8) {
+                // One accent color, shaded from strongest (most frequent) to
+                // faintest — a rainbow across unrelated hues read as noisy;
+                // shades of the same color still separate each row visually
+                // while reinforcing the rank/frequency order.
+                // Follows the user's chosen accent (MuesliTheme.accent),
+                // not a hardcoded hex — a fixed blue here read as wrong once
+                // Anna picked a different app accent (purple).
+                let base = MuesliTheme.accent
+                VStack(alignment: .leading, spacing: 7) {
+                    ForEach(Array(a.topWords.prefix(8).enumerated()), id: \.element.id) { index, w in
+                        HStack(spacing: 10) {
                             Text(w.word)
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: 13, weight: .medium))
                                 .foregroundStyle(MuesliTheme.textSecondary)
-                                .frame(width: 92, alignment: .leading)
+                                .frame(width: 96, alignment: .leading)
                                 .lineLimit(1)
                             GeometryReader { geo in
                                 Capsule()
-                                    .fill(MuesliTheme.accent.opacity(0.7))
+                                    .fill(base.opacity(max(0.3, 0.95 - Double(index) * 0.09)))
                                     .frame(width: max(6, geo.size.width * CGFloat(w.count) / CGFloat(maxCount)))
                             }
                             .frame(height: 8)
@@ -782,7 +884,7 @@ struct HomeView: View {
     @ViewBuilder
     private var functionsContent: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
+            VStack(alignment: .leading, spacing: 11) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(tr("Features", "Функции"))
                         .font(MuesliTheme.pageTitle())
@@ -794,12 +896,15 @@ struct HomeView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Flagship features — 2 per row, larger.
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 11), GridItem(.flexible(), spacing: 11)], spacing: 11) {
-                    ForEach(flagshipFeatures) { $0 }
+                // Task 5: onboarding-style tour, in new-user order — replaces
+                // the flagship grid. 3 per row per feedback (2 per row wasted
+                // too much vertical space) — demo illustrations are drawn at
+                // a larger internal scale instead, so their text stays
+                // readable at this narrower card width.
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 11), count: 3), spacing: 11) {
+                    ForEach(featureTourBanners) { $0 }
                 }
 
-                // Secondary features — 3 per row, compact.
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 11), count: 3), spacing: 11) {
                     ForEach(compactFeatures) { $0 }
                 }
@@ -811,89 +916,91 @@ struct HomeView: View {
         }
     }
 
+    // MARK: - Features tour (task 5)
+
+    /// New-user order: dictation → meetings → templates → meeting chat →
+    /// Insights chat → models, per spec. Images are optional (see
+    /// FeatureTourBanner) — ships without real screenshots for now; drop
+    /// PNGs into assets/features-tour/ and the banners pick them up.
+    private var featureTourBanners: [IdentifiedView] {
+        [
+            IdentifiedView(FeatureTourBanner(
+                assetName: "dictation",
+                icon: "mic.fill",
+                accent: Color(hex: 0xFF3B30),
+                title: tr("Voice dictation", "Диктовка голосом"),
+                description: tr("Hold Right Option and speak — or click the dictation icon in the panel above.", "Зажми Right Option и говори — или нажми на значок диктовки в панели сверху."),
+                action: FeatureAction(label: tr("Set up dictation", "Настроить диктовку"), systemImage: "keyboard") {
+                    openSettings(.dictation)
+                }
+            )),
+            IdentifiedView(FeatureTourBanner(
+                assetName: "meetings",
+                icon: "person.2.fill",
+                accent: Color(hex: 0x34C759),
+                title: tr("Meetings, summarized", "Встречи в готовых заметках"),
+                description: tr("Muesli listens, then hands you a clean recap in your own template.", "Muesli слушает встречу, а после выдаёт аккуратную сводку по твоему шаблону."),
+                action: FeatureAction(label: tr("Meeting settings", "Настройки встреч"), systemImage: "gearshape.fill") {
+                    openSettings(.meetings)
+                }
+            )),
+            IdentifiedView(FeatureTourBanner(
+                assetName: "templates",
+                icon: "square.text.square.fill",
+                accent: Color(hex: 0xAF52DE),
+                title: tr("Note templates", "Шаблоны заметок"),
+                description: tr("Choose how notes are structured, or write your own prompt.", "Выбери, как оформлять заметки, или напиши свой шаблон и промпт."),
+                action: FeatureAction(label: tr("Manage templates", "Управление шаблонами"), systemImage: "square.text.square.fill") {
+                    controller.showMeetingTemplatesManager()
+                }
+            )),
+            IdentifiedView(FeatureTourBanner(
+                assetName: "meeting-chat",
+                icon: "bubble.left.and.text.bubble.right.fill",
+                accent: Color(hex: 0x5856D6),
+                title: tr("Chat with your meeting", "Чат с встречей"),
+                description: tr("Ask any meeting a question, get an answer grounded in it.", "Задай вопрос по встрече — получи ответ строго по этому разговору."),
+                action: FeatureAction(label: tr("Connect a model", "Подключить модель"), systemImage: "sparkles") {
+                    openSettings(.meetings)
+                }
+            )),
+            IdentifiedView(FeatureTourBanner(
+                assetName: "insights",
+                icon: "sparkles",
+                accent: Color(hex: 0x5AC8FA),
+                title: tr("Insights — ask across all meetings", "Инсайты — вопросы по всем встречам"),
+                description: tr("One chat that reads every meeting in the period you pick.", "Один чат, который читает сразу все встречи за выбранный период."),
+                action: FeatureAction(label: tr("Open Insights", "Открыть Инсайты"), systemImage: "sparkles") {
+                    selectedSection = .insights
+                }
+            )),
+            IdentifiedView(FeatureTourBanner(
+                assetName: "models",
+                icon: "square.and.arrow.down.fill",
+                accent: Color(hex: 0x007AFF),
+                title: tr("On-device models", "Модели на устройстве"),
+                description: tr("11 speech models, all offline — nothing leaves your Mac.", "11 моделей распознавания, всё офлайн — ничего не уходит в облако."),
+                action: FeatureAction(label: tr("Manage models", "Управление моделями"), systemImage: "square.and.arrow.down.fill") {
+                    openSettings(.models)
+                }
+            )),
+        ]
+    }
+
     private func openSettings(_ section: SettingsSection) {
         appState.settingsSection = section
         appState.selectedTab = .settings
     }
 
-    private var flagshipFeatures: [IdentifiedView] {
-        [
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0xFF3B30),
-                icon: "mic.fill",
-                title: tr("Voice dictation", "Диктовка голосом"),
-                subtitle: tr("Forget the keyboard. Hold your hotkey, speak the way you think — polished text appears under your cursor in any app, instantly.", "Забудь про клавиатуру. Зажми клавишу, говори как думаешь — готовый текст мгновенно появляется под курсором в любом приложении."),
-                actions: [
-                    FeatureAction(label: tr("Set hotkey", "Настроить клавишу"), systemImage: "keyboard", isPrimary: true) {
-                        openSettings(.shortcuts)
-                    }
-                ]
-            )),
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0x34C759),
-                icon: "person.2.fill",
-                title: tr("Meetings, summarized", "Встречи в готовых заметках"),
-                subtitle: tr("Muesli listens to you and everyone else, then hands you a clean recap — decisions, action items, agreements — in your own template.", "Muesli слушает и тебя, и собеседников, а после встречи выдаёт аккуратную сводку — решения, задачи, договорённости — по твоему шаблону."),
-                actions: [
-                    FeatureAction(label: tr("Templates", "Шаблоны"), systemImage: "square.text.square.fill", isPrimary: true) {
-                        controller.showMeetingTemplatesManager()
-                    },
-                    FeatureAction(label: tr("Recording", "Запись"), systemImage: "gearshape.fill") {
-                        openSettings(.meetings)
-                    }
-                ]
-            )),
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0x5856D6),
-                icon: "bubble.left.and.text.bubble.right.fill",
-                title: tr("Chat with your meeting", "Чат с встречей"),
-                subtitle: tr("Stop re-reading transcripts. Just ask — “what did we decide on the budget?” — and get an answer grounded in that exact meeting.", "Не перечитывай транскрипт. Просто спроси — «что решили по бюджету?» — и получи ответ строго по этой встрече."),
-                actions: [
-                    FeatureAction(label: tr("Connect a model", "Подключить модель"), systemImage: "sparkles", isPrimary: true) {
-                        openSettings(.meetings)
-                    }
-                ]
-            )),
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0xFF9500),
-                icon: "display",
-                title: tr("Screen video with sound", "Видео экрана со звуком"),
-                subtitle: tr("Record the screen together with the audio — demos, calls, walkthroughs — and replay it right on the meeting page.", "Записывай экран вместе со звуком — демо, созвоны, разборы — и пересматривай прямо на странице встречи."),
-                actions: [
-                    FeatureAction(label: tr("Enable in settings", "Включить в настройках"), systemImage: "gearshape.fill", isPrimary: true) {
-                        openSettings(.meetings)
-                    }
-                ]
-            )),
-        ]
-    }
-
     private var compactFeatures: [IdentifiedView] {
+        // "Templates & language" and "On-device models" were removed from
+        // here — they're the same feature as "Note templates" and
+        // "On-device models" in the flagship tour above, just phrased
+        // slightly differently. Two cards pointing at the same real feature
+        // read as a duplicate no matter how differently they're illustrated
+        // (tried twice); removing the repeat is the actual fix Anna asked
+        // for, not another reskin.
         let cards: [IdentifiedView] = [
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0xAF52DE),
-                icon: "square.text.square.fill",
-                title: tr("Templates & language", "Шаблоны и язык"),
-                subtitle: tr("Your own note formats, in your language.", "Свои форматы заметок — хоть русский, хоть английский."),
-                actions: [
-                    FeatureAction(label: tr("Open", "Открыть"), isPrimary: true) {
-                        controller.showMeetingTemplatesManager()
-                    }
-                ],
-                compact: true
-            )),
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0x007AFF),
-                icon: "square.and.arrow.down.fill",
-                title: tr("On-device models", "Модели на устройстве"),
-                subtitle: tr("11 speech models, all offline — nothing leaves your Mac.", "11 моделей распознавания, всё офлайн — ничего не уходит в облако."),
-                actions: [
-                    FeatureAction(label: tr("Manage", "Управление"), isPrimary: true) {
-                        openSettings(.models)
-                    }
-                ],
-                compact: true
-            )),
             IdentifiedView(FeatureCard(
                 accent: Color(hex: 0x00C7BE),
                 icon: "wand.and.stars",
@@ -904,7 +1011,8 @@ struct HomeView: View {
                         openSettings(.models)
                     }
                 ],
-                compact: true
+                compact: true,
+                assetName: "smart-cleanup"
             )),
             IdentifiedView(FeatureCard(
                 accent: Color(hex: 0xFF2D55),
@@ -916,15 +1024,36 @@ struct HomeView: View {
                         openSettings(.computerUse)
                     }
                 ],
-                compact: true
+                compact: true,
+                assetName: "voice-commands"
+            )),
+            // Task 5 point 7: minor items, compact — moved out of the
+            // flagship tour above.
+            IdentifiedView(FeatureCard(
+                accent: Color(hex: 0xFF9500),
+                icon: "display",
+                title: tr("Screen video with sound", "Видео экрана со звуком"),
+                subtitle: tr("Record the screen together with the audio, replay it on the meeting page.", "Записывай экран вместе со звуком, пересматривай на странице встречи."),
+                actions: [
+                    FeatureAction(label: tr("Enable", "Включить"), isPrimary: true) {
+                        openSettings(.meetings)
+                    }
+                ],
+                compact: true,
+                assetName: "screen-video"
             )),
             IdentifiedView(FeatureCard(
-                accent: Color(hex: 0x8E8E93),
-                icon: "lock.fill",
-                title: tr("Private by design", "Приватность"),
-                subtitle: tr("Speech-to-text runs on your Mac — data stays with you.", "Речь в текст — на твоём Mac, данные остаются у тебя."),
-                actions: [],
-                compact: true
+                accent: Color(hex: 0x30B0C7),
+                icon: "character.book.closed.fill",
+                title: tr("Dictionary", "Словарь"),
+                subtitle: tr("Custom words for names and terms transcription often gets wrong.", "Свои слова для имён и терминов, которые транскрипция часто путает."),
+                actions: [
+                    FeatureAction(label: tr("Open", "Открыть"), isPrimary: true) {
+                        openSettings(.dictionary)
+                    }
+                ],
+                compact: true,
+                assetName: "dictionary"
             )),
         ]
         // TODO(sync): re-enable when the iPhone app ships — see SettingsView.sectionListPane,

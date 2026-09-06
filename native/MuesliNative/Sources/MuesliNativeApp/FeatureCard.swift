@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import MuesliCore
 
@@ -23,6 +24,11 @@ struct FeatureAction: Identifiable {
 /// a title + subtitle, and one or two action buttons that deep-link into the
 /// relevant setting. Styled like the meeting-page cards (backgroundBase,
 /// rounded, hairline border). `compact` renders the smaller 3-per-row variant.
+///
+/// When there's exactly one action, the whole card is the tap target and
+/// highlights on hover — same treatment as the tour banners above it, per
+/// live feedback. A card with zero or several actions (no single obvious
+/// destination) keeps its own per-action buttons instead.
 struct FeatureCard: View {
     let accent: Color
     let icon: String
@@ -30,15 +36,64 @@ struct FeatureCard: View {
     let subtitle: String
     let actions: [FeatureAction]
     var compact: Bool = false
+    /// Optional cover+GIF pair, same lookup convention as `FeatureTourBanner`
+    /// (`<assetName>-cover.png` at rest, `<assetName>.gif` on hover). When
+    /// nil, falls back to the small icon-tile illustration below.
+    var assetName: String? = nil
+
+    @State private var isHovered = false
+
+    private var singleAction: FeatureAction? {
+        actions.count == 1 ? actions.first : nil
+    }
+
+    private var tourAssetURL: URL? {
+        guard let assetName else { return nil }
+        return Bundle.main.url(forResource: assetName, withExtension: "gif", subdirectory: "features-tour")
+            ?? Bundle.main.url(forResource: assetName, withExtension: "png", subdirectory: "features-tour")
+    }
+
+    private var coverAssetURL: URL? {
+        guard let assetName else { return nil }
+        return Bundle.main.url(forResource: "\(assetName)-cover", withExtension: "png", subdirectory: "features-tour")
+    }
+
+    private var assetAspectRatio: CGFloat {
+        guard let url = tourAssetURL, let size = NSImage(contentsOf: url)?.size, size.height > 0 else {
+            return 3.0
+        }
+        return size.width / size.height
+    }
 
     var body: some View {
+        Group {
+            if let singleAction {
+                Button(action: singleAction.action) { cardBody }
+                    .buttonStyle(.plain)
+            } else {
+                cardBody
+            }
+        }
+        .onHover { hovering in
+            guard singleAction != nil else { return }
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+    }
+
+    private var cardBody: some View {
         VStack(alignment: .leading, spacing: compact ? 8 : 12) {
             illustration
 
-            Text(title)
-                .font(.system(size: compact ? 14 : 17, weight: .semibold))
-                .foregroundStyle(MuesliTheme.textPrimary)
-                .fixedSize(horizontal: false, vertical: true)
+            // Cover image already carries the title — same dedup fix as
+            // FeatureTourBanner, so it isn't repeated as a second text line.
+            if coverAssetURL == nil {
+                Text(title)
+                    .font(.system(size: compact ? 14 : 17, weight: .semibold))
+                    .foregroundStyle(MuesliTheme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Text(subtitle)
                 .font(.system(size: compact ? 12 : 13, weight: .regular))
@@ -47,10 +102,13 @@ struct FeatureCard: View {
                 .lineLimit(compact ? 3 : 4)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, coverAssetURL != nil ? 4 : 0)
 
             Spacer(minLength: 0)
 
-            if !actions.isEmpty {
+            if let singleAction {
+                actionLabel(singleAction)
+            } else if !actions.isEmpty {
                 HStack(spacing: 8) {
                     ForEach(actions) { action in
                         actionButton(action)
@@ -60,22 +118,70 @@ struct FeatureCard: View {
             }
         }
         .padding(MuesliTheme.spacing16)
-        .frame(maxWidth: .infinity, minHeight: compact ? 150 : 230, maxHeight: .infinity, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).fill(MuesliTheme.backgroundBase))
+        .frame(maxWidth: .infinity, minHeight: compact ? (assetName != nil ? 195 : 150) : 230, maxHeight: .infinity, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
+                .fill(isHovered ? MuesliTheme.backgroundHover : MuesliTheme.backgroundBase)
+        )
         .overlay(
             RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
-                .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                .strokeBorder(isHovered ? accent.opacity(0.55) : MuesliTheme.surfaceBorder, lineWidth: isHovered ? 1.5 : 1)
         )
+        .scaleEffect(isHovered ? 1.012 : 1)
     }
 
+    @ViewBuilder
     private var illustration: some View {
-        FeatureIcon(
-            icon: icon,
-            accent: accent,
-            tileSize: compact ? 40 : 48,
-            iconSize: compact ? 18 : 22,
-            corner: compact ? 10 : 12
-        )
+        if !isHovered, let coverURL = coverAssetURL, let cover = NSImage(contentsOf: coverURL) {
+            Image(nsImage: cover)
+                .resizable()
+                .aspectRatio(assetAspectRatio, contentMode: .fit)
+                .frame(maxWidth: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
+                .overlay(
+                    RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
+                        .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                )
+        } else if let url = tourAssetURL, url.pathExtension.lowercased() == "gif" {
+            AnimatedImageView(url: url, animates: isHovered)
+                .aspectRatio(assetAspectRatio, contentMode: .fit)
+                .frame(maxWidth: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
+                .overlay(
+                    RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
+                        .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                )
+        } else {
+            FeatureIcon(
+                icon: icon,
+                accent: accent,
+                tileSize: compact ? 40 : 48,
+                iconSize: compact ? 18 : 22,
+                corner: compact ? 10 : 12
+            )
+        }
+    }
+
+    /// Visual-only chip (not a nested Button) for the single-action case,
+    /// since the whole card is already the button. Filled with the card's
+    /// own accent (matching FeatureTourBanner's buttons above) rather than a
+    /// neutral chip, per live feedback — the bottom grid read as flatter
+    /// than the top row once the top row's buttons went accent-colored.
+    @ViewBuilder
+    private func actionLabel(_ action: FeatureAction) -> some View {
+        HStack(spacing: 5) {
+            if let systemImage = action.systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            Text(action.label)
+                .font(.system(size: 12, weight: .semibold))
+                .lineLimit(1)
+        }
+        .foregroundStyle(.white)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, MuesliTheme.spacing8)
+        .background(Capsule().fill(accent.opacity(0.82)))
     }
 
     @ViewBuilder

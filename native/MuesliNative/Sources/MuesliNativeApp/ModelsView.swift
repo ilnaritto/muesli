@@ -22,6 +22,27 @@ enum ModelsTab: String, CaseIterable, Identifiable {
         }
     }
 
+    var sidebarIcon: String {
+        switch self {
+        case .speech: return "waveform"
+        case .text: return "text.bubble"
+        case .cleanup: return "wand.and.stars"
+        case .catalog: return "square.grid.2x2"
+        }
+    }
+
+    /// Telegram-style distinct tile color per role, matching the Settings
+    /// sidebar's per-section colors — live feedback preferred this over one
+    /// flat accent color for every row.
+    var sidebarColor: Color {
+        switch self {
+        case .speech: return Color(hex: 0x34AADC)   // cyan
+        case .text: return Color(hex: 0x5856D6)     // indigo
+        case .cleanup: return Color(hex: 0x00C7BE)  // teal
+        case .catalog: return Color(hex: 0x8E8E93)  // gray
+        }
+    }
+
     /// nil for Catalog — "Add Model" opens with a role picker instead of a
     /// preselected one.
     var matchingModelRole: ModelRole? {
@@ -77,35 +98,47 @@ struct ModelsView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: MuesliTheme.spacing24) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(tr("Models", "Модели"))
-                        .font(MuesliTheme.pageTitle())
-                        .foregroundStyle(MuesliTheme.textPrimary)
+        VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(tr("Models", "Модели"))
+                    .font(MuesliTheme.pageTitle())
+                    .foregroundStyle(MuesliTheme.textPrimary)
 
-                    Text(tr("Download and manage transcription models. The active model is used for dictation.", "Скачивайте модели транскрипции и управляйте ими. Активная модель используется для диктовки."))
-                        .font(MuesliTheme.callout())
-                        .foregroundStyle(MuesliTheme.textSecondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                modelsTabBar
-
-                switch selectedTab {
-                case .speech:
-                    speechTabContent
-                case .text:
-                    textModelsTabContent
-                case .cleanup:
-                    postProcessorSection
-                case .catalog:
-                    catalogTabContent
-                }
+                Text(tr("Download and manage transcription models. The active model is used for dictation.", "Скачивайте модели транскрипции и управляйте ими. Активная модель используется для диктовки."))
+                    .font(MuesliTheme.callout())
+                    .foregroundStyle(MuesliTheme.textSecondary)
             }
-            .padding(MuesliTheme.spacing32)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, MuesliTheme.spacing32)
+            .padding(.top, MuesliTheme.spacing32)
+
+            HStack(alignment: .top, spacing: MuesliTheme.spacing16) {
+                SecondaryColumn(title: tr("Models", "Модели"), width: 240) {
+                    modelsSidebar
+                }
+
+                ScrollView {
+                    Group {
+                        switch selectedTab {
+                        case .speech:
+                            speechTabContent
+                        case .text:
+                            textModelsTabContent
+                        case .cleanup:
+                            postProcessorSection
+                        case .catalog:
+                            catalogTabContent
+                        }
+                    }
+                    .padding(MuesliTheme.spacing24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.vertical, 8)
+            }
+            .padding(.horizontal, MuesliTheme.spacing32)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .sheet(isPresented: $showAddModelSheet) {
             AddModelSheet(controller: controller, initialRole: selectedTab.matchingModelRole ?? .textGeneration)
         }
@@ -175,29 +208,31 @@ struct ModelsView: View {
         }
     }
 
-    // MARK: - Role tabs (task 8.2.1)
+    // MARK: - Role sidebar (task 8: was a capsule tab bar — roles weren't noticed at a glance)
 
-    private var modelsTabBar: some View {
-        CapsuleTabBarContainer {
+    private var modelsSidebar: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            SecondaryColumnRow(
+                icon: "plus",
+                title: tr("Add Model", "Добавить модель"),
+                isSelected: false
+            ) {
+                showAddModelSheet = true
+            }
+            .help(tr("Add model…", "Добавить модель…"))
+
             ForEach(ModelsTab.allCases) { tab in
-                CapsuleTab(title: tab.title, isSelected: selectedTab == tab) {
+                SecondaryColumnRow(
+                    icon: tab.sidebarIcon,
+                    title: tab.title,
+                    isSelected: selectedTab == tab,
+                    tileColor: tab.sidebarColor
+                ) {
                     selectedTab = tab
                 }
             }
-        } trailingAccessory: {
-            Button {
-                showAddModelSheet = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(MuesliTheme.textSecondary)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.trailing, MuesliTheme.spacing8)
-            .help(tr("Add model…", "Добавить модель…"))
         }
+        .padding(MuesliTheme.spacing8)
     }
 
     @ViewBuilder
