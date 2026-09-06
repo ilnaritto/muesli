@@ -253,7 +253,8 @@ final class MuesliController: NSObject {
     private lazy var dictationAudioSessionManager = DictationAudioSessionManager(
         recorder: dictationRecorder,
         duckingController: audioDuckingController,
-        routingController: dictationAudioRoutingController
+        routingController: dictationAudioRoutingController,
+        isMeetingRecordingProvider: { [weak self] in self?.isMeetingRecording() ?? false }
     )
     private let dictationLatencyLogWriter = DictationLatencyLogWriter(
         url: AppIdentity.supportDirectoryURL.appendingPathComponent("dictation-latency.log")

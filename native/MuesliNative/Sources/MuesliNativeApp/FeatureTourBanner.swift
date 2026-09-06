@@ -31,6 +31,30 @@ struct FeatureTourBanner: View {
             ?? Bundle.main.url(forResource: assetName, withExtension: "png", subdirectory: "features-tour")
     }
 
+    /// Resting-state cover, `<assetName>-cover.png` — a crisp, non-animated
+    /// title card shown whenever the card isn't hovered. Kept as a separate
+    /// asset (not the GIF's first frame) for two reasons: a GIF re-encoded
+    /// without a custom palette (this build's `paletteuse` filter crashes)
+    /// carries visible dithering noise that makes text hard to read, and
+    /// `NSImageView.animates = false` freezes on whatever frame was already
+    /// playing rather than resetting to frame 0 — so the GIF alone can't
+    /// reliably show a clean "front cover" on mouse-out. A real SwiftUI
+    /// `Image` swap has neither problem.
+    private var coverAssetURL: URL? {
+        Bundle.main.url(forResource: "\(assetName)-cover", withExtension: "png", subdirectory: "features-tour")
+    }
+
+    /// The illustration box is sized to the asset's own aspect ratio (via
+    /// `.aspectRatio(_:contentMode: .fit)` below) rather than a fixed height,
+    /// so it hugs the image exactly instead of leaving letterbox bars when
+    /// an asset's proportions don't match a guessed fixed height.
+    private var assetAspectRatio: CGFloat {
+        guard let url = tourAssetURL, let size = NSImage(contentsOf: url)?.size, size.height > 0 else {
+            return 3.0
+        }
+        return size.width / size.height
+    }
+
     var body: some View {
         Button {
             action?.action()
@@ -38,10 +62,17 @@ struct FeatureTourBanner: View {
             VStack(alignment: .leading, spacing: 10) {
                 illustration
 
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(MuesliTheme.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
+                // The cover image already carries the feature name — repeating
+                // it as a second text line under the illustration read as
+                // duplicated content, per live feedback. Cards without a
+                // cover (no real asset recorded yet) still need the title
+                // here, since their placeholder illustration has no text.
+                if coverAssetURL == nil {
+                    Text(title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(MuesliTheme.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 Text(description)
                     .font(.system(size: 12))
@@ -50,6 +81,10 @@ struct FeatureTourBanner: View {
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    // Compensates for the missing title line above so the
+                    // card's own internal rhythm still feels balanced, not
+                    // cramped right under the illustration.
+                    .padding(.top, coverAssetURL != nil ? 6 : 0)
 
                 Spacer(minLength: 0)
 
@@ -58,7 +93,7 @@ struct FeatureTourBanner: View {
                 }
             }
             .padding(MuesliTheme.spacing12)
-            .frame(maxWidth: .infinity, minHeight: 230, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 195, maxHeight: .infinity, alignment: .topLeading)
             .background(
                 RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge)
                     .fill(isHovered ? MuesliTheme.backgroundHover : MuesliTheme.backgroundBase)
@@ -80,9 +115,19 @@ struct FeatureTourBanner: View {
 
     @ViewBuilder
     private var illustration: some View {
-        if let url = tourAssetURL, url.pathExtension.lowercased() == "gif" {
+        if !isHovered, let coverURL = coverAssetURL, let cover = NSImage(contentsOf: coverURL) {
+            Image(nsImage: cover)
+                .resizable()
+                .aspectRatio(assetAspectRatio, contentMode: .fit)
+                .frame(maxWidth: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
+                .overlay(
+                    RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
+                        .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                )
+        } else if let url = tourAssetURL, url.pathExtension.lowercased() == "gif" {
             AnimatedImageView(url: url, animates: isHovered)
-                .frame(height: 110)
+                .aspectRatio(assetAspectRatio, contentMode: .fit)
                 .frame(maxWidth: .infinity)
                 .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
                 .overlay(
@@ -92,8 +137,7 @@ struct FeatureTourBanner: View {
         } else if let url = tourAssetURL, let image = NSImage(contentsOf: url) {
             Image(nsImage: image)
                 .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(height: 110)
+                .aspectRatio(assetAspectRatio, contentMode: .fit)
                 .frame(maxWidth: .infinity)
                 .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
                 .overlay(
@@ -141,19 +185,21 @@ struct FeatureTourBanner: View {
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity)
         .padding(.vertical, MuesliTheme.spacing8)
-        .background(Capsule().fill(MuesliTheme.accent))
+        .background(Capsule().fill(accent.opacity(0.82)))
     }
 }
 
 /// GIF playback bridge: SwiftUI's `Image` never animates a GIF's frames —
 /// only `NSImageView.animates` does. Hover controls play/pause; the view
 /// sits on the first frame when not hovered instead of looping constantly.
-private struct AnimatedImageView: NSViewRepresentable {
+/// Internal (not `private`) so `FeatureCard` can reuse it for the same
+/// cover/GIF illustration pattern on the compact grid below.
+struct AnimatedImageView: NSViewRepresentable {
     let url: URL
     let animates: Bool
 
     func makeNSView(context: Context) -> NSImageView {
-        let view = NSImageView()
+        let view = FixedSizeImageView()
         view.image = NSImage(contentsOf: url)
         view.imageScaling = .scaleProportionallyUpOrDown
         view.animates = animates
@@ -162,5 +208,15 @@ private struct AnimatedImageView: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSImageView, context: Context) {
         nsView.animates = animates
+    }
+}
+
+/// `NSImageView`'s default `intrinsicContentSize` matches the loaded image's
+/// pixel size, which fights the SwiftUI `.frame` around it inside a
+/// `LazyVGrid` cell and blows the card out over its neighbors. Reporting no
+/// intrinsic size lets the SwiftUI-provided frame win.
+final class FixedSizeImageView: NSImageView {
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
     }
 }

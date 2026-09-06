@@ -737,7 +737,11 @@ struct HomeView: View {
             }
             content()
         }
-        .frame(maxWidth: .infinity, minHeight: 190, alignment: .topLeading)
+        // maxHeight: .infinity lets a card whose own content is shorter
+        // (e.g. filler words with an empty-state hint) stretch to match a
+        // taller sibling in the same grid row, instead of leaving its own
+        // background/border shorter than the row and reading as "smaller".
+        .frame(maxWidth: .infinity, minHeight: 165, maxHeight: .infinity, alignment: .topLeading)
         .padding(MuesliTheme.spacing16)
         .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).fill(MuesliTheme.backgroundBase))
         .overlay(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
@@ -750,11 +754,11 @@ struct HomeView: View {
                     x: .value("Day", day.shortLabel),
                     y: .value("Minutes", day.minutes)
                 )
-                .foregroundStyle(MuesliTheme.accent)
+                .foregroundStyle(Color(hex: 0x34AADC))
                 .cornerRadius(4)
             }
             .chartYAxis { AxisMarks(position: .leading) }
-            .frame(height: 130)
+            .frame(height: 105)
         }
     }
 
@@ -766,16 +770,16 @@ struct HomeView: View {
                         x: .value("Week", point.weekStart),
                         y: .value("Minutes", point.avgMinutes)
                     )
-                    .foregroundStyle(MuesliTheme.accent)
+                    .foregroundStyle(Color(hex: 0x34C759))
                     .interpolationMethod(.catmullRom)
                     PointMark(
                         x: .value("Week", point.weekStart),
                         y: .value("Minutes", point.avgMinutes)
                     )
-                    .foregroundStyle(MuesliTheme.accent)
+                    .foregroundStyle(Color(hex: 0x34C759))
                 }
                 .chartXAxis { AxisMarks(values: .stride(by: .weekOfYear)) { _ in AxisGridLine() } }
-                .frame(height: 130)
+                .frame(height: 105)
             } else {
                 emptyHint(tr("Not enough meetings yet for a trend.", "Пока мало встреч для тренда."))
             }
@@ -788,17 +792,25 @@ struct HomeView: View {
                 emptyHint(tr("No words yet.", "Пока нет слов."))
             } else {
                 let maxCount = a.topWords.first?.count ?? 1
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(a.topWords.prefix(8)) { w in
-                        HStack(spacing: 8) {
+                // One accent color, shaded from strongest (most frequent) to
+                // faintest — a rainbow across unrelated hues read as noisy;
+                // shades of the same color still separate each row visually
+                // while reinforcing the rank/frequency order.
+                // Follows the user's chosen accent (MuesliTheme.accent),
+                // not a hardcoded hex — a fixed blue here read as wrong once
+                // Anna picked a different app accent (purple).
+                let base = MuesliTheme.accent
+                VStack(alignment: .leading, spacing: 7) {
+                    ForEach(Array(a.topWords.prefix(8).enumerated()), id: \.element.id) { index, w in
+                        HStack(spacing: 10) {
                             Text(w.word)
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: 13, weight: .medium))
                                 .foregroundStyle(MuesliTheme.textSecondary)
-                                .frame(width: 92, alignment: .leading)
+                                .frame(width: 96, alignment: .leading)
                                 .lineLimit(1)
                             GeometryReader { geo in
                                 Capsule()
-                                    .fill(MuesliTheme.accent.opacity(0.7))
+                                    .fill(base.opacity(max(0.3, 0.95 - Double(index) * 0.09)))
                                     .frame(width: max(6, geo.size.width * CGFloat(w.count) / CGFloat(maxCount)))
                             }
                             .frame(height: 8)
@@ -872,7 +884,7 @@ struct HomeView: View {
     @ViewBuilder
     private var functionsContent: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
+            VStack(alignment: .leading, spacing: 11) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(tr("Features", "Функции"))
                         .font(MuesliTheme.pageTitle())
@@ -885,9 +897,10 @@ struct HomeView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 // Task 5: onboarding-style tour, in new-user order — replaces
-                // the flagship grid. 3 per row per feedback (one full-width
-                // banner per row needed too much scrolling). Same 11pt rhythm
-                // (task 4) as the compact grid below.
+                // the flagship grid. 3 per row per feedback (2 per row wasted
+                // too much vertical space) — demo illustrations are drawn at
+                // a larger internal scale instead, so their text stays
+                // readable at this narrower card width.
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 11), count: 3), spacing: 11) {
                     ForEach(featureTourBanners) { $0 }
                 }
@@ -916,7 +929,7 @@ struct HomeView: View {
                 icon: "mic.fill",
                 accent: Color(hex: 0xFF3B30),
                 title: tr("Voice dictation", "Диктовка голосом"),
-                description: tr("Hold your hotkey, speak, release — text appears under your cursor.", "Зажми клавишу, говори, отпусти — текст появится под курсором."),
+                description: tr("Hold Right Option and speak — or click the dictation icon in the panel above.", "Зажми Right Option и говори — или нажми на значок диктовки в панели сверху."),
                 action: FeatureAction(label: tr("Set up dictation", "Настроить диктовку"), systemImage: "keyboard") {
                     openSettings(.dictation)
                 }
@@ -954,7 +967,7 @@ struct HomeView: View {
             IdentifiedView(FeatureTourBanner(
                 assetName: "insights",
                 icon: "sparkles",
-                accent: Color(hex: 0x5856D6),
+                accent: Color(hex: 0x5AC8FA),
                 title: tr("Insights — ask across all meetings", "Инсайты — вопросы по всем встречам"),
                 description: tr("One chat that reads every meeting in the period you pick.", "Один чат, который читает сразу все встречи за выбранный период."),
                 action: FeatureAction(label: tr("Open Insights", "Открыть Инсайты"), systemImage: "sparkles") {
@@ -980,31 +993,14 @@ struct HomeView: View {
     }
 
     private var compactFeatures: [IdentifiedView] {
+        // "Templates & language" and "On-device models" were removed from
+        // here — they're the same feature as "Note templates" and
+        // "On-device models" in the flagship tour above, just phrased
+        // slightly differently. Two cards pointing at the same real feature
+        // read as a duplicate no matter how differently they're illustrated
+        // (tried twice); removing the repeat is the actual fix Anna asked
+        // for, not another reskin.
         let cards: [IdentifiedView] = [
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0xAF52DE),
-                icon: "square.text.square.fill",
-                title: tr("Templates & language", "Шаблоны и язык"),
-                subtitle: tr("Your own note formats, in your language.", "Свои форматы заметок — хоть русский, хоть английский."),
-                actions: [
-                    FeatureAction(label: tr("Open", "Открыть"), isPrimary: true) {
-                        controller.showMeetingTemplatesManager()
-                    }
-                ],
-                compact: true
-            )),
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0x007AFF),
-                icon: "square.and.arrow.down.fill",
-                title: tr("On-device models", "Модели на устройстве"),
-                subtitle: tr("11 speech models, all offline — nothing leaves your Mac.", "11 моделей распознавания, всё офлайн — ничего не уходит в облако."),
-                actions: [
-                    FeatureAction(label: tr("Manage", "Управление"), isPrimary: true) {
-                        openSettings(.models)
-                    }
-                ],
-                compact: true
-            )),
             IdentifiedView(FeatureCard(
                 accent: Color(hex: 0x00C7BE),
                 icon: "wand.and.stars",
@@ -1015,7 +1011,8 @@ struct HomeView: View {
                         openSettings(.models)
                     }
                 ],
-                compact: true
+                compact: true,
+                assetName: "smart-cleanup"
             )),
             IdentifiedView(FeatureCard(
                 accent: Color(hex: 0xFF2D55),
@@ -1027,7 +1024,8 @@ struct HomeView: View {
                         openSettings(.computerUse)
                     }
                 ],
-                compact: true
+                compact: true,
+                assetName: "voice-commands"
             )),
             // Task 5 point 7: minor items, compact — moved out of the
             // flagship tour above.
@@ -1041,7 +1039,8 @@ struct HomeView: View {
                         openSettings(.meetings)
                     }
                 ],
-                compact: true
+                compact: true,
+                assetName: "screen-video"
             )),
             IdentifiedView(FeatureCard(
                 accent: Color(hex: 0x30B0C7),
@@ -1053,7 +1052,8 @@ struct HomeView: View {
                         openSettings(.dictionary)
                     }
                 ],
-                compact: true
+                compact: true,
+                assetName: "dictionary"
             )),
         ]
         // TODO(sync): re-enable when the iPhone app ships — see SettingsView.sectionListPane,
