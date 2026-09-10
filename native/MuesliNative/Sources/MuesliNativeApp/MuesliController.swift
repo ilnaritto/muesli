@@ -7355,7 +7355,15 @@ final class MuesliController: NSObject {
             icon = "!"
         case .failed:
             message = result.message
-            floatingMessage = "Failed"
+            // The floating pill used to just say "Failed" — the actual
+            // reason (e.g. "Connect ChatGPT to use model-driven computer
+            // use.") was computed into `message` above but only ever went
+            // to `statusBarController?.setStatus`, which is a no-op. Show
+            // it directly so a failure is actionable, not just a mystery
+            // amber badge.
+            let trimmed = result.message.trimmingCharacters(in: .whitespacesAndNewlines)
+            floatingMessage = trimmed.isEmpty ? tr("Failed", "Ошибка")
+                : (trimmed.count > 80 ? String(trimmed.prefix(79)) + "…" : trimmed)
             icon = "!"
         case .cancelled:
             message = result.message
