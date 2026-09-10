@@ -657,6 +657,8 @@ struct HomeView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
+                OverviewPermissionsBoard()
+
                 numberCards
 
                 if let a = appState.overviewAnalytics, !a.isEmpty {
