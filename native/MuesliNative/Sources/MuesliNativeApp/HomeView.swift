@@ -896,16 +896,26 @@ struct HomeView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Task 5: onboarding-style tour, in new-user order — replaces
-                // the flagship grid. 3 per row per feedback (2 per row wasted
-                // too much vertical space) — demo illustrations are drawn at
-                // a larger internal scale instead, so their text stays
-                // readable at this narrower card width.
+                // Round 3: presentation board per Ilnar's reference — main
+                // features as large image banners, secondary features as
+                // small plain icon tiles, grouped under their own labels
+                // instead of one undifferentiated grid.
+                Text(tr("MAIN FEATURES", "ОСНОВНЫЕ ФУНКЦИИ"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(MuesliTheme.textTertiary)
+                    .textCase(.uppercase)
+
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 11), count: 3), spacing: 11) {
                     ForEach(featureTourBanners) { $0 }
                 }
 
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 11), count: 3), spacing: 11) {
+                Text(tr("MORE", "ЕЩЁ"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(MuesliTheme.textTertiary)
+                    .textCase(.uppercase)
+                    .padding(.top, 4)
+
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 11), count: 4), spacing: 11) {
                     ForEach(compactFeatures) { $0 }
                 }
             }
@@ -1011,8 +1021,7 @@ struct HomeView: View {
                         openSettings(.models)
                     }
                 ],
-                compact: true,
-                assetName: "smart-cleanup"
+                compact: true
             )),
             IdentifiedView(FeatureCard(
                 accent: Color(hex: 0xFF2D55),
@@ -1024,8 +1033,7 @@ struct HomeView: View {
                         openSettings(.computerUse)
                     }
                 ],
-                compact: true,
-                assetName: "voice-commands"
+                compact: true
             )),
             // Task 5 point 7: minor items, compact — moved out of the
             // flagship tour above.
@@ -1039,8 +1047,7 @@ struct HomeView: View {
                         openSettings(.meetings)
                     }
                 ],
-                compact: true,
-                assetName: "screen-video"
+                compact: true
             )),
             IdentifiedView(FeatureCard(
                 accent: Color(hex: 0x30B0C7),
@@ -1052,8 +1059,7 @@ struct HomeView: View {
                         openSettings(.dictionary)
                     }
                 ],
-                compact: true,
-                assetName: "dictionary"
+                compact: true
             )),
         ]
         // TODO(sync): re-enable when the iPhone app ships — see SettingsView.sectionListPane,
