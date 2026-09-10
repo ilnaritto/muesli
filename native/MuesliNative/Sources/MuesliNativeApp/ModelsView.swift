@@ -31,28 +31,11 @@ enum ModelsTab: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Telegram-style distinct tile color per role, matching the Settings
-    /// sidebar's per-section colors — live feedback preferred this over one
-    /// flat accent color for every row.
-    var sidebarColor: Color {
-        switch self {
-        case .speech: return Color(hex: 0x34AADC)   // cyan
-        case .text: return Color(hex: 0x5856D6)     // indigo
-        case .cleanup: return Color(hex: 0x00C7BE)  // teal
-        case .catalog: return Color(hex: 0x8E8E93)  // gray
-        }
-    }
+    /// Round 3 feedback reversed the earlier per-role tile colors — one
+    /// theme accent color everywhere in Settings/Models now, not a
+    /// different hue per row.
+    var sidebarColor: Color { MuesliTheme.accent }
 
-    /// nil for Catalog — "Add Model" opens with a role picker instead of a
-    /// preselected one.
-    var matchingModelRole: ModelRole? {
-        switch self {
-        case .speech: return .transcription
-        case .text: return .textGeneration
-        case .cleanup: return .cleanup
-        case .catalog: return nil
-        }
-    }
 }
 
 struct ModelsView: View {
@@ -125,7 +108,7 @@ struct ModelsView: View {
                         case .text:
                             textModelsTabContent
                         case .cleanup:
-                            postProcessorSection
+                            cleanupTabContent
                         case .catalog:
                             catalogTabContent
                         }
@@ -140,7 +123,7 @@ struct ModelsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .sheet(isPresented: $showAddModelSheet) {
-            AddModelSheet(controller: controller, initialRole: selectedTab.matchingModelRole ?? .textGeneration)
+            AddModelSheet(controller: controller)
         }
         .onAppear {
             checkDownloadedModels()
@@ -297,7 +280,7 @@ struct ModelsView: View {
             } else {
                 VStack(spacing: MuesliTheme.spacing12) {
                     ForEach(models) { model in
-                        textModelCard(model, isDefault: model.id == defaultID)
+                        configuredModelCard(model, role: .textGeneration, isDefault: model.id == defaultID)
                     }
                 }
             }
@@ -335,10 +318,10 @@ struct ModelsView: View {
         )
     }
 
-    private func textModelCard(_ model: ConfiguredModel, isDefault: Bool) -> some View {
+    private func configuredModelCard(_ model: ConfiguredModel, role: ModelRole, isDefault: Bool) -> some View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
             HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
-                Image(systemName: model.provider == .chatGPTOAuth ? "sparkles" : "cpu")
+                Image(systemName: model.provider == .chatGPTOAuth ? "sparkles" : (model.provider.isLocal ? "cpu" : "icloud"))
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(MuesliTheme.accent)
                     .frame(width: 36, height: 36)
@@ -383,7 +366,11 @@ struct ModelsView: View {
             HStack(spacing: MuesliTheme.spacing8) {
                 if !isDefault, model.isEnabled {
                     modelsTabActionButton(tr("Make default", "Сделать основной"), accent: true) {
-                        controller.setDefaultConfiguredModel(id: model.id, role: .textGeneration)
+                        if role == .cleanup {
+                            controller.selectCleanupModel(id: model.id)
+                        } else {
+                            controller.setDefaultConfiguredModel(id: model.id, role: role)
+                        }
                     }
                 }
                 if model.provider != .bundledLocal, model.provider != .localGGUF {
@@ -394,11 +381,14 @@ struct ModelsView: View {
                         controller.removeConfiguredModel(id: model.id)
                     } label: {
                         Image(systemName: "trash")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.red.opacity(0.6))
-                            .frame(width: 20, height: 20)
+                            .font(.system(size: 12, weight: .medium))
                     }
                     .buttonStyle(.plain)
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .padding(.horizontal, MuesliTheme.spacing12)
+                    .padding(.vertical, 4)
+                    .background(MuesliTheme.surfacePrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
                 }
             }
         }
@@ -641,6 +631,34 @@ struct ModelsView: View {
         )
     }
 
+    /// Round 3: any cloud LLM connected on the Text tab is equally usable
+    /// for cleanup (`ConfiguredModel.roles`) — list those connected models
+    /// above the existing bundled on-device GGUF cards, sharing one screen
+    /// instead of forcing a second "add" flow just for cleanup.
+    @ViewBuilder
+    private var cleanupTabContent: some View {
+        let connectedModels = controller.allConfiguredModels(role: .cleanup)
+        let defaultID = controller.activeCleanupModelID()
+        if !connectedModels.isEmpty {
+            VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
+                VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
+                    Text(tr("CONNECTED MODELS", "ПОДКЛЮЧЁННЫЕ МОДЕЛИ"))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                        .textCase(.uppercase)
+                        .padding(.leading, 2)
+                }
+                VStack(spacing: MuesliTheme.spacing12) {
+                    ForEach(connectedModels) { model in
+                        configuredModelCard(model, role: .cleanup, isDefault: model.id == defaultID)
+                    }
+                }
+            }
+            .padding(.bottom, MuesliTheme.spacing8)
+        }
+        postProcessorSection
+    }
+
     private var postProcessorSection: some View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
             VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
@@ -669,7 +687,11 @@ struct ModelsView: View {
 
     private func postProcModelCard(_ option: PostProcessorOption) -> some View {
         let isDownloaded = downloadedPostProcModels.contains(option.id)
-        let isActive = appState.activePostProcessor.id == option.id && isDownloaded
+        // Source of truth is the shared cleanup selection, not the
+        // local-only `activePostProcessor` mirror — otherwise a bundled
+        // card here can still read "Active" after the user switches
+        // cleanup to a connected cloud model above.
+        let isActive = controller.activeCleanupModelID() == MuesliController.bundledCleanupID(option) && isDownloaded
         let isDownloading = downloadingPostProcModels.contains(option.id)
         let progress = downloadProgressPostProc[option.id] ?? 0
 
@@ -738,7 +760,7 @@ struct ModelsView: View {
                 } else if isDownloaded {
                     if !isActive {
                         Button(tr("Set Active", "Сделать активной")) {
-                            controller.selectPostProcessor(option)
+                            controller.selectCleanupModel(id: MuesliController.bundledCleanupID(option))
                         }
                         .buttonStyle(.plain)
                         .font(.system(size: 12, weight: .medium))

@@ -34,15 +34,30 @@ struct MeetingTemplatesManagerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
-            header
+            // Embedded in Settings, the section is already titled by the
+            // left Settings sidebar (SettingsSection.title) — this header
+            // would just repeat "Meeting Templates"/"Шаблоны встреч" right
+            // above SecondaryColumn's own "Templates"/"Шаблоны" header,
+            // reading as a duplicated heading. Only the standalone sheet
+            // needs its own title + Done button.
+            if !isEmbedded {
+                header
+            }
 
             HStack(alignment: .top, spacing: MuesliTheme.spacing16) {
                 SecondaryColumn(title: tr("Templates", "Шаблоны"), width: isEmbedded ? 240 : 260) {
                     sidebar
                 }
                 editorPane
-                    .padding(.vertical, 8)
+                    .padding(.vertical, MuesliTheme.spacing16)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .background(MuesliTheme.backgroundBase)
+                    .clipShape(RoundedRectangle(cornerRadius: SecondaryColumn<EmptyView>.cardCornerRadius, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: SecondaryColumn<EmptyView>.cardCornerRadius, style: .continuous)
+                            .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                    )
+                    .padding(.vertical, 8)
             }
             .frame(maxHeight: .infinity)
         }
@@ -128,7 +143,7 @@ struct MeetingTemplatesManagerView: View {
                     icon: "sparkles",
                     title: tr("Auto", "Auto"),
                     isSelected: selection == .template(MeetingTemplates.autoID),
-                    iconTint: Self.rowColorPalette[0],
+                    iconTint: MuesliTheme.accent,
                     showsEditedMark: isOverridden(MeetingTemplates.autoID),
                     toggleID: nil
                 ) {
@@ -143,7 +158,7 @@ struct MeetingTemplatesManagerView: View {
                             icon: MeetingTemplates.normalizedCustomIcon(named: template.icon),
                             title: template.name,
                             isSelected: selection == .template(template.id),
-                            iconTint: Self.rowColorPalette[(index + 1) % Self.rowColorPalette.count],
+                            iconTint: MuesliTheme.accent,
                             toggleID: template.id
                         ) {
                             selection = .template(template.id)
@@ -157,7 +172,7 @@ struct MeetingTemplatesManagerView: View {
                         icon: template.icon,
                         title: template.title,
                         isSelected: selection == .template(template.id),
-                        iconTint: Self.rowColorPalette[(index + 2) % Self.rowColorPalette.count],
+                        iconTint: MuesliTheme.accent,
                         showsEditedMark: isOverridden(template.id),
                         toggleID: template.id
                     ) {
@@ -168,20 +183,6 @@ struct MeetingTemplatesManagerView: View {
             .padding(MuesliTheme.spacing8)
         }
     }
-
-    /// Telegram-style distinct tile color per row (like the Settings sidebar's
-    /// per-section colors) — live feedback preferred this over one flat
-    /// accent color for every row.
-    private static let rowColorPalette: [Color] = [
-        Color(hex: 0x5856D6), // indigo
-        Color(hex: 0x34C759), // green
-        Color(hex: 0xFF9500), // orange
-        Color(hex: 0x00C7BE), // teal
-        Color(hex: 0xFF3B30), // red
-        Color(hex: 0xAF52DE), // purple
-        Color(hex: 0x34AADC), // cyan
-        Color(hex: 0xFF2D55), // pink
-    ]
 
     private func sidebarSectionHeader(_ title: String) -> some View {
         Text(title)

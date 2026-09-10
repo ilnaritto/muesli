@@ -2184,11 +2184,17 @@ struct MeetingDetailView: View {
 }
 
 private extension View {
-    /// Task 10: dropped the extra wrapping card — every chip inside
-    /// (status, pause/resume, stop, discard) already has its own
-    /// background/border, so this used to read as a duplicate frame.
+    /// Round 3 feedback: the bare padding (no background) read as an
+    /// unexplained gap around the chip row — restored a subtle matching
+    /// background + border so the group reads as one control cluster.
     func recordingControlsBackground() -> some View {
         padding(5)
+            .background(MuesliTheme.backgroundRaised)
+            .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+            .overlay(
+                RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                    .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+            )
     }
 }
 

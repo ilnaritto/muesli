@@ -745,6 +745,7 @@ final class FloatingIndicatorController: NSObject {
             close()
             return
         }
+        let isFirstAppearance = panel == nil
         if panel == nil {
             createPanel(config: config)
         }
@@ -796,7 +797,15 @@ final class FloatingIndicatorController: NSObject {
         // window — a moving NSPanel visibly sags mid-animation. NOTE: setHovered
         // flips isHovered BEFORE calling setState, so previousHover == isHovered
         // here and cannot be used to detect the transition.
-        if previousState == .idle, state == .idle {
+        //
+        // Round 3 feedback: the very first render (isFirstAppearance) must
+        // NOT take this path. animateHoverMorph's collapse branch assumes
+        // there's already an on-screen strip to shrink from — with none yet,
+        // it falls back to a hardcoded rect anchored off the bottom-left of
+        // the panel, so the pill visibly flew in from that corner instead of
+        // fading in in place. Falling through to the general render path
+        // below draws straight from the target frame with no such fallback.
+        if previousState == .idle, state == .idle, !isFirstAppearance {
             animateHoverMorph(style: style, targetFrame: targetFrame, collapsedTintAlpha: 0.22)
             return
         }
@@ -1846,6 +1855,17 @@ final class FloatingIndicatorController: NSObject {
         tint.masksToBounds = false
         tint.cornerCurve = .continuous
         tint.isHidden = true
+        // A bare CALayer defaults bounds/position to zero — with the default
+        // (0.5, 0.5) anchor that's the contentView's bottom-left corner. Left
+        // that way, the pill's very first render animates the tint growing
+        // out of the bottom-left instead of fading in in place, because
+        // applyTintLayerGeometry animates FROM whatever position/bounds the
+        // layer already has. Seed it to match the idle strip's resting
+        // geometry up front so that first animation has nowhere to travel
+        // from — it's already there.
+        tint.bounds = CGRect(origin: .zero, size: contentView.bounds.size)
+        tint.position = CGPoint(x: contentView.bounds.midX, y: contentView.bounds.midY)
+        tint.cornerRadius = contentView.bounds.height / 2
         contentView.layer?.insertSublayer(tint, at: 0)
         tintLayer = tint
 

@@ -620,11 +620,9 @@ struct SettingsView: View {
                     settingsRow(tr("Cleanup model", "Модель очистки")) {
                         ModelPicker(
                             items: controller.configuredModels(role: .cleanup).map { ModelPickerItem(id: $0.id, title: $0.displayName) },
-                            selectedID: MuesliController.bundledCleanupID(appState.activePostProcessor)
+                            selectedID: controller.activeCleanupModelID()
                         ) { id in
-                            if let option = PostProcessorOption.downloaded.first(where: { MuesliController.bundledCleanupID($0) == id }) {
-                                controller.selectPostProcessor(option)
-                            }
+                            controller.selectCleanupModel(id: id)
                         } onManage: {
                             appState.settingsSection = .models
                         }

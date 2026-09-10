@@ -1992,7 +1992,7 @@ final class MuesliController: NSObject {
         }
         return TranscriptCleanupClient.hasRequiredSettings(
             for: selectedPostProcessorBackend,
-            config: config,
+            config: config.resolvedForCleanup(modelID: activeCleanupModelID()),
             isChatGPTAuthenticated: chatGPTAuth.isAuthenticated
         )
     }
@@ -2002,7 +2002,7 @@ final class MuesliController: NSObject {
             backend: selectedPostProcessorBackend,
             option: option ?? runtimePostProcessorOption(),
             systemPrompt: config.postProcessorSystemPrompt,
-            config: config
+            config: config.resolvedForCleanup(modelID: activeCleanupModelID())
         )
     }
 
@@ -2087,6 +2087,27 @@ final class MuesliController: NSObject {
         }
         guard config.enablePostProcessor else { return }
         preloadExperimentalTranscriptionFeatures()
+    }
+
+    /// Round 3: the Cleanup tab now lists both the bundled on-device GGUFs
+    /// AND any cloud/server LLM the user has connected (see `ConfiguredModel.roles`) —
+    /// this is the single entry point for picking either kind as active,
+    /// keeping `defaultModelIDs[.cleanup]` (the UI-facing selection) and the
+    /// legacy `postProcessorBackend`/`activePostProcessorId` runtime fields
+    /// (and their `appState` mirrors) in sync.
+    func selectCleanupModel(id: String) {
+        updateConfig { $0.defaultModelIDs[ModelRole.cleanup.rawValue] = id }
+        if let bundled = PostProcessorOption.downloaded.first(where: { Self.bundledCleanupID($0) == id }) {
+            selectPostProcessor(bundled)
+            return
+        }
+        guard let model = configuredModels(role: .cleanup).first(where: { $0.id == id }),
+              let llmBackend = model.llmBackendOption else {
+            return
+        }
+        let backend = TranscriptCleanupBackendOption.hosted(llmBackend)
+        selectPostProcessorBackend(backend)
+        updatePostProcessorModel(model.modelID, for: backend)
     }
 
     func selectTranscriptCleanupPrompt(id: String) {
@@ -2656,7 +2677,7 @@ final class MuesliController: NSObject {
         let autoStopSource = meetingURL.flatMap { MeetingAutoStopSource(meetingURL: $0) }
 
         meetingNotification.show(
-            title: "Meeting starting now",
+            title: tr("Meeting starting now", "Встреча начинается"),
             subtitle: title,
             meetingURL: meetingURL,
             dismissAfter: 30,
@@ -6695,9 +6716,9 @@ final class MuesliController: NSObject {
 
     private func showMeetingCompletionNotification(_ notification: PendingMeetingCompletionNotification) {
         meetingNotification.show(
-            title: "Transcription complete",
+            title: tr("Transcription complete", "Расшифровка готова"),
             subtitle: notification.title,
-            actionLabel: "View Notes",
+            actionLabel: tr("View Notes", "Смотреть заметки"),
             onStartRecording: { [weak self] in
                 guard let self else { return }
                 if let meetingID = notification.meetingID {
@@ -6829,9 +6850,9 @@ final class MuesliController: NSObject {
         let response = activeMeetingSignalLossResponse
         let didShow = meetingNotification.show(
             promptID: promptID,
-            title: "Meeting signal lost",
-            subtitle: "Still recording. Stop if the meeting ended.",
-            actionLabel: "Stop Recording",
+            title: tr("Meeting signal lost", "Сигнал встречи потерян"),
+            subtitle: tr("Still recording. Stop if the meeting ended.", "Запись всё ещё идёт. Останови, если встреча закончилась."),
+            actionLabel: tr("Stop Recording", "Остановить запись"),
             dismissAfter: 30,
             // MeetingNotificationController uses onStartRecording as its generic
             // primary-action slot; here the primary action is stopping recording.
@@ -6875,7 +6896,7 @@ final class MuesliController: NSObject {
         let preferredScreen = meetingSourceWindowLocator.screen(for: candidate)
         let didShow = meetingNotification.show(
             promptID: candidate.id,
-            title: "Meeting detected",
+            title: tr("Meeting detected", "Обнаружена встреча"),
             subtitle: title,
             preferredScreen: preferredScreen,
             platform: MeetingPlatform(candidate.platform),
@@ -8304,15 +8325,17 @@ final class MuesliController: NSObject {
         let minutesUntil = Int(ceil(event.startDate.timeIntervalSinceNow / 60))
         let timeLabel: String
         if minutesUntil > 0 {
-            timeLabel = "starts in \(minutesUntil) min"
+            timeLabel = tr("starts in \(minutesUntil) min", "начинается через \(minutesUntil) мин")
         } else if minutesUntil == 0 {
-            timeLabel = "starting now"
+            timeLabel = tr("starting now", "начинается сейчас")
         } else {
-            timeLabel = "started \(abs(minutesUntil)) min ago"
+            timeLabel = tr("started \(abs(minutesUntil)) min ago", "началась \(abs(minutesUntil)) мин назад")
         }
 
         let title = event.title
-        let notificationTitle = minutesUntil <= 0 ? "Meeting starting now" : "Upcoming meeting"
+        let notificationTitle = minutesUntil <= 0
+            ? tr("Meeting starting now", "Встреча начинается")
+            : tr("Upcoming meeting", "Предстоящая встреча")
         meetingNotification.show(
             title: notificationTitle,
             subtitle: "\(title) · \(timeLabel)",
@@ -8374,9 +8397,9 @@ final class MuesliController: NSObject {
     private func showMeetingEndNotification(title: String) {
         guard isMeetingRecording() else { return }
         meetingNotification.show(
-            title: "Meeting ended",
-            subtitle: "\(title) · scheduled time is over",
-            actionLabel: "Stop Recording",
+            title: tr("Meeting ended", "Встреча завершена"),
+            subtitle: tr("\(title) · scheduled time is over", "\(title) · время по расписанию истекло"),
+            actionLabel: tr("Stop Recording", "Остановить запись"),
             dismissAfter: 45,
             onStartRecording: { [weak self] in
                 self?.stopMeetingRecording()

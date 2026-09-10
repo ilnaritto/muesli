@@ -53,7 +53,7 @@ final class MeetingNotificationController {
         promptID: String? = nil,
         title: String,
         subtitle: String,
-        actionLabel: String = "Start Recording",
+        actionLabel: String = tr("Start Recording", "Начать запись"),
         meetingURL: URL? = nil,
         preferredScreen: NSScreen? = nil,
         platform explicitPlatform: MeetingPlatform? = nil,
@@ -85,16 +85,29 @@ final class MeetingNotificationController {
         let titleFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
         let subtitleFont = NSFont.systemFont(ofSize: 11)
 
+        // Localized "Join & Record" runs noticeably longer in Russian than
+        // English — size the button (and card) to the actual rendered text
+        // instead of the English-tuned fixed width, or it clips.
+        let joinButtonTitle = tr("Join & Record", "Присоединиться и записать")
+        let joinButtonFont = NSFont.systemFont(ofSize: 11, weight: .medium)
+        let joinButtonWidth: CGFloat = max(98, ceil((joinButtonTitle as NSString).size(withAttributes: [.font: joinButtonFont]).width) + 20)
+        let joinChevronWidth: CGFloat = 24
+
         let minimumCardWidth: CGFloat = 344
         let cardWidth: CGFloat
         if hasJoinButton {
-            cardWidth = minimumCardWidth
+            let titleWidth = (title as NSString).size(withAttributes: [.font: titleFont]).width
+            let subtitleWidth = (subtitle as NSString).size(withAttributes: [.font: subtitleFont]).width
+            let requiredWidth = ceil(textX + max(titleWidth, subtitleWidth) + 8 + joinButtonWidth + joinChevronWidth + 12)
+            cardWidth = min(420, max(minimumCardWidth, requiredWidth))
         } else {
             let titleWidth = (title as NSString).size(withAttributes: [.font: titleFont]).width
             let subtitleWidth = (subtitle as NSString).size(withAttributes: [.font: subtitleFont]).width
+            let actionButtonWidth: CGFloat = max(110, ceil((actionLabel as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium)]).width) + 24)
             cardWidth = Self.singleActionCardWidth(
                 requiredTextWidth: max(titleWidth, subtitleWidth),
                 textX: textX,
+                buttonWidth: actionButtonWidth,
                 minimumWidth: minimumCardWidth
             )
         }
@@ -172,7 +185,7 @@ final class MeetingNotificationController {
         dismissButton.focusRingType = .none
         dismissButton.isBordered = false
         dismissButton.contentTintColor = NSColor.white.withAlphaComponent(0.86)
-        dismissButton.toolTip = "Dismiss"
+        dismissButton.toolTip = tr("Dismiss", "Скрыть")
         contentView.addSubview(dismissButton)
         contentView.hoverFrames = [cardView.frame, dismissButton.frame]
 
@@ -200,8 +213,8 @@ final class MeetingNotificationController {
 
         if hasJoinButton {
             // Split button: "Join & Record" (main) + chevron dropdown with "Join Only"
-            let buttonWidth: CGFloat = 98
-            let chevronWidth: CGFloat = 24
+            let buttonWidth = joinButtonWidth
+            let chevronWidth = joinChevronWidth
             let totalWidth = buttonWidth + chevronWidth
             let buttonX = cardWidth - totalWidth - 12
             let textMaxX = buttonX - 8
@@ -213,8 +226,8 @@ final class MeetingNotificationController {
             subtitleLabel.frame.size.width = textMaxX - textX
 
             // Main "Join & Record" button
-            let joinButton = NSButton(title: "Join & Record", target: self, action: #selector(handleJoinAndRecord))
-            joinButton.font = .systemFont(ofSize: 11, weight: .medium)
+            let joinButton = NSButton(title: joinButtonTitle, target: self, action: #selector(handleJoinAndRecord))
+            joinButton.font = joinButtonFont
             joinButton.frame = NSRect(x: buttonX, y: 15, width: buttonWidth, height: 30)
             joinButton.wantsLayer = true
             joinButton.layer?.backgroundColor = greenColor.cgColor
@@ -236,18 +249,21 @@ final class MeetingNotificationController {
             chevronButton.contentTintColor = NSColor.white.withAlphaComponent(0.8)
             cardView.addSubview(chevronButton)
         } else {
-            // Single "Start Recording" button
-            let buttonWidth: CGFloat = 110
+            // Single action button (e.g. "Start Recording" / "View Notes") —
+            // width follows the actual localized label, matching the card's
+            // own dynamic-width sizing above.
+            let actionButtonFont = NSFont.systemFont(ofSize: 12, weight: .medium)
+            let buttonWidth: CGFloat = max(110, ceil((actionLabel as NSString).size(withAttributes: [.font: actionButtonFont]).width) + 24)
             let buttonX = cardWidth - buttonWidth - 12
             let textWidth = Self.singleActionTextWidth(cardWidth: cardWidth, textX: textX, buttonWidth: buttonWidth)
             titleLabel.frame.size.width = textWidth
             subtitleLabel.frame.size.width = textWidth
 
             let startButton = NSButton(title: actionLabel, target: self, action: #selector(handleStartRecording))
-            startButton.font = .systemFont(ofSize: 12, weight: .medium)
+            startButton.font = actionButtonFont
             startButton.frame = NSRect(x: buttonX, y: 15, width: buttonWidth, height: 30)
             startButton.wantsLayer = true
-            startButton.layer?.backgroundColor = NSColor(red: 0.2, green: 0.5, blue: 1.0, alpha: 1.0).cgColor
+            startButton.layer?.backgroundColor = NSColor(MuesliTheme.accent).cgColor
             startButton.layer?.cornerRadius = 6
             startButton.isBordered = false
             startButton.contentTintColor = .white
@@ -415,11 +431,11 @@ final class MeetingNotificationController {
 
     @objc private func handleChevronClick(_ sender: NSButton) {
         let menu = NSMenu()
-        let joinOnlyItem = NSMenuItem(title: "Join Only", action: #selector(handleJoinOnly), keyEquivalent: "")
+        let joinOnlyItem = NSMenuItem(title: tr("Join Only", "Только присоединиться"), action: #selector(handleJoinOnly), keyEquivalent: "")
         joinOnlyItem.target = self
         menu.addItem(joinOnlyItem)
 
-        let recordOnlyItem = NSMenuItem(title: "Record Only", action: #selector(handleStartRecording), keyEquivalent: "")
+        let recordOnlyItem = NSMenuItem(title: tr("Record Only", "Только запись"), action: #selector(handleStartRecording), keyEquivalent: "")
         recordOnlyItem.target = self
         menu.addItem(recordOnlyItem)
 
