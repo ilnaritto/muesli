@@ -61,10 +61,25 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Round 3 feedback reversed the earlier per-section tile colors — one
-    /// theme accent color everywhere in Settings now, not a different hue
-    /// per section.
-    var iconColor: Color { MuesliTheme.accent }
+    /// Telegram-style distinct icon tile color per section — round 3
+    /// briefly flattened this to one accent color everywhere, round 5
+    /// restored it: a single flat color made sections harder to tell apart
+    /// at a glance in the sidebar list.
+    var iconColor: Color {
+        switch self {
+        case .general: return Color(hex: 0x8E8E93)      // gray
+        case .sync: return Color(hex: 0x34AADC)         // cyan
+        case .dictation: return Color(hex: 0xFF3B30)    // red
+        case .computerUse: return Color(hex: 0x5856D6)  // indigo
+        case .meetings: return Color(hex: 0x34C759)     // green
+        case .templates: return Color(hex: 0xAF52DE)    // purple
+        case .appearance: return Color(hex: 0xFF9500)   // orange
+        case .dictionary: return Color(hex: 0x00C7BE)   // teal
+        case .models: return Color(hex: 0x007AFF)       // blue
+        case .shortcuts: return Color(hex: 0xFF2D55)    // pink
+        case .about: return Color(hex: 0x8E8E93)        // gray
+        }
+    }
 }
 
 enum MeetingsNavigationState: Equatable {

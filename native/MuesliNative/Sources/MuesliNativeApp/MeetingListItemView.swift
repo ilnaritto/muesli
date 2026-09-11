@@ -361,13 +361,19 @@ struct MeetingListItemView: View {
 
     // MARK: - Formatting
 
+    @ViewBuilder
     private var statusBadge: some View {
+        // Recording keeps its red DOT (MeetingDetailView.statusChip) as the
+        // one red accent per earlier feedback — this badge's fill goes gray
+        // instead of a matching red-tinted block, per live feedback that a
+        // solid/tinted red fill during recording reads as too loud.
+        let isRecording = record.status == .recording
         Text(record.status.displayLabel)
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(record.status.displayColor)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(record.status.displayColor.opacity(0.12))
+            .background(isRecording ? MuesliTheme.surfacePrimary : record.status.displayColor.opacity(0.12))
             .clipShape(Capsule())
     }
 

@@ -87,6 +87,16 @@ private final class HoverIndicatorView: NSView {
 
 @MainActor
 final class FloatingIndicatorController: NSObject {
+    /// The anchor position (top-trailing, mid-leading, etc.) must resolve to
+    /// the SAME on-screen point regardless of which state's frame is being
+    /// computed — otherwise growing from the idle strip (43x7) to a wider
+    /// state (e.g. 128pt hover/recording) shifts the anchor point itself
+    /// (a trailing anchor keeps its outer edge fixed and recomputes its
+    /// center from the new width, so the pill visibly launches from one
+    /// edge instead of expanding symmetrically). Anchor math always uses
+    /// this fixed reference size instead of the target state's actual size.
+    private static let anchorReferenceSize = NSSize(width: 43, height: 7)
+
     private var panel: NSPanel?
     private var contentView: HoverIndicatorView?
     private var iconLabel: NSTextField?
@@ -2115,10 +2125,10 @@ final class FloatingIndicatorController: NSObject {
                    Self.isUsableIndicatorCenter(CGPoint(x: saved.x, y: saved.y), in: screen, size: size) {
                     center = CGPoint(x: saved.x, y: saved.y)
                 } else {
-                    center = Self.defaultIndicatorCenter(in: screen, idleSize: size)
+                    center = Self.defaultIndicatorCenter(in: screen, idleSize: Self.anchorReferenceSize)
                 }
             default:
-                center = Self.anchorCenter(config.indicatorAnchor, in: screen, size: size)
+                center = Self.anchorCenter(config.indicatorAnchor, in: screen, size: Self.anchorReferenceSize)
             }
         }
 

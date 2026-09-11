@@ -590,9 +590,9 @@ struct MeetingsListPane: View {
                     } label: {
                         Image(systemName: "stop.fill")
                             .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(MuesliTheme.textPrimary)
                             .frame(width: 26, height: 24)
-                            .background(MuesliTheme.recording)
+                            .background(MuesliTheme.surfacePrimary)
                             .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
                     }
                     .buttonStyle(.plain)

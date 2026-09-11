@@ -143,7 +143,7 @@ struct MeetingTemplatesManagerView: View {
                     icon: "sparkles",
                     title: tr("Auto", "Auto"),
                     isSelected: selection == .template(MeetingTemplates.autoID),
-                    iconTint: MuesliTheme.accent,
+                    iconTint: Self.rowColorPalette[0],
                     showsEditedMark: isOverridden(MeetingTemplates.autoID),
                     toggleID: nil
                 ) {
@@ -158,7 +158,7 @@ struct MeetingTemplatesManagerView: View {
                             icon: MeetingTemplates.normalizedCustomIcon(named: template.icon),
                             title: template.name,
                             isSelected: selection == .template(template.id),
-                            iconTint: MuesliTheme.accent,
+                            iconTint: Self.rowColorPalette[(index + 1) % Self.rowColorPalette.count],
                             toggleID: template.id
                         ) {
                             selection = .template(template.id)
@@ -172,7 +172,7 @@ struct MeetingTemplatesManagerView: View {
                         icon: template.icon,
                         title: template.title,
                         isSelected: selection == .template(template.id),
-                        iconTint: MuesliTheme.accent,
+                        iconTint: Self.rowColorPalette[(index + 2) % Self.rowColorPalette.count],
                         showsEditedMark: isOverridden(template.id),
                         toggleID: template.id
                     ) {
@@ -183,6 +183,20 @@ struct MeetingTemplatesManagerView: View {
             .padding(MuesliTheme.spacing8)
         }
     }
+
+    /// Telegram-style distinct tile color per row (like the Settings sidebar's
+    /// per-section colors) — restored alongside the Settings sidebar revert;
+    /// one flat accent color made rows harder to tell apart at a glance.
+    private static let rowColorPalette: [Color] = [
+        Color(hex: 0x5856D6), // indigo
+        Color(hex: 0x34C759), // green
+        Color(hex: 0xFF9500), // orange
+        Color(hex: 0x00C7BE), // teal
+        Color(hex: 0xFF3B30), // red
+        Color(hex: 0xAF52DE), // purple
+        Color(hex: 0x34AADC), // cyan
+        Color(hex: 0xFF2D55), // pink
+    ]
 
     private func sidebarSectionHeader(_ title: String) -> some View {
         Text(title)

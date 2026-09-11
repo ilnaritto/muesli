@@ -305,14 +305,19 @@ struct SettingsView: View {
         case .about:
             AboutView(appState: appState, onOpenManualDiagnosticReport: { controller.openManualDiagnosticReport() })
         case .templates:
-            // No outer ScrollView: the manager scrolls its own list.
+            // No outer ScrollView: the manager scrolls its own list. Only
+            // horizontal padding here — the sidebar/editor pane below both
+            // stretch to fill height (`.frame(maxHeight: .infinity)`), so
+            // vertical padding around the whole thing (unlike the other
+            // sections' padding, which sits on scrollable content) would
+            // shrink them short of the main Settings sidebar's height.
             MeetingTemplatesManagerView(
                 appState: appState,
                 controller: controller,
                 onClose: {},
                 isEmbedded: true
             )
-            .padding(MuesliTheme.spacing32)
+            .padding(.horizontal, MuesliTheme.spacing32)
         case .general, .sync, .dictation, .computerUse, .meetings, .appearance:
             ScrollView {
                 VStack(alignment: .leading, spacing: MuesliTheme.spacing24) {

@@ -86,6 +86,11 @@ struct SecondaryColumnRow<Trailing: View>: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // Without an explicit width claim here, a long, unbounded title
+            // (e.g. a custom template name) could report its own ideal width
+            // instead of yielding space to `trailing()` — the row would
+            // overflow the column's fixed width instead of truncating.
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             trailing()
         }
