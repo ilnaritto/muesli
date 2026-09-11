@@ -342,7 +342,6 @@ final class MuesliController: NSObject {
     private var isNemotron35Streaming = false
     private var nemotron35StreamingSessionID: UUID?
     private var previousStreamText = ""
-    private var openWindowCount = 0
     private var lastExternalApp: NSRunningApplication?
     private var capturedDictationContext: DictationContext?
     private var capturedDictationCorrectionTargetApp: DictationCorrectionTargetApp?
@@ -6481,19 +6480,13 @@ final class MuesliController: NSObject {
     }
 
     func noteWindowOpened() {
-        openWindowCount += 1
-        if NSApplication.shared.activationPolicy() != .regular {
-            NSApplication.shared.setActivationPolicy(.regular)
-        }
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
-    func noteWindowClosed() {
-        openWindowCount = max(0, openWindowCount - 1)
-        if openWindowCount == 0 {
-            NSApplication.shared.setActivationPolicy(.accessory)
-        }
-    }
+    /// The Dock icon (and Cmd+Tab entry) stays up regardless of window
+    /// state now — see the comment on `setActivationPolicy(.regular)` in
+    /// main.swift.
+    func noteWindowClosed() {}
 
     private func setState(_ state: DictationState) {
         pendingPreparingIndicatorWorkItem?.cancel()
