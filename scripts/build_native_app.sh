@@ -159,8 +159,6 @@ cat > "$STAGED_APP_DIR/Contents/Info.plist" <<PLIST
   <string>muesli.icns</string>
   <key>MuesliSupportDirectoryName</key>
   <string>$APP_SUPPORT_DIR_NAME</string>
-  <key>LSUIElement</key>
-  <true/>
   <key>LSMinimumSystemVersion</key>
   <string>14.2</string>
   <key>NSMicrophoneUsageDescription</key>
