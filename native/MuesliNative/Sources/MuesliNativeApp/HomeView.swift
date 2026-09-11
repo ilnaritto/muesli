@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Charts
 import CoreImage.CIFilterBuiltins
 import SwiftUI
@@ -55,6 +56,7 @@ struct HomeView: View {
     @State private var insightsCustomDate = Date()
     @State private var insightsHeaderMeasuredHeight: CGFloat?
     @State private var showClearInsightsHistoryConfirmation = false
+    @State private var mainBoardWidth: CGFloat = 1100
 
     var body: some View {
         HStack(spacing: 5) {
@@ -901,15 +903,16 @@ struct HomeView: View {
                 // Round 3: presentation board per Ilnar's reference — main
                 // features as large image banners, secondary features as
                 // small plain icon tiles, grouped under their own labels
-                // instead of one undifferentiated grid.
+                // instead of one undifferentiated grid. Round 4 follow-up:
+                // cards vary in width by priority (not just two fixed
+                // sizes) and the layout collapses to a single column
+                // instead of squeezing text when the window is narrow.
                 Text(tr("MAIN FEATURES", "ОСНОВНЫЕ ФУНКЦИИ"))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(MuesliTheme.textTertiary)
                     .textCase(.uppercase)
 
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 11), count: 3), spacing: 11) {
-                    ForEach(featureTourBanners) { $0 }
-                }
+                mainFeaturesBoard
 
                 Text(tr("MORE", "ЕЩЁ"))
                     .font(.system(size: 11, weight: .semibold))
@@ -917,7 +920,10 @@ struct HomeView: View {
                     .textCase(.uppercase)
                     .padding(.top, 4)
 
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 11), count: 4), spacing: 11) {
+                // Adaptive, not a fixed column count — cards keep their
+                // natural width and re-wrap as the window narrows instead
+                // of shrinking down to cramped text.
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 11)], spacing: 11) {
                     ForEach(compactFeatures) { $0 }
                 }
             }
@@ -934,69 +940,147 @@ struct HomeView: View {
     /// Insights chat → models, per spec. Images are optional (see
     /// FeatureTourBanner) — ships without real screenshots for now; drop
     /// PNGs into assets/features-tour/ and the banners pick them up.
-    private var featureTourBanners: [IdentifiedView] {
-        [
-            IdentifiedView(FeatureTourBanner(
-                assetName: "dictation",
-                icon: "mic.fill",
-                accent: Color(hex: 0xFF3B30),
-                title: tr("Voice dictation", "Диктовка голосом"),
-                description: tr("Hold Right Option and speak — or click the dictation icon in the panel above.", "Зажми Right Option и говори — или нажми на значок диктовки в панели сверху."),
-                action: FeatureAction(label: tr("Set up dictation", "Настроить диктовку"), systemImage: "keyboard") {
-                    openSettings(.dictation)
+    ///
+    /// Round 4: width now varies by priority instead of every card being
+    /// an even third — dictation (the flagship, with a real working demo)
+    /// gets the full-width hero row, meetings gets a half row, the rest
+    /// share equal thirds. Below a certain window width the board collapses
+    /// to a single stacked column instead of squeezing every card's text.
+    private var dictationBanner: FeatureTourBanner {
+        FeatureTourBanner(
+            assetName: "dictation",
+            icon: "mic.fill",
+            accent: Color(hex: 0xFF3B30),
+            title: tr("Voice dictation", "Диктовка голосом"),
+            description: tr("Hold Right Option and speak — or click the dictation icon in the panel above.", "Зажми Right Option и говори — или нажми на значок диктовки в панели сверху."),
+            action: FeatureAction(label: tr("Set up dictation", "Настроить диктовку"), systemImage: "keyboard") {
+                openSettings(.dictation)
+            },
+            permissionGranted: {
+                AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+                    && AXIsProcessTrusted()
+                    && CGPreflightListenEventAccess()
+            }
+        )
+    }
+
+    private var meetingsBanner: FeatureTourBanner {
+        FeatureTourBanner(
+            assetName: "meetings",
+            icon: "person.2.fill",
+            accent: Color(hex: 0x34C759),
+            title: tr("Meetings, summarized", "Встречи в готовых заметках"),
+            description: tr("Muesli listens, then hands you a clean recap in your own template.", "Muesli слушает встречу, а после выдаёт аккуратную сводку по твоему шаблону."),
+            action: FeatureAction(label: tr("Meeting settings", "Настройки встреч"), systemImage: "gearshape.fill") {
+                openSettings(.meetings)
+            },
+            permissionGranted: {
+                AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+                    && CGPreflightScreenCaptureAccess()
+            }
+        )
+    }
+
+    private var templatesBanner: FeatureTourBanner {
+        FeatureTourBanner(
+            assetName: "templates",
+            icon: "square.text.square.fill",
+            accent: Color(hex: 0xAF52DE),
+            title: tr("Note templates", "Шаблоны заметок"),
+            description: tr("Choose how notes are structured, or write your own prompt.", "Выбери, как оформлять заметки, или напиши свой шаблон и промпт."),
+            action: FeatureAction(label: tr("Manage templates", "Управление шаблонами"), systemImage: "square.text.square.fill") {
+                controller.showMeetingTemplatesManager()
+            }
+        )
+    }
+
+    private var meetingChatBanner: FeatureTourBanner {
+        FeatureTourBanner(
+            assetName: "meeting-chat",
+            icon: "bubble.left.and.text.bubble.right.fill",
+            accent: Color(hex: 0x5856D6),
+            title: tr("Chat with your meeting", "Чат с встречей"),
+            description: tr("Ask any meeting a question, get an answer grounded in it.", "Задай вопрос по встрече — получи ответ строго по этому разговору."),
+            action: FeatureAction(label: tr("Connect a model", "Подключить модель"), systemImage: "sparkles") {
+                openSettings(.meetings)
+            }
+        )
+    }
+
+    private var insightsBanner: FeatureTourBanner {
+        FeatureTourBanner(
+            assetName: "insights",
+            icon: "sparkles",
+            accent: Color(hex: 0x5AC8FA),
+            title: tr("Insights — ask across all meetings", "Инсайты — вопросы по всем встречам"),
+            description: tr("One chat that reads every meeting in the period you pick.", "Один чат, который читает сразу все встречи за выбранный период."),
+            action: FeatureAction(label: tr("Open Insights", "Открыть Инсайты"), systemImage: "sparkles") {
+                selectedSection = .insights
+            }
+        )
+    }
+
+    private var modelsBanner: FeatureTourBanner {
+        FeatureTourBanner(
+            assetName: "models",
+            icon: "square.and.arrow.down.fill",
+            accent: Color(hex: 0x007AFF),
+            title: tr("On-device models", "Модели на устройстве"),
+            description: tr("11 speech models, all offline — nothing leaves your Mac.", "11 моделей распознавания, всё офлайн — ничего не уходит в облако."),
+            action: FeatureAction(label: tr("Manage models", "Управление моделями"), systemImage: "square.and.arrow.down.fill") {
+                openSettings(.models)
+            }
+        )
+    }
+
+    /// Below this width, cards stack full-width instead of sharing a row —
+    /// keeps every card's text readable instead of letting the grid
+    /// squeeze it down.
+    private static let mainBoardNarrowThreshold: CGFloat = 640
+
+    @ViewBuilder
+    private var mainFeaturesBoard: some View {
+        Group {
+            if mainBoardWidth < Self.mainBoardNarrowThreshold {
+                VStack(spacing: 11) {
+                    dictationBanner
+                    meetingsBanner
+                    templatesBanner
+                    meetingChatBanner
+                    insightsBanner
+                    modelsBanner
                 }
-            )),
-            IdentifiedView(FeatureTourBanner(
-                assetName: "meetings",
-                icon: "person.2.fill",
-                accent: Color(hex: 0x34C759),
-                title: tr("Meetings, summarized", "Встречи в готовых заметках"),
-                description: tr("Muesli listens, then hands you a clean recap in your own template.", "Muesli слушает встречу, а после выдаёт аккуратную сводку по твоему шаблону."),
-                action: FeatureAction(label: tr("Meeting settings", "Настройки встреч"), systemImage: "gearshape.fill") {
-                    openSettings(.meetings)
+            } else {
+                Grid(horizontalSpacing: 11, verticalSpacing: 11) {
+                    GridRow {
+                        dictationBanner
+                            .gridCellColumns(3)
+                    }
+                    GridRow {
+                        meetingsBanner
+                            .gridCellColumns(2)
+                        modelsBanner
+                    }
+                    GridRow {
+                        templatesBanner
+                        meetingChatBanner
+                        insightsBanner
+                    }
                 }
-            )),
-            IdentifiedView(FeatureTourBanner(
-                assetName: "templates",
-                icon: "square.text.square.fill",
-                accent: Color(hex: 0xAF52DE),
-                title: tr("Note templates", "Шаблоны заметок"),
-                description: tr("Choose how notes are structured, or write your own prompt.", "Выбери, как оформлять заметки, или напиши свой шаблон и промпт."),
-                action: FeatureAction(label: tr("Manage templates", "Управление шаблонами"), systemImage: "square.text.square.fill") {
-                    controller.showMeetingTemplatesManager()
-                }
-            )),
-            IdentifiedView(FeatureTourBanner(
-                assetName: "meeting-chat",
-                icon: "bubble.left.and.text.bubble.right.fill",
-                accent: Color(hex: 0x5856D6),
-                title: tr("Chat with your meeting", "Чат с встречей"),
-                description: tr("Ask any meeting a question, get an answer grounded in it.", "Задай вопрос по встрече — получи ответ строго по этому разговору."),
-                action: FeatureAction(label: tr("Connect a model", "Подключить модель"), systemImage: "sparkles") {
-                    openSettings(.meetings)
-                }
-            )),
-            IdentifiedView(FeatureTourBanner(
-                assetName: "insights",
-                icon: "sparkles",
-                accent: Color(hex: 0x5AC8FA),
-                title: tr("Insights — ask across all meetings", "Инсайты — вопросы по всем встречам"),
-                description: tr("One chat that reads every meeting in the period you pick.", "Один чат, который читает сразу все встречи за выбранный период."),
-                action: FeatureAction(label: tr("Open Insights", "Открыть Инсайты"), systemImage: "sparkles") {
-                    selectedSection = .insights
-                }
-            )),
-            IdentifiedView(FeatureTourBanner(
-                assetName: "models",
-                icon: "square.and.arrow.down.fill",
-                accent: Color(hex: 0x007AFF),
-                title: tr("On-device models", "Модели на устройстве"),
-                description: tr("11 speech models, all offline — nothing leaves your Mac.", "11 моделей распознавания, всё офлайн — ничего не уходит в облако."),
-                action: FeatureAction(label: tr("Manage models", "Управление моделями"), systemImage: "square.and.arrow.down.fill") {
-                    openSettings(.models)
-                }
-            )),
-        ]
+            }
+        }
+        // Reads the board's own width without imposing a layout of its
+        // own (unlike putting a GeometryReader in the view tree directly,
+        // which would force this content to fill whatever size it's
+        // given) — the VStack/Grid above still sizes to its natural
+        // content height.
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { mainBoardWidth = proxy.size.width }
+                    .onChange(of: proxy.size.width) { _, newValue in mainBoardWidth = newValue }
+            }
+        )
     }
 
     private func openSettings(_ section: SettingsSection) {
