@@ -42,7 +42,6 @@ struct ModelsView: View {
     let appState: AppState
     let controller: MuesliController
 
-    @State private var selectedTab: ModelsTab = .speech
     @State private var showAddModelSheet = false
     @State private var nemotron35UpdateAvailable = false
     @State private var downloadingModels: Set<String> = []
@@ -102,7 +101,7 @@ struct ModelsView: View {
 
                 ScrollView {
                     Group {
-                        switch selectedTab {
+                        switch appState.modelsTab {
                         case .speech:
                             speechTabContent
                         case .text:
@@ -208,10 +207,10 @@ struct ModelsView: View {
                 SecondaryColumnRow(
                     icon: tab.sidebarIcon,
                     title: tab.title,
-                    isSelected: selectedTab == tab,
+                    isSelected: appState.modelsTab == tab,
                     tileColor: tab.sidebarColor
                 ) {
-                    selectedTab = tab
+                    appState.modelsTab = tab
                 }
             }
         }

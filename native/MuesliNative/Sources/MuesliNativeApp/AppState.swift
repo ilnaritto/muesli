@@ -238,6 +238,10 @@ final class AppState {
     // Navigation
     var selectedTab: DashboardTab = .home
     var settingsSection: SettingsSection = .general
+    /// Lets other screens (e.g. the Функции page's "Connect an AI model"
+    /// card) deep-link to a specific Models tab — was local `@State` inside
+    /// `ModelsView`, unreachable from outside it.
+    var modelsTab: ModelsTab = .speech
 
     // Computed
     var selectedMeeting: MeetingRecord? {

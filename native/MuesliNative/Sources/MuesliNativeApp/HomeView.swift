@@ -57,6 +57,9 @@ struct HomeView: View {
     @State private var insightsHeaderMeasuredHeight: CGFloat?
     @State private var showClearInsightsHistoryConfirmation = false
     @State private var mainBoardWidth: CGFloat = 1100
+    @State private var dictationPermissionGranted = false
+    @State private var meetingsPermissionGranted = false
+    @State private var featurePermissionPollTimer: Timer?
 
     var body: some View {
         HStack(spacing: 5) {
@@ -659,8 +662,6 @@ struct HomeView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                OverviewPermissionsBoard()
-
                 numberCards
 
                 if let a = appState.overviewAnalytics, !a.isEmpty {
@@ -900,19 +901,21 @@ struct HomeView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Round 3: presentation board per Ilnar's reference — main
-                // features as large image banners, secondary features as
-                // small plain icon tiles, grouped under their own labels
-                // instead of one undifferentiated grid. Round 4 follow-up:
-                // cards vary in width by priority (not just two fixed
-                // sizes) and the layout collapses to a single column
-                // instead of squeezing text when the window is narrow.
+                // Presentation board — main features as large/medium/small
+                // image banners grouped in rows by priority, secondary
+                // features as small plain icon tiles below, and the full
+                // permissions picture in between (this is the "settings in
+                // presentational format" page — Overview stays pure usage
+                // stats, access/permissions content lives here instead).
                 Text(tr("MAIN FEATURES", "ОСНОВНЫЕ ФУНКЦИИ"))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(MuesliTheme.textTertiary)
                     .textCase(.uppercase)
 
                 mainFeaturesBoard
+
+                FeaturePermissionsBoard(useCoreAudioTap: appState.config.useCoreAudioTap)
+                    .padding(.top, 4)
 
                 Text(tr("MORE", "ЕЩЁ"))
                     .font(.system(size: 11, weight: .semibold))
@@ -937,30 +940,28 @@ struct HomeView: View {
     // MARK: - Features tour (task 5)
 
     /// New-user order: dictation → meetings → templates → meeting chat →
-    /// Insights chat → models, per spec. Images are optional (see
-    /// FeatureTourBanner) — ships without real screenshots for now; drop
-    /// PNGs into assets/features-tour/ and the banners pick them up.
-    ///
-    /// Round 4: width now varies by priority instead of every card being
-    /// an even third — dictation (the flagship, with a real working demo)
-    /// gets the full-width hero row, meetings gets a half row, the rest
-    /// share equal thirds. Below a certain window width the board collapses
-    /// to a single stacked column instead of squeezing every card's text.
+    /// Insights chat, grouped into rows by priority (hero/medium/small) —
+    /// each row's cards are all the SAME size (matching the reference:
+    /// size varies BETWEEN groups, never within one). Built with plain
+    /// `HStack`s + `.frame(maxWidth: .infinity)` children and one explicit
+    /// height per row, not SwiftUI's `Grid`/`.gridCellColumns` — Grid could
+    /// not reliably reconcile column widths across rows with inconsistent
+    /// spans (3 → 2+1 → 1+1+1) and produced squeezed/overlapping cards.
+    /// `FeatureTourBanner` is stateless; its height is always the row's
+    /// fixed number, never inferred from its own content.
     private var dictationBanner: FeatureTourBanner {
         FeatureTourBanner(
             assetName: "dictation",
             icon: "mic.fill",
-            accent: Color(hex: 0xFF3B30),
             title: tr("Voice dictation", "Диктовка голосом"),
             description: tr("Hold Right Option and speak — or click the dictation icon in the panel above.", "Зажми Right Option и говори — или нажми на значок диктовки в панели сверху."),
             action: FeatureAction(label: tr("Set up dictation", "Настроить диктовку"), systemImage: "keyboard") {
                 openSettings(.dictation)
             },
-            permissionGranted: {
-                AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-                    && AXIsProcessTrusted()
-                    && CGPreflightListenEventAccess()
-            }
+            permission: PermissionRequirement(
+                summary: tr("Needs microphone, accessibility and input monitoring", "Нужны микрофон, универсальный доступ и мониторинг ввода"),
+                isSatisfied: dictationPermissionGranted
+            )
         )
     }
 
@@ -968,15 +969,26 @@ struct HomeView: View {
         FeatureTourBanner(
             assetName: "meetings",
             icon: "person.2.fill",
-            accent: Color(hex: 0x34C759),
             title: tr("Meetings, summarized", "Встречи в готовых заметках"),
             description: tr("Muesli listens, then hands you a clean recap in your own template.", "Muesli слушает встречу, а после выдаёт аккуратную сводку по твоему шаблону."),
             action: FeatureAction(label: tr("Meeting settings", "Настройки встреч"), systemImage: "gearshape.fill") {
                 openSettings(.meetings)
             },
-            permissionGranted: {
-                AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-                    && CGPreflightScreenCaptureAccess()
+            permission: PermissionRequirement(
+                summary: tr("Needs microphone and screen recording", "Нужны микрофон и запись экрана"),
+                isSatisfied: meetingsPermissionGranted
+            )
+        )
+    }
+
+    private var aiModelsBanner: FeatureTourBanner {
+        FeatureTourBanner(
+            assetName: "ai-models",
+            icon: "sparkles",
+            title: tr("Connect an AI model", "Подключить ИИ-модель"),
+            description: tr("ChatGPT, an API key, Ollama or your own endpoint — for summaries and chat.", "ChatGPT, API-ключ, Ollama или свой эндпоинт — для сводок и чатов."),
+            action: FeatureAction(label: tr("Connect a model", "Подключить модель"), systemImage: "sparkles") {
+                openSettings(.models, modelsTab: .text)
             }
         )
     }
@@ -985,7 +997,6 @@ struct HomeView: View {
         FeatureTourBanner(
             assetName: "templates",
             icon: "square.text.square.fill",
-            accent: Color(hex: 0xAF52DE),
             title: tr("Note templates", "Шаблоны заметок"),
             description: tr("Choose how notes are structured, or write your own prompt.", "Выбери, как оформлять заметки, или напиши свой шаблон и промпт."),
             action: FeatureAction(label: tr("Manage templates", "Управление шаблонами"), systemImage: "square.text.square.fill") {
@@ -998,11 +1009,10 @@ struct HomeView: View {
         FeatureTourBanner(
             assetName: "meeting-chat",
             icon: "bubble.left.and.text.bubble.right.fill",
-            accent: Color(hex: 0x5856D6),
             title: tr("Chat with your meeting", "Чат с встречей"),
             description: tr("Ask any meeting a question, get an answer grounded in it.", "Задай вопрос по встрече — получи ответ строго по этому разговору."),
             action: FeatureAction(label: tr("Connect a model", "Подключить модель"), systemImage: "sparkles") {
-                openSettings(.meetings)
+                openSettings(.models, modelsTab: .text)
             }
         )
     }
@@ -1011,7 +1021,6 @@ struct HomeView: View {
         FeatureTourBanner(
             assetName: "insights",
             icon: "sparkles",
-            accent: Color(hex: 0x5AC8FA),
             title: tr("Insights — ask across all meetings", "Инсайты — вопросы по всем встречам"),
             description: tr("One chat that reads every meeting in the period you pick.", "Один чат, который читает сразу все встречи за выбранный период."),
             action: FeatureAction(label: tr("Open Insights", "Открыть Инсайты"), systemImage: "sparkles") {
@@ -1020,60 +1029,52 @@ struct HomeView: View {
         )
     }
 
-    private var modelsBanner: FeatureTourBanner {
-        FeatureTourBanner(
-            assetName: "models",
-            icon: "square.and.arrow.down.fill",
-            accent: Color(hex: 0x007AFF),
-            title: tr("On-device models", "Модели на устройстве"),
-            description: tr("11 speech models, all offline — nothing leaves your Mac.", "11 моделей распознавания, всё офлайн — ничего не уходит в облако."),
-            action: FeatureAction(label: tr("Manage models", "Управление моделями"), systemImage: "square.and.arrow.down.fill") {
-                openSettings(.models)
-            }
-        )
-    }
-
     /// Below this width, cards stack full-width instead of sharing a row —
-    /// keeps every card's text readable instead of letting the grid
-    /// squeeze it down.
+    /// keeps every card's text readable instead of squeezing it down.
     private static let mainBoardNarrowThreshold: CGFloat = 640
+    private static let heroRowHeight: CGFloat = 230
+    private static let mediumRowHeight: CGFloat = 185
+    private static let smallRowHeight: CGFloat = 155
 
     @ViewBuilder
     private var mainFeaturesBoard: some View {
         Group {
             if mainBoardWidth < Self.mainBoardNarrowThreshold {
                 VStack(spacing: 11) {
-                    dictationBanner
-                    meetingsBanner
-                    templatesBanner
-                    meetingChatBanner
-                    insightsBanner
-                    modelsBanner
+                    dictationBanner.frame(height: Self.heroRowHeight)
+                    meetingsBanner.frame(height: Self.mediumRowHeight)
+                    aiModelsBanner.frame(height: Self.mediumRowHeight)
+                    templatesBanner.frame(height: Self.smallRowHeight)
+                    meetingChatBanner.frame(height: Self.smallRowHeight)
+                    insightsBanner.frame(height: Self.smallRowHeight)
                 }
             } else {
-                Grid(horizontalSpacing: 11, verticalSpacing: 11) {
-                    GridRow {
-                        dictationBanner
-                            .gridCellColumns(3)
+                VStack(spacing: 11) {
+                    HStack(spacing: 11) {
+                        dictationBanner.frame(maxWidth: .infinity)
                     }
-                    GridRow {
-                        meetingsBanner
-                            .gridCellColumns(2)
-                        modelsBanner
+                    .frame(height: Self.heroRowHeight)
+
+                    HStack(spacing: 11) {
+                        meetingsBanner.frame(maxWidth: .infinity)
+                        aiModelsBanner.frame(maxWidth: .infinity)
                     }
-                    GridRow {
-                        templatesBanner
-                        meetingChatBanner
-                        insightsBanner
+                    .frame(height: Self.mediumRowHeight)
+
+                    HStack(spacing: 11) {
+                        templatesBanner.frame(maxWidth: .infinity)
+                        meetingChatBanner.frame(maxWidth: .infinity)
+                        insightsBanner.frame(maxWidth: .infinity)
                     }
+                    .frame(height: Self.smallRowHeight)
                 }
             }
         }
         // Reads the board's own width without imposing a layout of its
         // own (unlike putting a GeometryReader in the view tree directly,
         // which would force this content to fill whatever size it's
-        // given) — the VStack/Grid above still sizes to its natural
-        // content height.
+        // given) — the VStack above still sizes to its natural content
+        // height (each row's height is explicit either way).
         .background(
             GeometryReader { proxy in
                 Color.clear
@@ -1081,36 +1082,77 @@ struct HomeView: View {
                     .onChange(of: proxy.size.width) { _, newValue in mainBoardWidth = newValue }
             }
         )
+        .onAppear { startFeaturePermissionPolling() }
+        .onDisappear { stopFeaturePermissionPolling() }
     }
 
-    private func openSettings(_ section: SettingsSection) {
+    private func startFeaturePermissionPolling() {
+        refreshFeaturePermissions()
+        featurePermissionPollTimer?.invalidate()
+        let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+            refreshFeaturePermissions()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        featurePermissionPollTimer = timer
+    }
+
+    private func stopFeaturePermissionPolling() {
+        featurePermissionPollTimer?.invalidate()
+        featurePermissionPollTimer = nil
+    }
+
+    private func refreshFeaturePermissions() {
+        dictationPermissionGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+            && AXIsProcessTrusted()
+            && CGPreflightListenEventAccess()
+        meetingsPermissionGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+            && CGPreflightScreenCaptureAccess()
+    }
+
+    private func openSettings(_ section: SettingsSection, modelsTab: ModelsTab? = nil) {
+        if let modelsTab {
+            appState.modelsTab = modelsTab
+        }
         appState.settingsSection = section
         appState.selectedTab = .settings
     }
 
     private var compactFeatures: [IdentifiedView] {
-        // "Templates & language" and "On-device models" were removed from
-        // here — they're the same feature as "Note templates" and
-        // "On-device models" in the flagship tour above, just phrased
-        // slightly differently. Two cards pointing at the same real feature
-        // read as a duplicate no matter how differently they're illustrated
-        // (tried twice); removing the repeat is the actual fix Anna asked
-        // for, not another reskin.
+        // "Templates & language" was removed from here — same real feature
+        // as "Note templates" in the flagship tour above, just phrased
+        // differently; two cards pointing at one feature read as a
+        // duplicate no matter how differently they're illustrated.
+        // "On-device models" moved down here FROM the flagship tour —
+        // that slot went to the new "Connect an AI model" banner (the
+        // actual missing feature — cloud models), and on-device speech
+        // models are more of a setup detail than a flagship demo.
         let cards: [IdentifiedView] = [
             IdentifiedView(FeatureCard(
-                accent: Color(hex: 0x00C7BE),
-                icon: "wand.and.stars",
-                title: tr("Smart cleanup", "Умная чистка"),
-                subtitle: tr("Drops the “ums”, fixes casing, formats lists.", "Убирает «эээ», ставит регистр, оформляет списки."),
+                accent: MuesliTheme.accent,
+                icon: "square.and.arrow.down.fill",
+                title: tr("On-device models", "Модели на устройстве"),
+                subtitle: tr("11 speech models, all offline — nothing leaves your Mac.", "11 моделей распознавания, всё офлайн — ничего не уходит в облако."),
                 actions: [
-                    FeatureAction(label: tr("Set up", "Настроить"), isPrimary: true) {
-                        openSettings(.models)
+                    FeatureAction(label: tr("Manage", "Управление"), isPrimary: true) {
+                        openSettings(.models, modelsTab: .speech)
                     }
                 ],
                 compact: true
             )),
             IdentifiedView(FeatureCard(
-                accent: Color(hex: 0xFF2D55),
+                accent: MuesliTheme.accent,
+                icon: "wand.and.stars",
+                title: tr("Smart cleanup", "Умная чистка"),
+                subtitle: tr("Drops the “ums”, fixes casing, formats lists.", "Убирает «эээ», ставит регистр, оформляет списки."),
+                actions: [
+                    FeatureAction(label: tr("Set up", "Настроить"), isPrimary: true) {
+                        openSettings(.models, modelsTab: .cleanup)
+                    }
+                ],
+                compact: true
+            )),
+            IdentifiedView(FeatureCard(
+                accent: MuesliTheme.accent,
                 icon: "cursorarrow.rays",
                 title: tr("Voice commands", "Голосовые команды"),
                 subtitle: tr("Tell your Mac what to do, hands-free.", "Управляй Mac голосом, без рук."),
@@ -1124,7 +1166,7 @@ struct HomeView: View {
             // Task 5 point 7: minor items, compact — moved out of the
             // flagship tour above.
             IdentifiedView(FeatureCard(
-                accent: Color(hex: 0xFF9500),
+                accent: MuesliTheme.accent,
                 icon: "display",
                 title: tr("Screen video with sound", "Видео экрана со звуком"),
                 subtitle: tr("Record the screen together with the audio, replay it on the meeting page.", "Записывай экран вместе со звуком, пересматривай на странице встречи."),
@@ -1136,7 +1178,7 @@ struct HomeView: View {
                 compact: true
             )),
             IdentifiedView(FeatureCard(
-                accent: Color(hex: 0x30B0C7),
+                accent: MuesliTheme.accent,
                 icon: "character.book.closed.fill",
                 title: tr("Dictionary", "Словарь"),
                 subtitle: tr("Custom words for names and terms transcription often gets wrong.", "Свои слова для имён и терминов, которые транскрипция часто путает."),
