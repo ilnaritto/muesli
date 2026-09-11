@@ -23,6 +23,16 @@ set -euo pipefail
 #   MUESLI_PROVISIONING_PROFILE=/path/to/profile.provisionprofile \
 #   MUESLI_SIGN_IDENTITY="Apple Development: Name (TEAMID)" \
 #   MUESLI_CODESIGN_TIMESTAMP=none ./scripts/dev-test.sh --cloud-entitlements
+#
+# A self-signed local certificate (created for stable TCC grants across
+# rebuilds — see build_native_app.sh) has no real Team ID, so it must go
+# through the ad-hoc-style signing path, NOT the hardened-runtime one above:
+#   MUESLI_SKIP_SIGN=1 MUESLI_SIGN_IDENTITY="Muesli Local Dev" ./scripts/dev-test.sh
+# Passing MUESLI_SIGN_IDENTITY alone (without MUESLI_SKIP_SIGN=1) sends a
+# self-signed cert through the hardened-runtime path instead, which crashes
+# on launch: dyld's library validation rejects the bundled frameworks
+# ("mapping process and mapped file ... have different Team IDs"), because
+# hardened runtime's library validation needs a real Apple-issued Team ID.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
