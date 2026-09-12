@@ -1152,13 +1152,22 @@ struct HomeView: View {
                 }
             }
             .frame(width: Self.designBoardWidth, height: Self.designBoardHeight, alignment: .topLeading)
-            .scaleEffect(scale, anchor: .top)
+            // anchor MUST be .topLeading, not .top (.top is horizontally
+            // CENTERED — anchoring there shrinks the board toward the
+            // horizontal center of its own 1100pt-wide layout box, which
+            // no longer lines up with the rest of this left-aligned page,
+            // and the outer frame below then re-centers that mismatched
+            // box again — net effect: content creeps off the right edge
+            // of the window even though it's "scaled down". .topLeading
+            // keeps the top-left corner fixed, so only the right/bottom
+            // edges move inward as it shrinks.
+            .scaleEffect(scale, anchor: .topLeading)
             // scaleEffect only transforms pixels, it doesn't change the
             // layout size SwiftUI reserves for this view — without this
             // outer frame the ScrollView would still reserve the full
             // unscaled designBoardWidth/Height, leaving a blank gap
             // (width) and wrong scroll extent (height) below 1x scale.
-            .frame(width: Self.designBoardWidth * scale, height: Self.designBoardHeight * scale, alignment: .top)
+            .frame(width: Self.designBoardWidth * scale, height: Self.designBoardHeight * scale, alignment: .topLeading)
         }
     }
 
