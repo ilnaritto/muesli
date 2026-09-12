@@ -6,6 +6,37 @@ import SwiftUI
 import TelemetryDeck
 import MuesliCore
 
+/// Tracks the live width of whatever space it's given, via AppKit's own
+/// `NSView.layout()` hook rather than SwiftUI's `GeometryReader`/
+/// `.onGeometryChange` — both of those were tried for the "Функции" board's
+/// scale-to-fit-window probe and, confirmed via an on-screen debug counter,
+/// never re-fired on a LIVE window resize (only on first appearance).
+/// `layout()` is called directly by AppKit on every layout pass, including
+/// ones driven by interactive window resizing, so it doesn't depend on
+/// SwiftUI's own geometry-change-detection machinery at all.
+private struct WidthTrackingView: NSViewRepresentable {
+    let onChange: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> TrackingNSView {
+        let view = TrackingNSView()
+        view.onChange = onChange
+        return view
+    }
+
+    func updateNSView(_ nsView: TrackingNSView, context: Context) {
+        nsView.onChange = onChange
+    }
+
+    final class TrackingNSView: NSView {
+        var onChange: ((CGFloat) -> Void)?
+
+        override func layout() {
+            super.layout()
+            onChange?(bounds.width)
+        }
+    }
+}
+
 /// Home tab: overview dashboard and app features. Hosts the usage stats moved
 /// from the Dictations page; richer analytics blocks land here later.
 struct HomeView: View {
@@ -1074,116 +1105,77 @@ struct HomeView: View {
     // together, instead of one bare card inflated to a big card's height.
     private static let tinyRowHeight: CGFloat = 150
 
-    // The board is laid out ONCE at this fixed width — every row/card
-    // width below is computed from this constant, never from the actual
-    // window size — and then scaled down as a whole (via `.scaleEffect`)
-    // to fit whatever width the window actually offers. Per explicit
-    // feedback ("должен масштаб уменьшаться" — a zoom-out, not a reflow):
-    // a non-fullscreen window should shrink the whole composition
-    // proportionally, same columns/rows always, not reshuffle into fewer
-    // columns. This also sidesteps the earlier bug class (cards
-    // overlapping/spilling at cramped intermediate widths) since the
-    // composition itself never changes shape — only its overall scale.
-    private static let designBoardWidth: CGFloat = 1100
-    private static let designBoardHeight: CGFloat =
-        heroRowHeight + boardSpacing + mediumRowHeight + boardSpacing + smallRowHeight + boardSpacing + tinyRowHeight
-
     /// Per Ilnar's repeated ask: cards vary in row-width by importance —
     /// dictation gets the full row (3/3), meetings gets two-thirds next to
     /// a stacked pair of small tiles in the remaining third, the next three
     /// gif cards share equal thirds, and the small icon-only utility tiles
-    /// close out the board four-across. Widths are computed from the fixed
-    /// `designBoardWidth` (not the measured window width — see above) —
-    /// this is deliberately the same "explicit pixel widths, not automatic
-    /// HStack negotiation" technique already proven safe earlier on this
-    /// page, not SwiftUI's `Grid`/`.gridCellColumns` (confirmed buggy for
-    /// inconsistent per-row spans in an earlier pass on this same board).
+    /// close out the board four-across. Widths are computed EXPLICITLY
+    /// from the measured board width (not left to automatic HStack
+    /// negotiation, which only splits evenly) — this is deliberately the
+    /// same "measure width, then place cards at explicit pixel widths"
+    /// technique already proven safe elsewhere on this page, not SwiftUI's
+    /// `Grid`/`.gridCellColumns` (confirmed buggy for inconsistent
+    /// per-row spans in an earlier pass on this same board).
+    ///
+    /// A true proportional "zoom out" (shrinking fonts/icons too, via
+    /// `.scaleEffect`) was attempted per explicit feedback and abandoned
+    /// after several rebuilds all showed the same result: the measured
+    /// width itself was correct (confirmed via an on-screen debug counter
+    /// that did increment on live resize), but the scaled content still
+    /// rendered past the intended bounds regardless of `.overlay`/
+    /// `.clipped()` safeguards — `.scaleEffect` composed unreliably with
+    /// the rest of this layout. Columns just resize directly from the
+    /// real measured width instead: text/icons stay their natural size,
+    /// but nothing can overflow, since every card's width is computed to
+    /// literally fill the available space, not a fixed design width.
     @ViewBuilder
     private var mainFeaturesBoard: some View {
         VStack(spacing: 0) {
-            // Independent width probe: a plain, unconstrained `Color.clear`
-            // that only ever reports whatever width its PARENT offers it —
-            // never sized by `mainBoardWidth` itself (that would be a
-            // feedback loop — see git history on this file).
-            //
-            // Uses `.onGeometryChange`, not the older
-            // `GeometryReader`-in-`.background()` + `onChange` pattern —
-            // that older technique was tried three times on this exact
-            // probe (plain frame sizing, then scaleEffect behind a double
-            // `.frame`, then scaleEffect behind `.overlay`) and every time
-            // the board stayed rendered at its full un-scaled width in a
-            // genuinely narrower window, meaning `mainBoardWidth` was
-            // never actually being corrected down on resize — the bug was
-            // in the MEASUREMENT itself, not in how the measured value
-            // was consumed. `.onGeometryChange` is Apple's purpose-built,
-            // more reliable replacement for exactly this "track a view's
-            // resolved size and react" pattern (macOS 14+, this app's
-            // deployment target is 14.2).
-            Color.clear
-                .frame(height: 0)
-                .frame(maxWidth: .infinity)
-                .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { newValue in
-                    mainBoardWidth = newValue
-                }
+            // Independent width probe, reading straight from AppKit's own
+            // layout pass (see `WidthTrackingView` above `HomeView`) — both
+            // SwiftUI's `GeometryReader`+`onChange` and `.onGeometryChange`
+            // were tried first and neither re-fired on a live window
+            // resize (only on first appearance); this does.
+            WidthTrackingView { newValue in
+                mainBoardWidth = newValue
+            }
+            .frame(height: 1)
+            .frame(maxWidth: .infinity)
 
-            let scale = min(1, mainBoardWidth / Self.designBoardWidth)
-            let twoThirds = (Self.designBoardWidth - Self.boardSpacing) * 2 / 3
-            let halfRowThird = Self.designBoardWidth - Self.boardSpacing - twoThirds
-            let thirdOfThree = (Self.designBoardWidth - Self.boardSpacing * 2) / 3
-            let quarterOfFour = (Self.designBoardWidth - Self.boardSpacing * 3) / 4
+            let twoThirds = (mainBoardWidth - Self.boardSpacing) * 2 / 3
+            let halfRowThird = mainBoardWidth - Self.boardSpacing - twoThirds
+            let thirdOfThree = (mainBoardWidth - Self.boardSpacing * 2) / 3
+            let quarterOfFour = (mainBoardWidth - Self.boardSpacing * 3) / 4
             // The two small tiles stacked next to meetingsCard split its
             // height exactly, so the row's outer edges line up.
             let stackedTileHeight = (Self.mediumRowHeight - Self.boardSpacing) / 2
 
-            // The reported layout size MUST be exactly the scaled
-            // footprint, full stop — so it's declared on a plain
-            // `Color.clear` and the actual (fixed-1100pt-wide, then
-            // visually scaled) mosaic is placed in `.overlay`, which by
-            // definition never influences the base view's reported size.
-            // (An earlier version chained `.frame(width: 1100)` →
-            // `.scaleEffect` → `.frame(width: 1100 * scale)` directly on
-            // the mosaic instead — the inner fixed-1100 frame still leaked
-            // upward as this view's demanded width in practice, pushing
-            // the whole page wider than the window. `.overlay` removes
-            // that ambiguity structurally: there is no path for the
-            // overlay's content to affect the base `Color.clear`'s size.)
-            Color.clear
-                .frame(width: Self.designBoardWidth * scale, height: Self.designBoardHeight * scale)
-                .overlay(alignment: .topLeading) {
+            VStack(spacing: Self.boardSpacing) {
+                dictationCard
+                    .frame(width: mainBoardWidth, height: Self.heroRowHeight)
+
+                HStack(spacing: Self.boardSpacing) {
+                    meetingsCard.frame(width: twoThirds, height: Self.mediumRowHeight)
                     VStack(spacing: Self.boardSpacing) {
-                        dictationCard
-                            .frame(width: Self.designBoardWidth, height: Self.heroRowHeight)
-
-                        HStack(spacing: Self.boardSpacing) {
-                            meetingsCard.frame(width: twoThirds, height: Self.mediumRowHeight)
-                            VStack(spacing: Self.boardSpacing) {
-                                aiModelCard.frame(height: stackedTileHeight)
-                                onDeviceModelsCard.frame(height: stackedTileHeight)
-                            }
-                            .frame(width: halfRowThird)
-                        }
-
-                        HStack(spacing: Self.boardSpacing) {
-                            templatesCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
-                            meetingChatCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
-                            insightsCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
-                        }
-
-                        HStack(spacing: Self.boardSpacing) {
-                            smartCleanupCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                            voiceCommandsCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                            screenVideoCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                            dictionaryCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                        }
+                        aiModelCard.frame(height: stackedTileHeight)
+                        onDeviceModelsCard.frame(height: stackedTileHeight)
                     }
-                    .frame(width: Self.designBoardWidth, height: Self.designBoardHeight, alignment: .topLeading)
-                    // Anchor MUST be .topLeading, not .top (.top is
-                    // horizontally CENTERED) — .topLeading keeps the
-                    // top-left corner fixed so only the right/bottom
-                    // edges move inward as the board scales down,
-                    // matching this page's left-aligned content.
-                    .scaleEffect(scale, anchor: .topLeading)
+                    .frame(width: halfRowThird)
                 }
+
+                HStack(spacing: Self.boardSpacing) {
+                    templatesCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
+                    meetingChatCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
+                    insightsCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
+                }
+
+                HStack(spacing: Self.boardSpacing) {
+                    smartCleanupCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
+                    voiceCommandsCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
+                    screenVideoCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
+                    dictionaryCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
+                }
+            }
         }
     }
 
