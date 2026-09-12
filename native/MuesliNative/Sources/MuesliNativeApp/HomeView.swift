@@ -1057,16 +1057,6 @@ struct HomeView: View {
         )
     }
 
-    /// Below this width, rows collapse to a single stacked column instead
-    /// of squeezing every card's text. Raised from 640: a typical
-    /// non-fullscreen window is often still above 640pt wide but well
-    /// short of comfortable multi-column room, so the 2/3-column layout
-    /// was kicking in with too little width per card — content that
-    /// couldn't compress (fixed icon tile, single-line button labels)
-    /// pushed cards wider than their allotted column and into their
-    /// neighbor. Single-column stacking below this point gives every card
-    /// its full natural width instead.
-    private static let mainBoardNarrowThreshold: CGFloat = 840
     // Gutter between cards — bumped from the original 11pt per feedback
     // that the board read as cramped ("отступы маленькие").
     private static let boardSpacing: CGFloat = 16
@@ -1084,33 +1074,37 @@ struct HomeView: View {
     // together, instead of one bare card inflated to a big card's height.
     private static let tinyRowHeight: CGFloat = 150
 
+    // The board is laid out ONCE at this fixed width — every row/card
+    // width below is computed from this constant, never from the actual
+    // window size — and then scaled down as a whole (via `.scaleEffect`)
+    // to fit whatever width the window actually offers. Per explicit
+    // feedback ("должен масштаб уменьшаться" — a zoom-out, not a reflow):
+    // a non-fullscreen window should shrink the whole composition
+    // proportionally, same columns/rows always, not reshuffle into fewer
+    // columns. This also sidesteps the earlier bug class (cards
+    // overlapping/spilling at cramped intermediate widths) since the
+    // composition itself never changes shape — only its overall scale.
+    private static let designBoardWidth: CGFloat = 1100
+    private static let designBoardHeight: CGFloat =
+        heroRowHeight + boardSpacing + mediumRowHeight + boardSpacing + smallRowHeight + boardSpacing + tinyRowHeight
+
     /// Per Ilnar's repeated ask: cards vary in row-width by importance —
     /// dictation gets the full row (3/3), meetings gets two-thirds next to
     /// a stacked pair of small tiles in the remaining third, the next three
     /// gif cards share equal thirds, and the small icon-only utility tiles
-    /// close out the board four-across. Widths are computed EXPLICITLY
-    /// from the measured board width (not left to automatic HStack
-    /// negotiation, which only splits evenly) — this is deliberately the
-    /// same "measure width via a background GeometryReader, then place
-    /// cards at explicit pixel widths" technique already proven safe
-    /// earlier on this page, not SwiftUI's `Grid`/`.gridCellColumns`
-    /// (confirmed buggy for inconsistent per-row spans in an earlier pass
-    /// on this same board).
+    /// close out the board four-across. Widths are computed from the fixed
+    /// `designBoardWidth` (not the measured window width — see above) —
+    /// this is deliberately the same "explicit pixel widths, not automatic
+    /// HStack negotiation" technique already proven safe earlier on this
+    /// page, not SwiftUI's `Grid`/`.gridCellColumns` (confirmed buggy for
+    /// inconsistent per-row spans in an earlier pass on this same board).
     @ViewBuilder
     private var mainFeaturesBoard: some View {
         VStack(spacing: 0) {
             // Independent width probe: a plain, unconstrained `Color.clear`
             // that only ever reports whatever width its PARENT offers it —
-            // never sized by `mainBoardWidth` itself. The row content below
-            // (unlike this probe) explicitly sizes its cards FROM
-            // `mainBoardWidth`, so measuring the rows themselves would
-            // create a feedback loop: on first render `mainBoardWidth`
-            // starts at its 1100 default, the hero card gets forced to
-            // 1100pt wide regardless of the real window size, the "measured"
-            // width then reads back ~1100 and never corrects down — the
-            // board renders far wider than the actual window and overflows
-            // past its edges. This probe is a sibling, not a descendant of
-            // the width-dependent rows, so it can't get caught in that loop.
+            // never sized by `mainBoardWidth` itself (that would be a
+            // feedback loop — see git history on this file).
             Color.clear
                 .frame(height: 0)
                 .frame(maxWidth: .infinity)
@@ -1122,56 +1116,49 @@ struct HomeView: View {
                     }
                 )
 
-            if mainBoardWidth < Self.mainBoardNarrowThreshold {
-                VStack(spacing: Self.boardSpacing) {
-                    dictationCard.frame(height: Self.heroRowHeight)
-                    meetingsCard.frame(height: Self.mediumRowHeight)
-                    aiModelCard.frame(height: Self.tinyRowHeight)
-                    onDeviceModelsCard.frame(height: Self.tinyRowHeight)
-                    templatesCard.frame(height: Self.smallRowHeight)
-                    meetingChatCard.frame(height: Self.smallRowHeight)
-                    insightsCard.frame(height: Self.smallRowHeight)
-                    smartCleanupCard.frame(height: Self.tinyRowHeight)
-                    voiceCommandsCard.frame(height: Self.tinyRowHeight)
-                    screenVideoCard.frame(height: Self.tinyRowHeight)
-                    dictionaryCard.frame(height: Self.tinyRowHeight)
+            let scale = min(1, mainBoardWidth / Self.designBoardWidth)
+            let twoThirds = (Self.designBoardWidth - Self.boardSpacing) * 2 / 3
+            let halfRowThird = Self.designBoardWidth - Self.boardSpacing - twoThirds
+            let thirdOfThree = (Self.designBoardWidth - Self.boardSpacing * 2) / 3
+            let quarterOfFour = (Self.designBoardWidth - Self.boardSpacing * 3) / 4
+            // The two small tiles stacked next to meetingsCard split its
+            // height exactly, so the row's outer edges line up.
+            let stackedTileHeight = (Self.mediumRowHeight - Self.boardSpacing) / 2
+
+            VStack(spacing: Self.boardSpacing) {
+                dictationCard
+                    .frame(width: Self.designBoardWidth, height: Self.heroRowHeight)
+
+                HStack(spacing: Self.boardSpacing) {
+                    meetingsCard.frame(width: twoThirds, height: Self.mediumRowHeight)
+                    VStack(spacing: Self.boardSpacing) {
+                        aiModelCard.frame(height: stackedTileHeight)
+                        onDeviceModelsCard.frame(height: stackedTileHeight)
+                    }
+                    .frame(width: halfRowThird)
                 }
-            } else {
-                let twoThirds = (mainBoardWidth - Self.boardSpacing) * 2 / 3
-                let halfRowThird = mainBoardWidth - Self.boardSpacing - twoThirds
-                let thirdOfThree = (mainBoardWidth - Self.boardSpacing * 2) / 3
-                let quarterOfFour = (mainBoardWidth - Self.boardSpacing * 3) / 4
-                // The two small tiles stacked next to meetingsCard split
-                // its height exactly, so the row's outer edges line up.
-                let stackedTileHeight = (Self.mediumRowHeight - Self.boardSpacing) / 2
 
-                VStack(spacing: Self.boardSpacing) {
-                    dictationCard
-                        .frame(width: mainBoardWidth, height: Self.heroRowHeight)
+                HStack(spacing: Self.boardSpacing) {
+                    templatesCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
+                    meetingChatCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
+                    insightsCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
+                }
 
-                    HStack(spacing: Self.boardSpacing) {
-                        meetingsCard.frame(width: twoThirds, height: Self.mediumRowHeight)
-                        VStack(spacing: Self.boardSpacing) {
-                            aiModelCard.frame(height: stackedTileHeight)
-                            onDeviceModelsCard.frame(height: stackedTileHeight)
-                        }
-                        .frame(width: halfRowThird)
-                    }
-
-                    HStack(spacing: Self.boardSpacing) {
-                        templatesCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
-                        meetingChatCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
-                        insightsCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
-                    }
-
-                    HStack(spacing: Self.boardSpacing) {
-                        smartCleanupCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                        voiceCommandsCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                        screenVideoCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                        dictionaryCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                    }
+                HStack(spacing: Self.boardSpacing) {
+                    smartCleanupCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
+                    voiceCommandsCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
+                    screenVideoCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
+                    dictionaryCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
                 }
             }
+            .frame(width: Self.designBoardWidth, height: Self.designBoardHeight, alignment: .topLeading)
+            .scaleEffect(scale, anchor: .top)
+            // scaleEffect only transforms pixels, it doesn't change the
+            // layout size SwiftUI reserves for this view — without this
+            // outer frame the ScrollView would still reserve the full
+            // unscaled designBoardWidth/Height, leaving a blank gap
+            // (width) and wrong scroll extent (height) below 1x scale.
+            .frame(width: Self.designBoardWidth * scale, height: Self.designBoardHeight * scale, alignment: .top)
         }
     }
 
