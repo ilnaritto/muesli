@@ -1125,49 +1125,55 @@ struct HomeView: View {
             // height exactly, so the row's outer edges line up.
             let stackedTileHeight = (Self.mediumRowHeight - Self.boardSpacing) / 2
 
-            VStack(spacing: Self.boardSpacing) {
-                dictationCard
-                    .frame(width: Self.designBoardWidth, height: Self.heroRowHeight)
-
-                HStack(spacing: Self.boardSpacing) {
-                    meetingsCard.frame(width: twoThirds, height: Self.mediumRowHeight)
+            // The reported layout size MUST be exactly the scaled
+            // footprint, full stop — so it's declared on a plain
+            // `Color.clear` and the actual (fixed-1100pt-wide, then
+            // visually scaled) mosaic is placed in `.overlay`, which by
+            // definition never influences the base view's reported size.
+            // (An earlier version chained `.frame(width: 1100)` →
+            // `.scaleEffect` → `.frame(width: 1100 * scale)` directly on
+            // the mosaic instead — the inner fixed-1100 frame still leaked
+            // upward as this view's demanded width in practice, pushing
+            // the whole page wider than the window. `.overlay` removes
+            // that ambiguity structurally: there is no path for the
+            // overlay's content to affect the base `Color.clear`'s size.)
+            Color.clear
+                .frame(width: Self.designBoardWidth * scale, height: Self.designBoardHeight * scale)
+                .overlay(alignment: .topLeading) {
                     VStack(spacing: Self.boardSpacing) {
-                        aiModelCard.frame(height: stackedTileHeight)
-                        onDeviceModelsCard.frame(height: stackedTileHeight)
+                        dictationCard
+                            .frame(width: Self.designBoardWidth, height: Self.heroRowHeight)
+
+                        HStack(spacing: Self.boardSpacing) {
+                            meetingsCard.frame(width: twoThirds, height: Self.mediumRowHeight)
+                            VStack(spacing: Self.boardSpacing) {
+                                aiModelCard.frame(height: stackedTileHeight)
+                                onDeviceModelsCard.frame(height: stackedTileHeight)
+                            }
+                            .frame(width: halfRowThird)
+                        }
+
+                        HStack(spacing: Self.boardSpacing) {
+                            templatesCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
+                            meetingChatCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
+                            insightsCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
+                        }
+
+                        HStack(spacing: Self.boardSpacing) {
+                            smartCleanupCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
+                            voiceCommandsCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
+                            screenVideoCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
+                            dictionaryCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
+                        }
                     }
-                    .frame(width: halfRowThird)
+                    .frame(width: Self.designBoardWidth, height: Self.designBoardHeight, alignment: .topLeading)
+                    // Anchor MUST be .topLeading, not .top (.top is
+                    // horizontally CENTERED) — .topLeading keeps the
+                    // top-left corner fixed so only the right/bottom
+                    // edges move inward as the board scales down,
+                    // matching this page's left-aligned content.
+                    .scaleEffect(scale, anchor: .topLeading)
                 }
-
-                HStack(spacing: Self.boardSpacing) {
-                    templatesCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
-                    meetingChatCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
-                    insightsCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
-                }
-
-                HStack(spacing: Self.boardSpacing) {
-                    smartCleanupCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                    voiceCommandsCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                    screenVideoCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                    dictionaryCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                }
-            }
-            .frame(width: Self.designBoardWidth, height: Self.designBoardHeight, alignment: .topLeading)
-            // anchor MUST be .topLeading, not .top (.top is horizontally
-            // CENTERED — anchoring there shrinks the board toward the
-            // horizontal center of its own 1100pt-wide layout box, which
-            // no longer lines up with the rest of this left-aligned page,
-            // and the outer frame below then re-centers that mismatched
-            // box again — net effect: content creeps off the right edge
-            // of the window even though it's "scaled down". .topLeading
-            // keeps the top-left corner fixed, so only the right/bottom
-            // edges move inward as it shrinks.
-            .scaleEffect(scale, anchor: .topLeading)
-            // scaleEffect only transforms pixels, it doesn't change the
-            // layout size SwiftUI reserves for this view — without this
-            // outer frame the ScrollView would still reserve the full
-            // unscaled designBoardWidth/Height, leaving a blank gap
-            // (width) and wrong scroll extent (height) below 1x scale.
-            .frame(width: Self.designBoardWidth * scale, height: Self.designBoardHeight * scale, alignment: .topLeading)
         }
     }
 
