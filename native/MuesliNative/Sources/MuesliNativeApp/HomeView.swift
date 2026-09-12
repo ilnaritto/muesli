@@ -6,37 +6,6 @@ import SwiftUI
 import TelemetryDeck
 import MuesliCore
 
-/// Tracks the live width of whatever space it's given, via AppKit's own
-/// `NSView.layout()` hook rather than SwiftUI's `GeometryReader`/
-/// `.onGeometryChange` — both of those were tried for the "Функции" board's
-/// scale-to-fit-window probe and, confirmed via an on-screen debug counter,
-/// never re-fired on a LIVE window resize (only on first appearance).
-/// `layout()` is called directly by AppKit on every layout pass, including
-/// ones driven by interactive window resizing, so it doesn't depend on
-/// SwiftUI's own geometry-change-detection machinery at all.
-private struct WidthTrackingView: NSViewRepresentable {
-    let onChange: (CGFloat) -> Void
-
-    func makeNSView(context: Context) -> TrackingNSView {
-        let view = TrackingNSView()
-        view.onChange = onChange
-        return view
-    }
-
-    func updateNSView(_ nsView: TrackingNSView, context: Context) {
-        nsView.onChange = onChange
-    }
-
-    final class TrackingNSView: NSView {
-        var onChange: ((CGFloat) -> Void)?
-
-        override func layout() {
-            super.layout()
-            onChange?(bounds.width)
-        }
-    }
-}
-
 /// Home tab: overview dashboard and app features. Hosts the usage stats moved
 /// from the Dictations page; richer analytics blocks land here later.
 struct HomeView: View {
@@ -87,7 +56,6 @@ struct HomeView: View {
     @State private var insightsCustomDate = Date()
     @State private var insightsHeaderMeasuredHeight: CGFloat?
     @State private var showClearInsightsHistoryConfirmation = false
-    @State private var mainBoardWidth: CGFloat = 1100
     @State private var dictationPermissionGranted = false
     @State private var meetingsPermissionGranted = false
     @State private var featurePermissionPollTimer: Timer?
@@ -926,50 +894,73 @@ struct HomeView: View {
 
     @ViewBuilder
     private var functionsContent: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(tr("Features", "Функции"))
-                        .font(MuesliTheme.pageTitle())
-                        .foregroundStyle(MuesliTheme.textPrimary)
+        // `GeometryReader` used as the OUTER container (not nested inside
+        // the scrollable content) reports exactly what ITS OWN parent
+        // proposes — driven purely by the window/sidebar layout — and
+        // never gets inflated by what's inside the ScrollView. This
+        // matters here specifically: the board's cards used to measure
+        // their available width from a probe placed INSIDE the same
+        // content stack as the board itself, and a vertical `ScrollView`
+        // doesn't constrain its content's width to the viewport by
+        // default, so the board's own ~1100pt design demand echoed back
+        // as the "measured" width — a stable, window-size-INDEPENDENT
+        // fixed point (1100 minus padding), not the real window width.
+        // That's why nothing about the on-screen result ever changed
+        // across several rounds of fixing the scale math: the input was
+        // never actually connected to the window's true size. Measuring
+        // out here, above the ScrollView, breaks that loop structurally.
+        GeometryReader { proxy in
+            // Explicit width, clamped to the page's usual 1100pt cap —
+            // computed ONCE here from the real proposal, then handed down
+            // as a plain value. Nothing downstream (the board, its cards)
+            // can feed back into this number, unlike the old in-content
+            // probe.
+            let boardWidth = min(proxy.size.width - MuesliTheme.spacing24 * 2, 1100)
 
-                    Text(tr("Everything Muesli can do — and how to switch it on.", "Всё, что умеет Muesli, и как это включить."))
-                        .font(MuesliTheme.callout())
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(tr("Features", "Функции"))
+                            .font(MuesliTheme.pageTitle())
+                            .foregroundStyle(MuesliTheme.textPrimary)
+
+                        Text(tr("Everything Muesli can do — and how to switch it on.", "Всё, что умеет Muesli, и как это включить."))
+                            .font(MuesliTheme.callout())
+                            .foregroundStyle(MuesliTheme.textTertiary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    // Presentation board — settings-panel-style cards: a looping
+                    // demo clip, icon + title + description, and (for features
+                    // with a real on/off state) a FUNCTIONAL toggle that fires
+                    // the request/connect action right here, not just a status
+                    // readout sending the user to Settings. The full permissions
+                    // picture sits right below (this is the "settings in
+                    // presentational format" page — Overview stays pure usage
+                    // stats, access/permissions content lives here instead).
+                    Text(tr("MAIN FEATURES", "ОСНОВНЫЕ ФУНКЦИИ"))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(MuesliTheme.textTertiary)
+                        .textCase(.uppercase)
+
+                    // One mosaic, not a "flagship" board plus a separate "MORE"
+                    // grid — round 6 feedback (with a bento-dashboard reference)
+                    // was that splitting them into two sections with a heading
+                    // between made the page read as disconnected pieces rather
+                    // than one cohesive board. Every card, gif-preview or
+                    // icon-only, is now sized proportionally to its own content
+                    // within a single composition.
+                    mainFeaturesBoard(width: boardWidth)
+                        .onAppear { startFeaturePermissionPolling() }
+                        .onDisappear { stopFeaturePermissionPolling() }
+
+                    FeaturePermissionsBoard(useCoreAudioTap: appState.config.useCoreAudioTap)
+                        .padding(.top, 14)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                // Presentation board — settings-panel-style cards: a looping
-                // demo clip, icon + title + description, and (for features
-                // with a real on/off state) a FUNCTIONAL toggle that fires
-                // the request/connect action right here, not just a status
-                // readout sending the user to Settings. The full permissions
-                // picture sits right below (this is the "settings in
-                // presentational format" page — Overview stays pure usage
-                // stats, access/permissions content lives here instead).
-                Text(tr("MAIN FEATURES", "ОСНОВНЫЕ ФУНКЦИИ"))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(MuesliTheme.textTertiary)
-                    .textCase(.uppercase)
-
-                // One mosaic, not a "flagship" board plus a separate "MORE"
-                // grid — round 6 feedback (with a bento-dashboard reference)
-                // was that splitting them into two sections with a heading
-                // between made the page read as disconnected pieces rather
-                // than one cohesive board. Every card, gif-preview or
-                // icon-only, is now sized proportionally to its own content
-                // within a single composition.
-                mainFeaturesBoard
-                    .onAppear { startFeaturePermissionPolling() }
-                    .onDisappear { stopFeaturePermissionPolling() }
-
-                FeaturePermissionsBoard(useCoreAudioTap: appState.config.useCoreAudioTap)
-                    .padding(.top, 14)
+                .padding(.horizontal, MuesliTheme.spacing24)
+                .padding(.vertical, MuesliTheme.spacing20)
+                .frame(width: proxy.size.width, alignment: .leading)
             }
-            .padding(.horizontal, MuesliTheme.spacing24)
-            .padding(.vertical, MuesliTheme.spacing20)
-            .frame(maxWidth: 1100, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -1110,71 +1101,62 @@ struct HomeView: View {
     /// a stacked pair of small tiles in the remaining third, the next three
     /// gif cards share equal thirds, and the small icon-only utility tiles
     /// close out the board four-across. Widths are computed EXPLICITLY
-    /// from the measured board width (not left to automatic HStack
-    /// negotiation, which only splits evenly) — this is deliberately the
-    /// same "measure width, then place cards at explicit pixel widths"
-    /// technique already proven safe elsewhere on this page, not SwiftUI's
-    /// `Grid`/`.gridCellColumns` (confirmed buggy for inconsistent
-    /// per-row spans in an earlier pass on this same board).
+    /// from `width` (not left to automatic HStack negotiation, which only
+    /// splits evenly) — not SwiftUI's `Grid`/`.gridCellColumns` (confirmed
+    /// buggy for inconsistent per-row spans in an earlier pass on this
+    /// same board).
+    ///
+    /// `width` is passed in from `functionsContent`'s outer
+    /// `GeometryReader`, NOT measured locally in here — an earlier version
+    /// had its own width probe living inside this same view tree, and its
+    /// "measured" value turned out to just be this board's own ~1100pt
+    /// design width echoing back (a vertical `ScrollView` doesn't clamp
+    /// its content's width to the viewport by default), a fixed point
+    /// completely disconnected from the real window size. Every fix to
+    /// the probe/consumption logic kept failing identically because the
+    /// INPUT itself was circular. Taking `width` as a plain parameter from
+    /// outside this view's own subtree removes that loop structurally.
     ///
     /// A true proportional "zoom out" (shrinking fonts/icons too, via
-    /// `.scaleEffect`) was attempted per explicit feedback and abandoned
-    /// after several rebuilds all showed the same result: the measured
-    /// width itself was correct (confirmed via an on-screen debug counter
-    /// that did increment on live resize), but the scaled content still
-    /// rendered past the intended bounds regardless of `.overlay`/
-    /// `.clipped()` safeguards — `.scaleEffect` composed unreliably with
-    /// the rest of this layout. Columns just resize directly from the
-    /// real measured width instead: text/icons stay their natural size,
-    /// but nothing can overflow, since every card's width is computed to
-    /// literally fill the available space, not a fixed design width.
+    /// `.scaleEffect`) was attempted per explicit feedback and abandoned —
+    /// `.scaleEffect` composed unreliably with the rest of this layout.
+    /// Columns resize directly from `width` instead: text/icons stay their
+    /// natural size, but nothing can overflow, since every card's width is
+    /// computed to literally sum to the available space.
     @ViewBuilder
-    private var mainFeaturesBoard: some View {
-        VStack(spacing: 0) {
-            // Independent width probe, reading straight from AppKit's own
-            // layout pass (see `WidthTrackingView` above `HomeView`) — both
-            // SwiftUI's `GeometryReader`+`onChange` and `.onGeometryChange`
-            // were tried first and neither re-fired on a live window
-            // resize (only on first appearance); this does.
-            WidthTrackingView { newValue in
-                mainBoardWidth = newValue
+    private func mainFeaturesBoard(width: CGFloat) -> some View {
+        let twoThirds = (width - Self.boardSpacing) * 2 / 3
+        let halfRowThird = width - Self.boardSpacing - twoThirds
+        let thirdOfThree = (width - Self.boardSpacing * 2) / 3
+        let quarterOfFour = (width - Self.boardSpacing * 3) / 4
+        // The two small tiles stacked next to meetingsCard split its
+        // height exactly, so the row's outer edges line up.
+        let stackedTileHeight = (Self.mediumRowHeight - Self.boardSpacing) / 2
+
+        VStack(spacing: Self.boardSpacing) {
+            dictationCard
+                .frame(width: width, height: Self.heroRowHeight)
+
+            HStack(spacing: Self.boardSpacing) {
+                meetingsCard.frame(width: twoThirds, height: Self.mediumRowHeight)
+                VStack(spacing: Self.boardSpacing) {
+                    aiModelCard.frame(height: stackedTileHeight)
+                    onDeviceModelsCard.frame(height: stackedTileHeight)
+                }
+                .frame(width: halfRowThird)
             }
-            .frame(height: 1)
-            .frame(maxWidth: .infinity)
 
-            let twoThirds = (mainBoardWidth - Self.boardSpacing) * 2 / 3
-            let halfRowThird = mainBoardWidth - Self.boardSpacing - twoThirds
-            let thirdOfThree = (mainBoardWidth - Self.boardSpacing * 2) / 3
-            let quarterOfFour = (mainBoardWidth - Self.boardSpacing * 3) / 4
-            // The two small tiles stacked next to meetingsCard split its
-            // height exactly, so the row's outer edges line up.
-            let stackedTileHeight = (Self.mediumRowHeight - Self.boardSpacing) / 2
+            HStack(spacing: Self.boardSpacing) {
+                templatesCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
+                meetingChatCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
+                insightsCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
+            }
 
-            VStack(spacing: Self.boardSpacing) {
-                dictationCard
-                    .frame(width: mainBoardWidth, height: Self.heroRowHeight)
-
-                HStack(spacing: Self.boardSpacing) {
-                    meetingsCard.frame(width: twoThirds, height: Self.mediumRowHeight)
-                    VStack(spacing: Self.boardSpacing) {
-                        aiModelCard.frame(height: stackedTileHeight)
-                        onDeviceModelsCard.frame(height: stackedTileHeight)
-                    }
-                    .frame(width: halfRowThird)
-                }
-
-                HStack(spacing: Self.boardSpacing) {
-                    templatesCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
-                    meetingChatCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
-                    insightsCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
-                }
-
-                HStack(spacing: Self.boardSpacing) {
-                    smartCleanupCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                    voiceCommandsCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                    screenVideoCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                    dictionaryCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                }
+            HStack(spacing: Self.boardSpacing) {
+                smartCleanupCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
+                voiceCommandsCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
+                screenVideoCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
+                dictionaryCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
             }
         }
     }
