@@ -1002,6 +1002,7 @@ struct HomeView: View {
                     showConnectModelSheet = true
                 }
             ],
+            compact: true,
             toggle: FeatureToggle(isOn: hasConnectedAIModel) {
                 showConnectModelSheet = true
             }
