@@ -1082,7 +1082,30 @@ struct HomeView: View {
     /// inconsistent per-row spans in an earlier pass on this same board).
     @ViewBuilder
     private var mainFeaturesBoard: some View {
-        Group {
+        VStack(spacing: 0) {
+            // Independent width probe: a plain, unconstrained `Color.clear`
+            // that only ever reports whatever width its PARENT offers it —
+            // never sized by `mainBoardWidth` itself. The row content below
+            // (unlike this probe) explicitly sizes its cards FROM
+            // `mainBoardWidth`, so measuring the rows themselves would
+            // create a feedback loop: on first render `mainBoardWidth`
+            // starts at its 1100 default, the hero card gets forced to
+            // 1100pt wide regardless of the real window size, the "measured"
+            // width then reads back ~1100 and never corrects down — the
+            // board renders far wider than the actual window and overflows
+            // past its edges. This probe is a sibling, not a descendant of
+            // the width-dependent rows, so it can't get caught in that loop.
+            Color.clear
+                .frame(height: 0)
+                .frame(maxWidth: .infinity)
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear
+                            .onAppear { mainBoardWidth = proxy.size.width }
+                            .onChange(of: proxy.size.width) { _, newValue in mainBoardWidth = newValue }
+                    }
+                )
+
             if mainBoardWidth < Self.mainBoardNarrowThreshold {
                 VStack(spacing: Self.boardSpacing) {
                     dictationCard.frame(height: Self.heroRowHeight)
@@ -1114,17 +1137,6 @@ struct HomeView: View {
                 }
             }
         }
-        // Reads the board's own width without imposing a layout of its
-        // own (a GeometryReader placed directly in the view tree would
-        // force this content to fill whatever size it's given instead of
-        // sizing to its own rows).
-        .background(
-            GeometryReader { proxy in
-                Color.clear
-                    .onAppear { mainBoardWidth = proxy.size.width }
-                    .onChange(of: proxy.size.width) { _, newValue in mainBoardWidth = newValue }
-            }
-        )
     }
 
     private var hasConnectedAIModel: Bool {
