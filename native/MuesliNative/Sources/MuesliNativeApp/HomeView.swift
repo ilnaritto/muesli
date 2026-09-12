@@ -56,6 +56,7 @@ struct HomeView: View {
     @State private var insightsCustomDate = Date()
     @State private var insightsHeaderMeasuredHeight: CGFloat?
     @State private var showClearInsightsHistoryConfirmation = false
+    @State private var mainBoardWidth: CGFloat = 1100
     @State private var dictationPermissionGranted = false
     @State private var meetingsPermissionGranted = false
     @State private var featurePermissionPollTimer: Timer?
@@ -920,20 +921,18 @@ struct HomeView: View {
                     .foregroundStyle(MuesliTheme.textTertiary)
                     .textCase(.uppercase)
 
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 11)], spacing: 11) {
-                    ForEach(mainFeatures) { $0 }
-                }
-                .onAppear { startFeaturePermissionPolling() }
-                .onDisappear { stopFeaturePermissionPolling() }
+                mainFeaturesBoard
+                    .onAppear { startFeaturePermissionPolling() }
+                    .onDisappear { stopFeaturePermissionPolling() }
 
                 FeaturePermissionsBoard(useCoreAudioTap: appState.config.useCoreAudioTap)
-                    .padding(.top, 4)
+                    .padding(.top, 10)
 
                 Text(tr("MORE", "ЕЩЁ"))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(MuesliTheme.textTertiary)
                     .textCase(.uppercase)
-                    .padding(.top, 4)
+                    .padding(.top, 10)
 
                 // Adaptive, not a fixed column count — cards keep their
                 // natural width and re-wrap as the window narrows instead
@@ -960,89 +959,172 @@ struct HomeView: View {
     /// action right here, not just a status readout that sends the user to
     /// Settings. Cards with no such state (Templates, Meeting chat,
     /// Insights) stay plain single-tap-target navigation cards.
-    private var mainFeatures: [IdentifiedView] {
-        [
-            IdentifiedView(FeatureCard(
-                accent: MuesliTheme.accent,
-                icon: "mic.fill",
-                title: tr("Voice dictation", "Диктовка голосом"),
-                subtitle: tr("Hold Right Option and speak — or click the dictation icon in the panel above.", "Зажми Right Option и говори — или нажми на значок диктовки в панели сверху."),
-                actions: [
-                    FeatureAction(label: tr("Set up dictation", "Настроить диктовку"), isPrimary: true) {
-                        openSettings(.dictation)
-                    }
-                ],
-                previewAssetName: "dictation",
-                toggle: FeatureToggle(isOn: dictationPermissionGranted) {
-                    requestDictationPermissions()
+    private var dictationCard: FeatureCard {
+        FeatureCard(
+            accent: MuesliTheme.accent,
+            icon: "mic.fill",
+            title: tr("Voice dictation", "Диктовка голосом"),
+            subtitle: tr("Hold Right Option and speak — or click the dictation icon in the panel above.", "Зажми Right Option и говори — или нажми на значок диктовки в панели сверху."),
+            actions: [
+                FeatureAction(label: tr("Set up dictation", "Настроить диктовку"), isPrimary: true) {
+                    openSettings(.dictation)
                 }
-            )),
-            IdentifiedView(FeatureCard(
-                accent: MuesliTheme.accent,
-                icon: "person.2.fill",
-                title: tr("Meetings, summarized", "Встречи в готовых заметках"),
-                subtitle: tr("Muesli listens, then hands you a clean recap in your own template.", "Muesli слушает встречу, а после выдаёт аккуратную сводку по твоему шаблону."),
-                actions: [
-                    FeatureAction(label: tr("Meeting settings", "Настройки встреч"), isPrimary: true) {
-                        openSettings(.meetings)
-                    }
-                ],
-                previewAssetName: "meetings",
-                toggle: FeatureToggle(isOn: meetingsPermissionGranted) {
-                    requestMeetingsPermissions()
+            ],
+            previewAssetName: "dictation",
+            previewHeight: 170,
+            isHero: true,
+            toggle: FeatureToggle(isOn: dictationPermissionGranted) {
+                requestDictationPermissions()
+            }
+        )
+    }
+
+    private var meetingsCard: FeatureCard {
+        FeatureCard(
+            accent: MuesliTheme.accent,
+            icon: "person.2.fill",
+            title: tr("Meetings, summarized", "Встречи в готовых заметках"),
+            subtitle: tr("Muesli listens, then hands you a clean recap in your own template.", "Muesli слушает встречу, а после выдаёт аккуратную сводку по твоему шаблону."),
+            actions: [
+                FeatureAction(label: tr("Meeting settings", "Настройки встреч"), isPrimary: true) {
+                    openSettings(.meetings)
                 }
-            )),
-            IdentifiedView(FeatureCard(
-                accent: MuesliTheme.accent,
-                icon: "sparkles",
-                title: tr("Connect an AI model", "Подключить ИИ-модель"),
-                subtitle: tr("ChatGPT, an API key, Ollama or your own endpoint — for summaries and chat.", "ChatGPT, API-ключ, Ollama или свой эндпоинт — для сводок и чатов."),
-                actions: [
-                    FeatureAction(label: tr("Connect a model", "Подключить модель"), isPrimary: true) {
-                        showConnectModelSheet = true
-                    }
-                ],
-                toggle: FeatureToggle(isOn: hasConnectedAIModel) {
+            ],
+            previewAssetName: "meetings",
+            toggle: FeatureToggle(isOn: meetingsPermissionGranted) {
+                requestMeetingsPermissions()
+            }
+        )
+    }
+
+    private var aiModelCard: FeatureCard {
+        FeatureCard(
+            accent: MuesliTheme.accent,
+            icon: "sparkles",
+            title: tr("Connect an AI model", "Подключить ИИ-модель"),
+            subtitle: tr("ChatGPT, an API key, Ollama or your own endpoint — for summaries and chat.", "ChatGPT, API-ключ, Ollama или свой эндпоинт — для сводок и чатов."),
+            actions: [
+                FeatureAction(label: tr("Connect a model", "Подключить модель"), isPrimary: true) {
                     showConnectModelSheet = true
                 }
-            )),
-            IdentifiedView(FeatureCard(
-                accent: MuesliTheme.accent,
-                icon: "square.text.square.fill",
-                title: tr("Note templates", "Шаблоны заметок"),
-                subtitle: tr("Choose how notes are structured, or write your own prompt.", "Выбери, как оформлять заметки, или напиши свой шаблон и промпт."),
-                actions: [
-                    FeatureAction(label: tr("Manage templates", "Управление шаблонами"), isPrimary: true) {
-                        controller.showMeetingTemplatesManager()
+            ],
+            toggle: FeatureToggle(isOn: hasConnectedAIModel) {
+                showConnectModelSheet = true
+            }
+        )
+    }
+
+    private var templatesCard: FeatureCard {
+        FeatureCard(
+            accent: MuesliTheme.accent,
+            icon: "square.text.square.fill",
+            title: tr("Note templates", "Шаблоны заметок"),
+            subtitle: tr("Choose how notes are structured, or write your own prompt.", "Выбери, как оформлять заметки, или напиши свой шаблон и промпт."),
+            actions: [
+                FeatureAction(label: tr("Manage templates", "Управление шаблонами"), isPrimary: true) {
+                    controller.showMeetingTemplatesManager()
+                }
+            ],
+            compact: true,
+            previewAssetName: "templates"
+        )
+    }
+
+    private var meetingChatCard: FeatureCard {
+        FeatureCard(
+            accent: MuesliTheme.accent,
+            icon: "bubble.left.and.text.bubble.right.fill",
+            title: tr("Chat with your meeting", "Чат с встречей"),
+            subtitle: tr("Ask any meeting a question, get an answer grounded in it.", "Задай вопрос по встрече — получи ответ строго по этому разговору."),
+            actions: [
+                FeatureAction(label: tr("Open a meeting", "Открыть встречу"), isPrimary: true) {
+                    openSettings(.meetings)
+                }
+            ],
+            compact: true,
+            previewAssetName: "meeting-chat"
+        )
+    }
+
+    private var insightsCard: FeatureCard {
+        FeatureCard(
+            accent: MuesliTheme.accent,
+            icon: "sparkles",
+            title: tr("Insights — ask across all meetings", "Инсайты — вопросы по всем встречам"),
+            subtitle: tr("One chat that reads every meeting in the period you pick.", "Один чат, который читает сразу все встречи за выбранный период."),
+            actions: [
+                FeatureAction(label: tr("Open Insights", "Открыть Инсайты"), isPrimary: true) {
+                    selectedSection = .insights
+                }
+            ],
+            compact: true,
+            previewAssetName: "insights"
+        )
+    }
+
+    /// Below this width, rows collapse to a single stacked column instead
+    /// of squeezing every card's text.
+    private static let mainBoardNarrowThreshold: CGFloat = 640
+    private static let boardSpacing: CGFloat = 11
+    private static let heroRowHeight: CGFloat = 290
+    private static let mediumRowHeight: CGFloat = 240
+    private static let smallRowHeight: CGFloat = 195
+
+    /// Per Ilnar's repeated ask: cards vary in row-width by importance —
+    /// dictation gets the full row (3/3), meetings gets two-thirds next to
+    /// the AI-model card's one-third, the remaining three share equal
+    /// thirds. Widths are computed EXPLICITLY from the measured board
+    /// width (not left to automatic HStack negotiation, which only splits
+    /// evenly) — this is deliberately the same "measure width via a
+    /// background GeometryReader, then place cards at explicit pixel
+    /// widths" technique already proven safe earlier on this page, not
+    /// SwiftUI's `Grid`/`.gridCellColumns` (confirmed buggy for
+    /// inconsistent per-row spans in an earlier pass on this same board).
+    @ViewBuilder
+    private var mainFeaturesBoard: some View {
+        Group {
+            if mainBoardWidth < Self.mainBoardNarrowThreshold {
+                VStack(spacing: Self.boardSpacing) {
+                    dictationCard.frame(height: Self.heroRowHeight)
+                    meetingsCard.frame(height: Self.mediumRowHeight)
+                    aiModelCard.frame(height: Self.mediumRowHeight)
+                    templatesCard.frame(height: Self.smallRowHeight)
+                    meetingChatCard.frame(height: Self.smallRowHeight)
+                    insightsCard.frame(height: Self.smallRowHeight)
+                }
+            } else {
+                let twoThirds = (mainBoardWidth - Self.boardSpacing) * 2 / 3
+                let halfRowThird = mainBoardWidth - Self.boardSpacing - twoThirds
+                let thirdOfThree = (mainBoardWidth - Self.boardSpacing * 2) / 3
+
+                VStack(spacing: Self.boardSpacing) {
+                    dictationCard
+                        .frame(width: mainBoardWidth, height: Self.heroRowHeight)
+
+                    HStack(spacing: Self.boardSpacing) {
+                        meetingsCard.frame(width: twoThirds, height: Self.mediumRowHeight)
+                        aiModelCard.frame(width: halfRowThird, height: Self.mediumRowHeight)
                     }
-                ],
-                previewAssetName: "templates"
-            )),
-            IdentifiedView(FeatureCard(
-                accent: MuesliTheme.accent,
-                icon: "bubble.left.and.text.bubble.right.fill",
-                title: tr("Chat with your meeting", "Чат с встречей"),
-                subtitle: tr("Ask any meeting a question, get an answer grounded in it.", "Задай вопрос по встрече — получи ответ строго по этому разговору."),
-                actions: [
-                    FeatureAction(label: tr("Open a meeting", "Открыть встречу"), isPrimary: true) {
-                        openSettings(.meetings)
+
+                    HStack(spacing: Self.boardSpacing) {
+                        templatesCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
+                        meetingChatCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
+                        insightsCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
                     }
-                ],
-                previewAssetName: "meeting-chat"
-            )),
-            IdentifiedView(FeatureCard(
-                accent: MuesliTheme.accent,
-                icon: "sparkles",
-                title: tr("Insights — ask across all meetings", "Инсайты — вопросы по всем встречам"),
-                subtitle: tr("One chat that reads every meeting in the period you pick.", "Один чат, который читает сразу все встречи за выбранный период."),
-                actions: [
-                    FeatureAction(label: tr("Open Insights", "Открыть Инсайты"), isPrimary: true) {
-                        selectedSection = .insights
-                    }
-                ],
-                previewAssetName: "insights"
-            )),
-        ]
+                }
+            }
+        }
+        // Reads the board's own width without imposing a layout of its
+        // own (a GeometryReader placed directly in the view tree would
+        // force this content to fill whatever size it's given instead of
+        // sizing to its own rows).
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { mainBoardWidth = proxy.size.width }
+                    .onChange(of: proxy.size.width) { _, newValue in mainBoardWidth = newValue }
+            }
+        )
     }
 
     private var hasConnectedAIModel: Bool {
@@ -1103,6 +1185,11 @@ struct HomeView: View {
         // that slot went to the new "Connect an AI model" banner (the
         // actual missing feature — cloud models), and on-device speech
         // models are more of a setup detail than a flagship demo.
+        // No preview clips here — just icon + toggle where the feature has
+        // a real on/off setting (Smart cleanup, Voice commands, Screen
+        // video all map straight to a config boolean already used in
+        // Settings). On-device models and Dictionary are plain list pages
+        // with no on/off state, so they stay simple navigate cards.
         let cards: [IdentifiedView] = [
             IdentifiedView(FeatureCard(
                 accent: MuesliTheme.accent,
@@ -1114,8 +1201,7 @@ struct HomeView: View {
                         openSettings(.models, modelsTab: .speech)
                     }
                 ],
-                compact: true,
-                previewAssetName: "models"
+                compact: true
             )),
             IdentifiedView(FeatureCard(
                 accent: MuesliTheme.accent,
@@ -1128,7 +1214,9 @@ struct HomeView: View {
                     }
                 ],
                 compact: true,
-                previewAssetName: "smart-cleanup"
+                toggle: FeatureToggle(isOn: appState.config.enablePostProcessor) {
+                    controller.setPostProcessorEnabled(!appState.config.enablePostProcessor)
+                }
             )),
             IdentifiedView(FeatureCard(
                 accent: MuesliTheme.accent,
@@ -1141,7 +1229,9 @@ struct HomeView: View {
                     }
                 ],
                 compact: true,
-                previewAssetName: "voice-commands"
+                toggle: FeatureToggle(isOn: appState.config.enableComputerUsePlanner) {
+                    controller.updateConfig { $0.enableComputerUsePlanner = !$0.enableComputerUsePlanner }
+                }
             )),
             // Task 5 point 7: minor items, compact — moved out of the
             // flagship tour above.
@@ -1151,12 +1241,14 @@ struct HomeView: View {
                 title: tr("Screen video with sound", "Видео экрана со звуком"),
                 subtitle: tr("Record the screen together with the audio, replay it on the meeting page.", "Записывай экран вместе со звуком, пересматривай на странице встречи."),
                 actions: [
-                    FeatureAction(label: tr("Enable", "Включить"), isPrimary: true) {
+                    FeatureAction(label: tr("Meeting settings", "Настройки встреч"), isPrimary: true) {
                         openSettings(.meetings)
                     }
                 ],
                 compact: true,
-                previewAssetName: "screen-video"
+                toggle: FeatureToggle(isOn: appState.config.enableMeetingScreenVideo) {
+                    controller.updateConfig { $0.enableMeetingScreenVideo = !$0.enableMeetingScreenVideo }
+                }
             )),
             IdentifiedView(FeatureCard(
                 accent: MuesliTheme.accent,
@@ -1168,8 +1260,7 @@ struct HomeView: View {
                         openSettings(.dictionary)
                     }
                 ],
-                compact: true,
-                previewAssetName: "dictionary"
+                compact: true
             )),
         ]
         // TODO(sync): re-enable when the iPhone app ships — see SettingsView.sectionListPane,

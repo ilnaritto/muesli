@@ -45,6 +45,14 @@ struct FeatureCard: View {
     /// Looks up `Contents/Resources/features-tour/<name>.gif` — plays on a
     /// continuous loop, no hover gating.
     var previewAssetName: String? = nil
+    /// Overrides the default preview strip height — used to give the hero
+    /// card (full row width, most important feature) a noticeably bigger
+    /// demo than the rest instead of matching the standard card's height.
+    var previewHeight: CGFloat? = nil
+    /// The single full-width card in a row of important-by-priority cards
+    /// gets larger type on top of the taller preview — a bit more visual
+    /// weight than just "not compact".
+    var isHero: Bool = false
     var toggle: FeatureToggle? = nil
 
     private var singleAction: FeatureAction? {
@@ -71,7 +79,7 @@ struct FeatureCard: View {
         VStack(alignment: .leading, spacing: compact ? 8 : 10) {
             if let previewURL {
                 LoopingGIFView(url: previewURL)
-                    .frame(height: compact ? 72 : 110)
+                    .frame(height: previewHeight ?? (compact ? 72 : 110))
                     .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
                     .overlay(
@@ -101,12 +109,12 @@ struct FeatureCard: View {
             }
 
             Text(title)
-                .font(.system(size: compact ? 14 : 16, weight: .semibold))
+                .font(.system(size: isHero ? 20 : (compact ? 14 : 16), weight: .semibold))
                 .foregroundStyle(MuesliTheme.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
 
             Text(subtitle)
-                .font(.system(size: compact ? 12 : 13, weight: .regular))
+                .font(.system(size: isHero ? 14 : (compact ? 12 : 13), weight: .regular))
                 .foregroundStyle(MuesliTheme.textSecondary)
                 .lineSpacing(2)
                 .lineLimit(compact ? 2 : 3)
@@ -124,15 +132,21 @@ struct FeatureCard: View {
                 }
             }
         }
-        .padding(MuesliTheme.spacing16)
+        .padding(isHero ? MuesliTheme.spacing20 : MuesliTheme.spacing16)
         .frame(maxWidth: .infinity, minHeight: compact ? 130 : 230, maxHeight: .infinity, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
                 .fill(MuesliTheme.backgroundBase)
         )
         .overlay(
+            // A soft accent outline when the toggle is on — a card being
+            // active should read at a glance, not only from the small
+            // switch in the corner.
             RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
-                .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                .strokeBorder(
+                    toggle?.isOn == true ? MuesliTheme.accent.opacity(0.5) : MuesliTheme.surfaceBorder,
+                    lineWidth: toggle?.isOn == true ? 1.5 : 1
+                )
         )
     }
 
