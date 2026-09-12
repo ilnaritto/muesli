@@ -146,6 +146,13 @@ struct FeatureCard: View {
             RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
                 .fill(MuesliTheme.backgroundBase)
         )
+        // Nothing else in this view clips — when a parent gives the card
+        // less room than its content needs (e.g. a narrow windowed-mode
+        // column), unclipped content doesn't shrink or truncate, it spills
+        // past the rounded-rect border and overlaps the next card in the
+        // row. This caps it: worst case content is cut off inside its own
+        // card, it never bleeds into a neighbor.
+        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL))
         .overlay(
             // A soft accent outline when the toggle is on — a card being
             // active should read at a glance, not only from the small

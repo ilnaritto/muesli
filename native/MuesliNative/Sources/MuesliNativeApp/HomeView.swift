@@ -1063,8 +1063,15 @@ struct HomeView: View {
     }
 
     /// Below this width, rows collapse to a single stacked column instead
-    /// of squeezing every card's text.
-    private static let mainBoardNarrowThreshold: CGFloat = 640
+    /// of squeezing every card's text. Raised from 640: a typical
+    /// non-fullscreen window is often still above 640pt wide but well
+    /// short of comfortable multi-column room, so the 2/3-column layout
+    /// was kicking in with too little width per card — content that
+    /// couldn't compress (fixed icon tile, single-line button labels)
+    /// pushed cards wider than their allotted column and into their
+    /// neighbor. Single-column stacking below this point gives every card
+    /// its full natural width instead.
+    private static let mainBoardNarrowThreshold: CGFloat = 840
     // Gutter between cards — bumped from the original 11pt per feedback
     // that the board read as cramped ("отступы маленькие").
     private static let boardSpacing: CGFloat = 16
