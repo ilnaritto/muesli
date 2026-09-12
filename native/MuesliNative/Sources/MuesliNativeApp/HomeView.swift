@@ -921,25 +921,19 @@ struct HomeView: View {
                     .foregroundStyle(MuesliTheme.textTertiary)
                     .textCase(.uppercase)
 
+                // One mosaic, not a "flagship" board plus a separate "MORE"
+                // grid — round 6 feedback (with a bento-dashboard reference)
+                // was that splitting them into two sections with a heading
+                // between made the page read as disconnected pieces rather
+                // than one cohesive board. Every card, gif-preview or
+                // icon-only, is now sized proportionally to its own content
+                // within a single composition.
                 mainFeaturesBoard
                     .onAppear { startFeaturePermissionPolling() }
                     .onDisappear { stopFeaturePermissionPolling() }
 
                 FeaturePermissionsBoard(useCoreAudioTap: appState.config.useCoreAudioTap)
                     .padding(.top, 14)
-
-                Text(tr("MORE", "ЕЩЁ"))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(MuesliTheme.textTertiary)
-                    .textCase(.uppercase)
-                    .padding(.top, 14)
-
-                // Adaptive, not a fixed column count — cards keep their
-                // natural width and re-wrap as the window narrows instead
-                // of shrinking down to cramped text.
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 16)], spacing: 16) {
-                    ForEach(compactFeatures) { $0 }
-                }
             }
             .padding(.horizontal, MuesliTheme.spacing24)
             .padding(.vertical, MuesliTheme.spacing20)
@@ -1083,17 +1077,24 @@ struct HomeView: View {
     private static let heroRowHeight: CGFloat = 380
     private static let mediumRowHeight: CGFloat = 300
     private static let smallRowHeight: CGFloat = 230
+    // Icon(+toggle)-only tiles (no gif) — sized as small squarish widgets,
+    // not stretched to match a gif card's height, per the bento-dashboard
+    // layout reference: small utility toggles are small tiles, tiling
+    // together, instead of one bare card inflated to a big card's height.
+    private static let tinyRowHeight: CGFloat = 150
 
     /// Per Ilnar's repeated ask: cards vary in row-width by importance —
     /// dictation gets the full row (3/3), meetings gets two-thirds next to
-    /// the AI-model card's one-third, the remaining three share equal
-    /// thirds. Widths are computed EXPLICITLY from the measured board
-    /// width (not left to automatic HStack negotiation, which only splits
-    /// evenly) — this is deliberately the same "measure width via a
-    /// background GeometryReader, then place cards at explicit pixel
-    /// widths" technique already proven safe earlier on this page, not
-    /// SwiftUI's `Grid`/`.gridCellColumns` (confirmed buggy for
-    /// inconsistent per-row spans in an earlier pass on this same board).
+    /// a stacked pair of small tiles in the remaining third, the next three
+    /// gif cards share equal thirds, and the small icon-only utility tiles
+    /// close out the board four-across. Widths are computed EXPLICITLY
+    /// from the measured board width (not left to automatic HStack
+    /// negotiation, which only splits evenly) — this is deliberately the
+    /// same "measure width via a background GeometryReader, then place
+    /// cards at explicit pixel widths" technique already proven safe
+    /// earlier on this page, not SwiftUI's `Grid`/`.gridCellColumns`
+    /// (confirmed buggy for inconsistent per-row spans in an earlier pass
+    /// on this same board).
     @ViewBuilder
     private var mainFeaturesBoard: some View {
         VStack(spacing: 0) {
@@ -1124,15 +1125,24 @@ struct HomeView: View {
                 VStack(spacing: Self.boardSpacing) {
                     dictationCard.frame(height: Self.heroRowHeight)
                     meetingsCard.frame(height: Self.mediumRowHeight)
-                    aiModelCard.frame(height: Self.mediumRowHeight)
+                    aiModelCard.frame(height: Self.tinyRowHeight)
+                    onDeviceModelsCard.frame(height: Self.tinyRowHeight)
                     templatesCard.frame(height: Self.smallRowHeight)
                     meetingChatCard.frame(height: Self.smallRowHeight)
                     insightsCard.frame(height: Self.smallRowHeight)
+                    smartCleanupCard.frame(height: Self.tinyRowHeight)
+                    voiceCommandsCard.frame(height: Self.tinyRowHeight)
+                    screenVideoCard.frame(height: Self.tinyRowHeight)
+                    dictionaryCard.frame(height: Self.tinyRowHeight)
                 }
             } else {
                 let twoThirds = (mainBoardWidth - Self.boardSpacing) * 2 / 3
                 let halfRowThird = mainBoardWidth - Self.boardSpacing - twoThirds
                 let thirdOfThree = (mainBoardWidth - Self.boardSpacing * 2) / 3
+                let quarterOfFour = (mainBoardWidth - Self.boardSpacing * 3) / 4
+                // The two small tiles stacked next to meetingsCard split
+                // its height exactly, so the row's outer edges line up.
+                let stackedTileHeight = (Self.mediumRowHeight - Self.boardSpacing) / 2
 
                 VStack(spacing: Self.boardSpacing) {
                     dictationCard
@@ -1140,13 +1150,24 @@ struct HomeView: View {
 
                     HStack(spacing: Self.boardSpacing) {
                         meetingsCard.frame(width: twoThirds, height: Self.mediumRowHeight)
-                        aiModelCard.frame(width: halfRowThird, height: Self.mediumRowHeight)
+                        VStack(spacing: Self.boardSpacing) {
+                            aiModelCard.frame(height: stackedTileHeight)
+                            onDeviceModelsCard.frame(height: stackedTileHeight)
+                        }
+                        .frame(width: halfRowThird)
                     }
 
                     HStack(spacing: Self.boardSpacing) {
                         templatesCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
                         meetingChatCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
                         insightsCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
+                    }
+
+                    HStack(spacing: Self.boardSpacing) {
+                        smartCleanupCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
+                        voiceCommandsCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
+                        screenVideoCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
+                        dictionaryCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
                     }
                 }
             }
@@ -1202,96 +1223,97 @@ struct HomeView: View {
         appState.selectedTab = .settings
     }
 
-    private var compactFeatures: [IdentifiedView] {
-        // "Templates & language" was removed from here — same real feature
-        // as "Note templates" in the flagship tour above, just phrased
-        // differently; two cards pointing at one feature read as a
-        // duplicate no matter how differently they're illustrated.
-        // "On-device models" moved down here FROM the flagship tour —
-        // that slot went to the new "Connect an AI model" banner (the
-        // actual missing feature — cloud models), and on-device speech
-        // models are more of a setup detail than a flagship demo.
-        // No preview clips here — just icon + toggle where the feature has
-        // a real on/off setting (Smart cleanup, Voice commands, Screen
-        // video all map straight to a config boolean already used in
-        // Settings). On-device models and Dictionary are plain list pages
-        // with no on/off state, so they stay simple navigate cards.
-        let cards: [IdentifiedView] = [
-            IdentifiedView(FeatureCard(
-                accent: MuesliTheme.accent,
-                icon: "square.and.arrow.down.fill",
-                title: tr("On-device models", "Модели на устройстве"),
-                subtitle: tr("11 speech models, all offline — nothing leaves your Mac.", "11 моделей распознавания, всё офлайн — ничего не уходит в облако."),
-                actions: [
-                    FeatureAction(label: tr("Manage", "Управление"), isPrimary: true) {
-                        openSettings(.models, modelsTab: .speech)
-                    }
-                ],
-                compact: true
-            )),
-            IdentifiedView(FeatureCard(
-                accent: MuesliTheme.accent,
-                icon: "wand.and.stars",
-                title: tr("Smart cleanup", "Умная чистка"),
-                subtitle: tr("Drops the “ums”, fixes casing, formats lists.", "Убирает «эээ», ставит регистр, оформляет списки."),
-                actions: [
-                    FeatureAction(label: tr("Set up", "Настроить"), isPrimary: true) {
-                        openSettings(.models, modelsTab: .cleanup)
-                    }
-                ],
-                compact: true,
-                toggle: FeatureToggle(isOn: appState.config.enablePostProcessor) {
-                    controller.setPostProcessorEnabled(!appState.config.enablePostProcessor)
+    // Small icon(+toggle) tiles — no preview clips, just icon + toggle
+    // where the feature has a real on/off setting (Smart cleanup, Voice
+    // commands, Screen video all map straight to a config boolean already
+    // used in Settings). On-device models and Dictionary are plain list
+    // pages with no on/off state, so they stay simple navigate cards.
+    // Folded into the same mosaic as the flagship cards below (round 6:
+    // per a bento-dashboard layout reference, these read as one cohesive
+    // board of proportionally-sized tiles rather than two separate
+    // sections split by a "MORE" heading).
+    private var onDeviceModelsCard: FeatureCard {
+        FeatureCard(
+            accent: MuesliTheme.accent,
+            icon: "square.and.arrow.down.fill",
+            title: tr("On-device models", "Модели на устройстве"),
+            subtitle: tr("11 speech models, all offline — nothing leaves your Mac.", "11 моделей распознавания, всё офлайн — ничего не уходит в облако."),
+            actions: [
+                FeatureAction(label: tr("Manage", "Управление"), isPrimary: true) {
+                    openSettings(.models, modelsTab: .speech)
                 }
-            )),
-            IdentifiedView(FeatureCard(
-                accent: MuesliTheme.accent,
-                icon: "cursorarrow.rays",
-                title: tr("Voice commands", "Голосовые команды"),
-                subtitle: tr("Tell your Mac what to do, hands-free.", "Управляй Mac голосом, без рук."),
-                actions: [
-                    FeatureAction(label: tr("Set up", "Настроить"), isPrimary: true) {
-                        openSettings(.computerUse)
-                    }
-                ],
-                compact: true,
-                toggle: FeatureToggle(isOn: appState.config.enableComputerUsePlanner) {
-                    controller.updateConfig { $0.enableComputerUsePlanner = !$0.enableComputerUsePlanner }
+            ],
+            compact: true
+        )
+    }
+
+    private var smartCleanupCard: FeatureCard {
+        FeatureCard(
+            accent: MuesliTheme.accent,
+            icon: "wand.and.stars",
+            title: tr("Smart cleanup", "Умная чистка"),
+            subtitle: tr("Drops the “ums”, fixes casing, formats lists.", "Убирает «эээ», ставит регистр, оформляет списки."),
+            actions: [
+                FeatureAction(label: tr("Set up", "Настроить"), isPrimary: true) {
+                    openSettings(.models, modelsTab: .cleanup)
                 }
-            )),
-            // Task 5 point 7: minor items, compact — moved out of the
-            // flagship tour above.
-            IdentifiedView(FeatureCard(
-                accent: MuesliTheme.accent,
-                icon: "display",
-                title: tr("Screen video with sound", "Видео экрана со звуком"),
-                subtitle: tr("Record the screen together with the audio, replay it on the meeting page.", "Записывай экран вместе со звуком, пересматривай на странице встречи."),
-                actions: [
-                    FeatureAction(label: tr("Meeting settings", "Настройки встреч"), isPrimary: true) {
-                        openSettings(.meetings)
-                    }
-                ],
-                compact: true,
-                toggle: FeatureToggle(isOn: appState.config.enableMeetingScreenVideo) {
-                    controller.updateConfig { $0.enableMeetingScreenVideo = !$0.enableMeetingScreenVideo }
+            ],
+            compact: true,
+            toggle: FeatureToggle(isOn: appState.config.enablePostProcessor) {
+                controller.setPostProcessorEnabled(!appState.config.enablePostProcessor)
+            }
+        )
+    }
+
+    private var voiceCommandsCard: FeatureCard {
+        FeatureCard(
+            accent: MuesliTheme.accent,
+            icon: "cursorarrow.rays",
+            title: tr("Voice commands", "Голосовые команды"),
+            subtitle: tr("Tell your Mac what to do, hands-free.", "Управляй Mac голосом, без рук."),
+            actions: [
+                FeatureAction(label: tr("Set up", "Настроить"), isPrimary: true) {
+                    openSettings(.computerUse)
                 }
-            )),
-            IdentifiedView(FeatureCard(
-                accent: MuesliTheme.accent,
-                icon: "character.book.closed.fill",
-                title: tr("Dictionary", "Словарь"),
-                subtitle: tr("Custom words for names and terms transcription often gets wrong.", "Свои слова для имён и терминов, которые транскрипция часто путает."),
-                actions: [
-                    FeatureAction(label: tr("Open", "Открыть"), isPrimary: true) {
-                        openSettings(.dictionary)
-                    }
-                ],
-                compact: true
-            )),
-        ]
-        // TODO(sync): re-enable when the iPhone app ships — see SettingsView.sectionListPane,
-        // where the Sync settings section is hidden the same way.
-        return cards
+            ],
+            compact: true,
+            toggle: FeatureToggle(isOn: appState.config.enableComputerUsePlanner) {
+                controller.updateConfig { $0.enableComputerUsePlanner = !$0.enableComputerUsePlanner }
+            }
+        )
+    }
+
+    private var screenVideoCard: FeatureCard {
+        FeatureCard(
+            accent: MuesliTheme.accent,
+            icon: "display",
+            title: tr("Screen video with sound", "Видео экрана со звуком"),
+            subtitle: tr("Record the screen together with the audio, replay it on the meeting page.", "Записывай экран вместе со звуком, пересматривай на странице встречи."),
+            actions: [
+                FeatureAction(label: tr("Meeting settings", "Настройки встреч"), isPrimary: true) {
+                    openSettings(.meetings)
+                }
+            ],
+            compact: true,
+            toggle: FeatureToggle(isOn: appState.config.enableMeetingScreenVideo) {
+                controller.updateConfig { $0.enableMeetingScreenVideo = !$0.enableMeetingScreenVideo }
+            }
+        )
+    }
+
+    private var dictionaryCard: FeatureCard {
+        FeatureCard(
+            accent: MuesliTheme.accent,
+            icon: "character.book.closed.fill",
+            title: tr("Dictionary", "Словарь"),
+            subtitle: tr("Custom words for names and terms transcription often gets wrong.", "Свои слова для имён и терминов, которые транскрипция часто путает."),
+            actions: [
+                FeatureAction(label: tr("Open", "Открыть"), isPrimary: true) {
+                    openSettings(.dictionary)
+                }
+            ],
+            compact: true
+        )
     }
 
     // MARK: - iPhone bridge (moved from the Dictations page)
