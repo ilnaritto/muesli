@@ -1105,16 +1105,26 @@ struct HomeView: View {
             // that only ever reports whatever width its PARENT offers it —
             // never sized by `mainBoardWidth` itself (that would be a
             // feedback loop — see git history on this file).
+            //
+            // Uses `.onGeometryChange`, not the older
+            // `GeometryReader`-in-`.background()` + `onChange` pattern —
+            // that older technique was tried three times on this exact
+            // probe (plain frame sizing, then scaleEffect behind a double
+            // `.frame`, then scaleEffect behind `.overlay`) and every time
+            // the board stayed rendered at its full un-scaled width in a
+            // genuinely narrower window, meaning `mainBoardWidth` was
+            // never actually being corrected down on resize — the bug was
+            // in the MEASUREMENT itself, not in how the measured value
+            // was consumed. `.onGeometryChange` is Apple's purpose-built,
+            // more reliable replacement for exactly this "track a view's
+            // resolved size and react" pattern (macOS 14+, this app's
+            // deployment target is 14.2).
             Color.clear
                 .frame(height: 0)
                 .frame(maxWidth: .infinity)
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear
-                            .onAppear { mainBoardWidth = proxy.size.width }
-                            .onChange(of: proxy.size.width) { _, newValue in mainBoardWidth = newValue }
-                    }
-                )
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { newValue in
+                    mainBoardWidth = newValue
+                }
 
             let scale = min(1, mainBoardWidth / Self.designBoardWidth)
             let twoThirds = (Self.designBoardWidth - Self.boardSpacing) * 2 / 3
