@@ -76,7 +76,7 @@ struct FeatureCard: View {
     }
 
     private var cardBody: some View {
-        VStack(alignment: .leading, spacing: compact ? 8 : 10) {
+        VStack(alignment: .leading, spacing: compact ? 10 : 14) {
             if let previewURL {
                 LoopingGIFView(url: previewURL)
                     .frame(height: previewHeight ?? (compact ? 72 : 110))
@@ -86,6 +86,14 @@ struct FeatureCard: View {
                         RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
                             .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
                     )
+            } else if !compact {
+                // Main-board cards without a demo clip (e.g. "Connect an AI
+                // model") used to just skip this slot, leaving them visibly
+                // barer than their gif-preview neighbors in the same row —
+                // per feedback the board read as "some cards have video,
+                // some don't" instead of one cohesive set. This gives every
+                // non-compact card the same visual weight up top.
+                decorativePreview
             }
 
             HStack(alignment: .top, spacing: 10) {
@@ -132,7 +140,7 @@ struct FeatureCard: View {
                 }
             }
         }
-        .padding(isHero ? MuesliTheme.spacing20 : MuesliTheme.spacing16)
+        .padding(isHero ? MuesliTheme.spacing24 : MuesliTheme.spacing20)
         .frame(maxWidth: .infinity, minHeight: compact ? 130 : 230, maxHeight: .infinity, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
@@ -147,6 +155,30 @@ struct FeatureCard: View {
                     toggle?.isOn == true ? MuesliTheme.accent.opacity(0.5) : MuesliTheme.surfaceBorder,
                     lineWidth: toggle?.isOn == true ? 1.5 : 1
                 )
+        )
+    }
+
+    /// Gradient-and-glyph stand-in for the gif slot on non-compact cards
+    /// that have no demo clip — same footprint (height, corner radius,
+    /// border) as `LoopingGIFView`'s block, so the card reads the same
+    /// silhouette as its gif-preview neighbors instead of skipping the slot.
+    private var decorativePreview: some View {
+        ZStack {
+            LinearGradient(
+                colors: [accent.opacity(0.28), accent.opacity(0.05)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            Image(systemName: icon)
+                .font(.system(size: 44, weight: .semibold))
+                .foregroundStyle(accent.opacity(0.35))
+        }
+        .frame(height: previewHeight ?? 110)
+        .frame(maxWidth: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
+        .overlay(
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
+                .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
         )
     }
 

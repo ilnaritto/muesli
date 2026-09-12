@@ -896,7 +896,7 @@ struct HomeView: View {
     @ViewBuilder
     private var functionsContent: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 11) {
+            VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(tr("Features", "Функции"))
                         .font(MuesliTheme.pageTitle())
@@ -926,18 +926,18 @@ struct HomeView: View {
                     .onDisappear { stopFeaturePermissionPolling() }
 
                 FeaturePermissionsBoard(useCoreAudioTap: appState.config.useCoreAudioTap)
-                    .padding(.top, 10)
+                    .padding(.top, 14)
 
                 Text(tr("MORE", "ЕЩЁ"))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(MuesliTheme.textTertiary)
                     .textCase(.uppercase)
-                    .padding(.top, 10)
+                    .padding(.top, 14)
 
                 // Adaptive, not a fixed column count — cards keep their
                 // natural width and re-wrap as the window narrows instead
                 // of shrinking down to cramped text.
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 11)], spacing: 11) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 16)], spacing: 16) {
                     ForEach(compactFeatures) { $0 }
                 }
             }
@@ -1065,10 +1065,17 @@ struct HomeView: View {
     /// Below this width, rows collapse to a single stacked column instead
     /// of squeezing every card's text.
     private static let mainBoardNarrowThreshold: CGFloat = 640
-    private static let boardSpacing: CGFloat = 11
-    private static let heroRowHeight: CGFloat = 290
-    private static let mediumRowHeight: CGFloat = 240
-    private static let smallRowHeight: CGFloat = 195
+    // Gutter between cards — bumped from the original 11pt per feedback
+    // that the board read as cramped ("отступы маленькие").
+    private static let boardSpacing: CGFloat = 16
+    // Sized to fit each row's actual card content (preview strip + padding
+    // + icon row + title + subtitle, all bumped alongside FeatureCard's own
+    // padding/spacing) with headroom to spare — FeatureCard's cardBody has
+    // no clipping, so an undersized parent frame doesn't crop overflow, it
+    // lets content spill past the card's border into the row below.
+    private static let heroRowHeight: CGFloat = 380
+    private static let mediumRowHeight: CGFloat = 300
+    private static let smallRowHeight: CGFloat = 230
 
     /// Per Ilnar's repeated ask: cards vary in row-width by importance —
     /// dictation gets the full row (3/3), meetings gets two-thirds next to
