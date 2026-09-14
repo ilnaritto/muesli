@@ -31,10 +31,21 @@ enum ModelsTab: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Round 3 feedback reversed the earlier per-role tile colors — one
-    /// theme accent color everywhere in Settings/Models now, not a
-    /// different hue per row.
-    var sidebarColor: Color { MuesliTheme.accent }
+    /// Round 3 had flattened this to one accent color everywhere, same as
+    /// the main Settings sidebar and the Templates row icons — round 5
+    /// reversed that for both of those ("верни как было"), but this tab
+    /// list was missed. Per direct feedback ("иконки сливаются" — the
+    /// uniform-color icons were hard to tell apart at a glance), back to a
+    /// distinct color per tab, same palette family as
+    /// `AppState.SettingsSection.iconColor`.
+    var sidebarColor: Color {
+        switch self {
+        case .speech: return Color(hex: 0x007AFF)    // blue
+        case .text: return Color(hex: 0xAF52DE)      // purple
+        case .cleanup: return Color(hex: 0xFF9500)   // orange
+        case .catalog: return Color(hex: 0x00C7BE)   // teal
+        }
+    }
 
 }
 
