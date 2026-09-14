@@ -228,24 +228,25 @@ struct ModelsView: View {
         .buttonStyle(.plain)
     }
 
-    /// Wraps one page section in a tint matching its header's accent color
-    /// so the eye can tell at a glance where "Speech recognition" ends and
-    /// "Text & cleanup" begins, instead of every section reading as the
-    /// same neutral gray column.
+    /// Separates one page section from the next with a thin accent rule in
+    /// its header's color, instead of a full boxed background — a boxed
+    /// tint around cards that already have their own borders (and an
+    /// accent-glow border on the active one) read as clutter, nested boxes
+    /// inside boxes ("колхозно"). A simple color-coded rule is enough to
+    /// tell sections apart without competing with the cards themselves.
     private func sectionGroup<Content: View>(
         color: Color,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
-            content()
+        HStack(alignment: .top, spacing: MuesliTheme.spacing16) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(color.opacity(0.55))
+                .frame(width: 3)
+
+            VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
+                content()
+            }
         }
-        .padding(MuesliTheme.spacing16)
-        .background(color.opacity(0.07))
-        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium + 6, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium + 6, style: .continuous)
-                .strokeBorder(color.opacity(0.28), lineWidth: 1)
-        )
     }
 
     private func modelsSectionHeader(
@@ -278,19 +279,13 @@ struct ModelsView: View {
         }
     }
 
-    // Per direct feedback ("растянуто... сделать компактнее") — the four
-    // top-level engine cards used to stack one-per-row full width, reading
-    // as a long, sparse column. A 2-column grid uses the same page width
-    // more densely. `experimentalSection` stays its own full-width
-    // disclosure row below — a collapsed toggle spanning half a column
-    // reads oddly next to a real card.
+    // Per direct feedback ("непонятно первое — две в ряду, следующее по
+    // одной") — a 2-column grid here while every other section on the page
+    // is a single column made the layout read as inconsistent/random.
+    // Back to one card per row, matching Text & cleanup and Add more.
     @ViewBuilder
     private var speechTabContent: some View {
-        LazyVGrid(
-            columns: [GridItem(.flexible(), spacing: MuesliTheme.spacing12), GridItem(.flexible())],
-            alignment: .leading,
-            spacing: MuesliTheme.spacing12
-        ) {
+        VStack(spacing: MuesliTheme.spacing12) {
             familyCard(
                 title: tr("Parakeet Family", "Семейство Parakeet"),
                 subtitle: tr("NVIDIA speech models for fast everyday dictation.", "Речевые модели NVIDIA для быстрой повседневной диктовки."),
