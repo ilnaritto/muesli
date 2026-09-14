@@ -12,7 +12,6 @@ enum ModelsTab: String, CaseIterable, Identifiable {
     case speech
     case text
     case cleanup
-    case catalog
 
     var id: String { rawValue }
 }
@@ -98,26 +97,6 @@ struct ModelsView: View {
                             textAndCleanupContent
                         }
                         .id(ModelsTab.text)
-
-                        sectionGroup(color: Color(hex: 0x00C7BE)) {
-                            // NOT a button (was one — turned out to be
-                            // confusing: "добавить ещё и добавить облачную
-                            // модель это одно и тоже?"). `AddModelSheet`
-                            // only connects a cloud LLM for Text & cleanup
-                            // ("такая модель скачивается на своей вкладке —
-                            // Распознавание или Очистка") — it has nothing
-                            // to do with the speech backends previewed
-                            // below, so this header shouldn't open it. The
-                            // one real "add a model" action stays the
-                            // pinned `connectCloudModelButton` up top.
-                            modelsSectionHeader(
-                                title: tr("Add more", "Добавить ещё"),
-                                icon: "square.grid.2x2",
-                                color: Color(hex: 0x00C7BE)
-                            )
-                            addMoreSectionContent
-                        }
-                        .id(ModelsTab.catalog)
                     }
                     .padding(MuesliTheme.spacing24)
                     .padding(.top, MuesliTheme.spacing24)
@@ -331,25 +310,6 @@ struct ModelsView: View {
         }
 
         experimentalSection
-    }
-
-    @ViewBuilder
-    private var addMoreSectionContent: some View {
-        if !BackendOption.comingSoon.isEmpty {
-            VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-                Text(tr("COMING SOON", "СКОРО"))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(MuesliTheme.textTertiary)
-                    .textCase(.uppercase)
-                    .padding(.leading, 2)
-
-                VStack(spacing: MuesliTheme.spacing12) {
-                    ForEach(BackendOption.comingSoon, id: \.model) { option in
-                        comingSoonCard(option: option)
-                    }
-                }
-            }
-        }
     }
 
     // MARK: - Text & cleanup (merged — a connected cloud model serves both)
@@ -1293,44 +1253,6 @@ struct ModelsView: View {
         .padding(.vertical, 7)
     }
 
-    private func comingSoonCard(option: BackendOption) -> some View {
-        VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
-                    HStack(spacing: MuesliTheme.spacing8) {
-                        Text(option.label)
-                            .font(MuesliTheme.headline())
-                            .foregroundStyle(MuesliTheme.textTertiary)
-
-                        Text(tr("Experimental", "Экспериментальная"))
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(MuesliTheme.textTertiary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(MuesliTheme.surfacePrimary)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-
-                        Text(option.sizeLabel)
-                            .font(MuesliTheme.caption())
-                            .foregroundStyle(MuesliTheme.textTertiary.opacity(0.6))
-                    }
-
-                    Text(option.description)
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textTertiary.opacity(0.7))
-                }
-                Spacer()
-            }
-        }
-        .padding(MuesliTheme.spacing16)
-        .background(MuesliTheme.backgroundRaised.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
-        .overlay(
-            RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
-                .strokeBorder(MuesliTheme.surfaceBorder.opacity(0.5), lineWidth: 1)
-        )
-        .opacity(0.6)
-    }
 
     // MARK: - Post-Processor Actions
 
