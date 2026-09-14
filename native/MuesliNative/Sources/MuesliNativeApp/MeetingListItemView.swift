@@ -61,9 +61,19 @@ struct MeetingListItemView: View {
         .background {
             if isCompact {
                 // Inset vertically so the selection fill never touches the
-                // hairline separators between rows.
+                // hairline separators between rows. Per direct feedback: a
+                // finished, ready-to-read meeting gets a persistent accent
+                // glow (not just while selected) — the counterpart to the
+                // gray `liveMeetingRow` shows while a meeting is still
+                // recording, in `MeetingsListPane.swift`. Selection still
+                // wins when it applies (stronger fill), so the two don't
+                // visually compete.
                 RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
-                    .fill(isSelected ? MuesliTheme.selectionFill : Color.clear)
+                    .fill(
+                        isSelected
+                            ? MuesliTheme.selectionFill
+                            : (record.status == .completed ? MuesliTheme.accent.opacity(0.12) : Color.clear)
+                    )
                     .padding(.vertical, 3)
             } else {
                 RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge)

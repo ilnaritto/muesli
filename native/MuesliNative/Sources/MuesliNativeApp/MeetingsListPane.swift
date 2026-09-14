@@ -612,8 +612,19 @@ struct MeetingsListPane: View {
         .padding(MuesliTheme.spacing12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
+            // Per direct feedback: while still recording, this row reads
+            // as gray — not the accent/purple selection fill it used to
+            // get just from being the active meeting. Accent is reserved
+            // for a meeting that's actually ready (see `MeetingListItemView`,
+            // once this row hands off to it at `.completed`). Selection
+            // still shows, just as a border, so it doesn't fight the
+            // gray-while-recording read.
             RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
-                .fill(isSelected ? MuesliTheme.selectionFill : Color.clear)
+                .fill(MuesliTheme.surfacePrimary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                        .strokeBorder(isSelected ? MuesliTheme.accent.opacity(0.35) : Color.clear, lineWidth: 1)
+                )
                 .padding(.vertical, 3)
         )
         .contentShape(Rectangle())
