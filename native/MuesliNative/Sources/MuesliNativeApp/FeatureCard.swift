@@ -49,7 +49,15 @@ struct FeatureCard: View {
 
     var body: some View {
         Group {
-            if let singleAction {
+            // A Toggle nested inside this card's own tap-to-navigate Button
+            // never received its own clicks on macOS — the outer Button
+            // swallowed the tap, so flipping the switch silently navigated
+            // to Settings instead (confirmed live: "умная чистка —
+            // переход в настройки"). Whole-card-as-button and an inner
+            // Toggle can't coexist; when there's a toggle, the action (if
+            // any) renders as its own small sibling button instead — see
+            // `cardBody` below.
+            if let singleAction, toggle == nil {
                 Button(action: singleAction.action) { cardBody }
                     .buttonStyle(.plain)
             } else {
@@ -95,7 +103,11 @@ struct FeatureCard: View {
 
             Spacer(minLength: 0)
 
-            if actions.count > 1 {
+            // When there's a toggle, even a single action renders as its
+            // own visible button (a sibling of the Toggle) instead of
+            // being folded into a whole-card Button — see the note in
+            // `body` above.
+            if !actions.isEmpty && (actions.count > 1 || toggle != nil) {
                 HStack(spacing: 8) {
                     ForEach(actions) { action in
                         actionButton(action)

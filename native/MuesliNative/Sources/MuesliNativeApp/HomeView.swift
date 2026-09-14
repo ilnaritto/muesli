@@ -968,47 +968,49 @@ struct HomeView: View {
     /// Only the two hero cards (a real on/off permission) get a status
     /// badge; the rest are single-tap navigation cards to their Settings
     /// section, mirroring the mockup's chevron affordance.
+    // Neither hero card wraps its whole body in a navigate-on-tap Button
+    // anymore — that Button used to sit AROUND the PermissionBadge, and on
+    // macOS the outer Button silently ate every tap meant for the badge
+    // (confirmed live), so "Выдать доступ" did nothing. The badge is now
+    // the card's only Button; `SettingsLinkButton` is a separate, sibling
+    // control for "go configure this," never nested inside anything else.
     private var dictationHeroCard: some View {
-        Button {
-            openSettings(.dictation)
-        } label: {
-            FeatureCellContainer(isHero: true) {
-                FeatureCellHeader(icon: "mic.fill", title: tr("Voice dictation", "Диктовка голосом"), titleSize: 15) {
-                    PermissionBadge(granted: permissionStatus.dictationGranted) { requestDictationPermissions() }
-                }
-                HStack {
-                    Spacer(minLength: 0)
-                    HotkeyGlyph(symbol: "⌥", badgeIcon: "mic.fill")
-                    Spacer(minLength: 0)
-                }
-                .padding(.vertical, 4)
-                Text(tr("Hold Right Option and speak — the text lands right at your cursor.", "Зажми Right Option и говори — текст сам встаёт у курсора."))
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundStyle(MuesliTheme.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity)
+        FeatureCellContainer(isHero: true) {
+            FeatureCellHeader(icon: "mic.fill", title: tr("Voice dictation", "Диктовка голосом"), titleSize: 15) {
+                PermissionBadge(granted: permissionStatus.dictationGranted) { requestDictationPermissions() }
+            }
+            HStack {
+                Spacer(minLength: 0)
+                HotkeyGlyph(symbol: "⌥", badgeIcon: "mic.fill")
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 4)
+            Text(tr("Hold Right Option and speak — the text lands right at your cursor.", "Зажми Right Option и говори — текст сам встаёт у курсора."))
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(MuesliTheme.textSecondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+            SettingsLinkButton(label: tr("Set up dictation", "Настроить диктовку")) {
+                openSettings(.dictation)
             }
         }
-        .buttonStyle(.plain)
     }
 
     private var meetingsHeroCard: some View {
-        Button {
-            openSettings(.meetings)
-        } label: {
-            FeatureCellContainer(isHero: true) {
-                FeatureCellHeader(icon: "person.2.fill", title: tr("Meetings, summarized", "Встречи в готовых заметках"), titleSize: 15) {
-                    PermissionBadge(granted: permissionStatus.meetingsGranted) { requestMeetingsPermissions() }
-                }
-                Text(tr("A meeting → a ready recap", "Встреча → готовая сводка"))
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(MuesliTheme.textPrimary)
-                Text(tr("Microphone and screen audio. You just talk — the note builds itself, in your template.", "Микрофон и звук с экрана. Ты просто разговариваешь — заметка соберётся сама, по шаблону."))
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundStyle(MuesliTheme.textSecondary)
+        FeatureCellContainer(isHero: true) {
+            FeatureCellHeader(icon: "person.2.fill", title: tr("Meetings, summarized", "Встречи в готовых заметках"), titleSize: 15) {
+                PermissionBadge(granted: permissionStatus.meetingsGranted) { requestMeetingsPermissions() }
+            }
+            Text(tr("A meeting → a ready recap", "Встреча → готовая сводка"))
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(MuesliTheme.textPrimary)
+            Text(tr("Microphone and screen audio. You just talk — the note builds itself, in your template.", "Микрофон и звук с экрана. Ты просто разговариваешь — заметка соберётся сама, по шаблону."))
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(MuesliTheme.textSecondary)
+            SettingsLinkButton(label: tr("Meeting settings", "Настройки встреч")) {
+                openSettings(.meetings)
             }
         }
-        .buttonStyle(.plain)
     }
 
     private var connectModelCard: some View {
@@ -1337,15 +1339,22 @@ struct HomeView: View {
     }
 
     private var dictionaryCard: FeatureCard {
-        let entries = appState.config.customWords.prefix(2)
-        let subtitle: String
-        if entries.isEmpty {
-            subtitle = tr("Custom words for names and terms transcription often gets wrong.", "Свои слова для имён и терминов, которые транскрипция часто путает.")
-        } else {
-            subtitle = entries
-                .map { "«\($0.word)» → \($0.replacement ?? $0.word)" }
-                .joined(separator: " · ")
-        }
+        // `replacement` is optional — a word entered with no replacement
+        // just boosts recognition of that exact spelling, it doesn't
+        // correct anything. Showing "«зум» → зум" for one of those read as
+        // a broken/pointless example ("странный пример"); only entries
+        // with a REAL, different replacement make a legible example.
+        let examples = appState.config.customWords
+            .compactMap { word -> String? in
+                guard let replacement = word.replacement,
+                      !replacement.isEmpty,
+                      replacement != word.word else { return nil }
+                return "«\(word.word)» → \(replacement)"
+            }
+            .prefix(2)
+        let subtitle = examples.isEmpty
+            ? tr("Custom words for names and terms transcription often gets wrong.", "Свои слова для имён и терминов, которые транскрипция часто путает.")
+            : examples.joined(separator: " · ")
         return FeatureCard(
             accent: MuesliTheme.accent,
             icon: "character.book.closed.fill",
@@ -1723,6 +1732,28 @@ struct StatusPill: View {
             .padding(.vertical, 4)
             .background(Capsule().fill(MuesliTheme.textPrimary.opacity(0.06)))
             .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+    }
+}
+
+/// A small text-link-style button for "go configure this in Settings" —
+/// always a SIBLING of a card's other interactive elements (a badge, a
+/// toggle), never wrapping them, so it can't swallow their taps the way a
+/// whole-card Button did.
+private struct SettingsLinkButton: View {
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Text(label)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .font(.system(size: 11.5, weight: .semibold))
+            .foregroundStyle(MuesliTheme.accent)
+        }
+        .buttonStyle(.plain)
     }
 }
 

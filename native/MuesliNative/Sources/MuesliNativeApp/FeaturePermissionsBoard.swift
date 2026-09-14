@@ -266,12 +266,20 @@ struct FeaturePermissionsBoard: View {
     /// System Settings pane (mirrors the main cards' whole-card-tappable
     /// pattern); the badge is its own nested tap target for the grant
     /// action specifically.
+    /// No whole-card Button anymore — it used to wrap the badge and, on
+    /// macOS, silently swallowed every tap meant for it (confirmed live:
+    /// "нажимаю на — выдать доступ и ничего не происходит" — the tap was
+    /// actually firing `openPrivacyPane` instead of the real request API,
+    /// and for panes whose URL scheme doesn't resolve on this macOS
+    /// version that's visibly nothing). The "open in System Settings"
+    /// icon and the grant badge are now two separate sibling buttons in
+    /// the same row — useful together, since a permission macOS already
+    /// silently denied needs the pane, not another request call.
     private func permissionCard(_ item: Item) -> some View {
-        Button {
-            openPrivacyPane(item.pane)
-        } label: {
-            FeatureCellContainer {
-                FeatureCellHeader(icon: item.icon, title: item.title) {
+        FeatureCellContainer {
+            FeatureCellHeader(icon: item.icon, title: item.title) {
+                HStack(spacing: 6) {
+                    openPaneButton(item.pane)
                     switch item.kind {
                     case .grantable(let granted, let action):
                         PermissionBadge(granted: granted, action: action)
@@ -279,14 +287,25 @@ struct FeaturePermissionsBoard: View {
                         StatusPill(text: note)
                     }
                 }
-                Text(item.unlocks)
-                    .font(.system(size: 11.5, weight: .regular))
-                    .foregroundStyle(MuesliTheme.textSecondary)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
             }
+            Text(item.unlocks)
+                .font(.system(size: 11.5, weight: .regular))
+                .foregroundStyle(MuesliTheme.textSecondary)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func openPaneButton(_ pane: String) -> some View {
+        Button {
+            openPrivacyPane(pane)
+        } label: {
+            Image(systemName: "arrow.up.forward.square")
+                .font(.system(size: 11))
+                .foregroundStyle(MuesliTheme.textTertiary)
         }
         .buttonStyle(.plain)
+        .help(tr("Open in System Settings", "Открыть в Системных настройках"))
     }
 
     private func openPrivacyPane(_ pane: String) {
