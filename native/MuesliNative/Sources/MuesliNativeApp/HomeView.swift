@@ -1650,10 +1650,6 @@ private struct FeatureBanner<Content: View>: View {
                         )
                     )
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: Self.cornerRadius)
-                    .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
-            )
     }
 }
 
