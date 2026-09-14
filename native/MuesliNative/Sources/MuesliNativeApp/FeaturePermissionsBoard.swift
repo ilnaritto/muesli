@@ -273,25 +273,29 @@ struct FeaturePermissionsBoard: View {
     /// and for panes whose URL scheme doesn't resolve on this macOS
     /// version that's visibly nothing).
     ///
-    /// Once granted, there's nothing left to "grant" — the main pill's own
-    /// tap opens the matching System Settings pane instead (per live
-    /// feedback: a separate small arrow icon next to an already-green
-    /// "Разрешена" pill read as two buttons for one obvious action). The
-    /// small arrow icon only shows up while NOT yet granted, as the manual
-    /// fallback for a permission macOS has already silently denied, where
-    /// calling the request API again does nothing.
+    /// One button, not two. Screen Recording (and a few others on modern
+    /// macOS) often show NO in-app system dialog at all when requested —
+    /// the OS increasingly requires System Settings directly, so a request
+    /// call alone can look like it did nothing even the very first time.
+    /// Rather than ask the user to notice a separate small arrow icon,
+    /// "Выдать доступ" now fires the real request API AND opens the
+    /// matching System Settings pane together — whichever one actually
+    /// does something, the user ends up looking at the right place either
+    /// way. Once granted, the same pill's tap just opens the pane (nothing
+    /// left to request). The small arrow icon is now only for
+    /// informational items (Camera/Automation), which have no grant
+    /// button of their own.
     private func permissionCard(_ item: Item) -> some View {
         FeatureCellContainer {
             FeatureCellHeader(icon: item.icon, title: item.title) {
                 HStack(spacing: 6) {
                     switch item.kind {
                     case .grantable(let granted, let action):
-                        if !granted {
-                            openPaneButton(item.pane)
-                        }
                         PermissionBadge(
                             granted: granted,
-                            action: granted ? { openPrivacyPane(item.pane) } : action
+                            action: granted
+                                ? { openPrivacyPane(item.pane) }
+                                : { action(); openPrivacyPane(item.pane) }
                         )
                     case .informational(let note):
                         openPaneButton(item.pane)
