@@ -99,6 +99,12 @@ struct ModelsView: View {
                     modelsSidebar
                 }
 
+                // Matches `MeetingTemplatesManagerView`'s editor-pane wrapper
+                // exactly: an explicit `maxHeight: .infinity` here, not just
+                // on the parent HStack. Without it the ScrollView reported
+                // its content's own (shorter) height instead of filling the
+                // space offered, leaving it visibly shorter than
+                // `SecondaryColumn`'s sidebar next to it.
                 ScrollView {
                     Group {
                         switch appState.modelsTab {
@@ -115,6 +121,7 @@ struct ModelsView: View {
                     .padding(MuesliTheme.spacing24)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .frame(maxHeight: .infinity, alignment: .top)
                 .padding(.vertical, 8)
             }
             .padding(.horizontal, MuesliTheme.spacing32)
