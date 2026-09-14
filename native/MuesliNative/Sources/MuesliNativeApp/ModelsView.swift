@@ -82,18 +82,27 @@ struct ModelsView: View {
                         title: tr("Text & cleanup", "Текстовые и очистка"),
                         icon: "text.bubble",
                         color: Color(hex: 0xAF52DE),
-                        subtitle: tr("One connected model can handle both — turn each on for whatever it should do.", "Одна подключённая модель может делать и то, и другое — включи то, для чего она нужна."),
-                        trailingButtonLabel: tr("Add model", "Добавить модель"),
-                        trailingButtonAction: { showAddModelSheet = true }
+                        subtitle: tr("One connected model can handle both — turn each on for whatever it should do.", "Одна подключённая модель может делать и то, и другое — включи то, для чего она нужна.")
                     )
                     textAndCleanupContent
                         .id(ModelsTab.text)
 
-                    modelsSectionHeader(
-                        title: tr("Add more", "Добавить ещё"),
-                        icon: "square.grid.2x2",
-                        color: Color(hex: 0x00C7BE)
-                    )
+                    // Per direct feedback: the prominent "connect a cloud
+                    // model" action moved up here (right at the top of the
+                    // section it actually adds to) — the bottom section's
+                    // own big pill button was a redundant second copy of
+                    // the same action. Tapping that section's HEADER now
+                    // opens the same sheet instead.
+                    Button {
+                        showAddModelSheet = true
+                    } label: {
+                        modelsSectionHeader(
+                            title: tr("Add more", "Добавить ещё"),
+                            icon: "square.grid.2x2",
+                            color: Color(hex: 0x00C7BE)
+                        )
+                    }
+                    .buttonStyle(.plain)
                     addMoreSectionContent
                         .id(ModelsTab.catalog)
                 }
@@ -183,9 +192,7 @@ struct ModelsView: View {
         title: String,
         icon: String,
         color: Color,
-        subtitle: String? = nil,
-        trailingButtonLabel: String? = nil,
-        trailingButtonAction: (() -> Void)? = nil
+        subtitle: String? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 10) {
@@ -201,24 +208,6 @@ struct ModelsView: View {
                 Text(title)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(MuesliTheme.textPrimary)
-
-                // Per direct feedback: adding a model was reachable only
-                // from the "Добавить ещё" section at the very bottom of
-                // the page — this puts the same action right at the top
-                // of the section it actually affects too, no scrolling
-                // required.
-                if let trailingButtonLabel, let trailingButtonAction {
-                    Spacer(minLength: 8)
-                    Button(action: trailingButtonAction) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "plus.circle.fill")
-                            Text(trailingButtonLabel)
-                        }
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(MuesliTheme.accent)
-                    }
-                    .buttonStyle(.plain)
-                }
             }
             if let subtitle {
                 Text(subtitle)
@@ -269,23 +258,6 @@ struct ModelsView: View {
 
     @ViewBuilder
     private var addMoreSectionContent: some View {
-        Button {
-            showAddModelSheet = true
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "plus.circle.fill")
-                Text(tr("Connect a cloud model", "Подключить облачную модель"))
-            }
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, MuesliTheme.spacing16)
-            .padding(.vertical, 10)
-            .background(MuesliTheme.accent)
-            .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .padding(.bottom, MuesliTheme.spacing4)
-
         if !BackendOption.comingSoon.isEmpty {
             VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
                 Text(tr("COMING SOON", "СКОРО"))
@@ -323,6 +295,23 @@ struct ModelsView: View {
 
     @ViewBuilder
     private var textAndCleanupContent: some View {
+        Button {
+            showAddModelSheet = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "plus.circle.fill")
+                Text(tr("Connect a cloud model", "Подключить облачную модель"))
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, MuesliTheme.spacing16)
+            .padding(.vertical, 10)
+            .background(MuesliTheme.accent)
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .padding(.bottom, MuesliTheme.spacing4)
+
         VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
             let models = combinedTextAndCleanupModels
 
@@ -349,17 +338,6 @@ struct ModelsView: View {
             Text(tr("Connect ChatGPT, an API key, or your own endpoint to generate meeting summaries and clean up dictation.", "Подключите ChatGPT, API-ключ или свой эндпоинт, чтобы генерировать сводки встреч и очищать диктовку."))
                 .font(MuesliTheme.callout())
                 .foregroundStyle(MuesliTheme.textSecondary)
-            Button(tr("Add model…", "Добавить модель…")) {
-                showAddModelSheet = true
-            }
-            .buttonStyle(.plain)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, MuesliTheme.spacing12)
-            .padding(.vertical, 6)
-            .background(MuesliTheme.accent)
-            .clipShape(Capsule())
-            .padding(.top, 2)
         }
         .padding(MuesliTheme.spacing16)
         .background(MuesliTheme.backgroundRaised)
@@ -1059,17 +1037,31 @@ struct ModelsView: View {
     }
 
     @ViewBuilder
+    // Per direct feedback ("все модели должны быть в одинаковых
+    // плашках") — this used to render a bare 24×24 logo image with no
+    // background at all, while `combinedConfiguredModelCard`'s icon was a
+    // 36×36 SF Symbol in an accent-tinted circle. Same circular tile size
+    // everywhere now, regardless of whether a card's icon is a brand PNG
+    // or a system symbol — and a generic fallback icon instead of
+    // rendering nothing when a card has no logo asset.
     private func brandLogo(_ name: String?) -> some View {
-        if let name,
-           let url = Bundle.main.url(forResource: name, withExtension: "png"),
-           let nsImage = NSImage(contentsOf: url) {
-            Image(nsImage: nsImage)
-                .resizable()
-                .scaledToFit()
-                .frame(width: 24, height: 24)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-                .padding(.top, 2)
+        ZStack {
+            Circle().fill(MuesliTheme.accentSubtle)
+            if let name,
+               let url = Bundle.main.url(forResource: name, withExtension: "png"),
+               let nsImage = NSImage(contentsOf: url) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 18, height: 18)
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+            } else {
+                Image(systemName: "waveform")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(MuesliTheme.accent)
+            }
         }
+        .frame(width: 36, height: 36)
     }
 
     private func logoForBackend(_ option: BackendOption) -> String? {
