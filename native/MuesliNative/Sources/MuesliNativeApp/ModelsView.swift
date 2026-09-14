@@ -384,14 +384,19 @@ struct ModelsView: View {
         let isDefaultText = model.id == controller.defaultConfiguredModelID(role: .textGeneration)
         let isDefaultCleanup = model.id == controller.activeCleanupModelID()
 
-        return VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-            HStack(alignment: .center, spacing: MuesliTheme.spacing12) {
-                Image(systemName: model.provider == .chatGPTOAuth ? "sparkles" : (model.provider.isLocal ? "cpu" : "icloud"))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(MuesliTheme.accent)
-                    .frame(width: 26, height: 26)
-                    .background(Circle().fill(MuesliTheme.accentSubtle))
+        // Per direct feedback ("отключить и мусорка должны быть по
+        // середине строки справа, а то они сейчас ниже") — the whole row
+        // is one HStack now instead of a two-line VStack, so the trailing
+        // action buttons sit vertically centered against the (taller)
+        // leading name+chips column instead of trailing the second line.
+        return HStack(alignment: .center, spacing: MuesliTheme.spacing12) {
+            Image(systemName: model.provider == .chatGPTOAuth ? "sparkles" : (model.provider.isLocal ? "cpu" : "icloud"))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(MuesliTheme.accent)
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(MuesliTheme.accentSubtle))
 
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     Text(model.displayName)
                         .font(.system(size: 13, weight: .semibold))
@@ -399,59 +404,54 @@ struct ModelsView: View {
                     Text(model.provider.isLocal ? tr("Local", "Локальная") : tr("Cloud", "Облачная"))
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(MuesliTheme.textTertiary)
+                    Text(model.modelID.isEmpty ? model.provider.title : model.modelID)
+                        .font(MuesliTheme.caption())
+                        .foregroundStyle(MuesliTheme.textSecondary)
+                        .lineLimit(1)
+                    if !model.isEnabled {
+                        Text(tr("Disabled", "Отключена"))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(MuesliTheme.textTertiary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(MuesliTheme.surfacePrimary)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                    }
                 }
 
-                Text(model.modelID.isEmpty ? model.provider.title : model.modelID)
-                    .font(MuesliTheme.caption())
-                    .foregroundStyle(MuesliTheme.textSecondary)
-                    .lineLimit(1)
-
-                Spacer()
-
-                if !model.isEnabled {
-                    Text(tr("Disabled", "Отключена"))
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(MuesliTheme.surfacePrimary)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                HStack(spacing: MuesliTheme.spacing8) {
+                    if model.roles.contains(.textGeneration) {
+                        roleChip(tr("Meeting summaries", "Сводки встреч"), isOn: isDefaultText) {
+                            controller.setDefaultConfiguredModel(id: model.id, role: .textGeneration)
+                        }
+                    }
+                    if model.roles.contains(.cleanup) {
+                        roleChip(tr("Dictation cleanup", "Очистка диктовки"), isOn: isDefaultCleanup) {
+                            controller.selectCleanupModel(id: model.id)
+                        }
+                    }
                 }
             }
 
-            HStack(spacing: MuesliTheme.spacing8) {
-                if model.roles.contains(.textGeneration) {
-                    roleChip(tr("Meeting summaries", "Сводки встреч"), isOn: isDefaultText) {
-                        controller.setDefaultConfiguredModel(id: model.id, role: .textGeneration)
-                    }
-                }
-                if model.roles.contains(.cleanup) {
-                    roleChip(tr("Dictation cleanup", "Очистка диктовки"), isOn: isDefaultCleanup) {
-                        controller.selectCleanupModel(id: model.id)
-                    }
-                }
+            Spacer()
 
-                Spacer()
-
-                if model.provider != .bundledLocal, model.provider != .localGGUF {
-                    modelsTabActionButton(model.isEnabled ? tr("Disable", "Отключить") : tr("Enable", "Включить")) {
-                        controller.setConfiguredModelEnabled(id: model.id, enabled: !model.isEnabled)
-                    }
-                    Button {
-                        controller.removeConfiguredModel(id: model.id)
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(MuesliTheme.textSecondary)
-                    .padding(.horizontal, MuesliTheme.spacing12)
-                    .padding(.vertical, 4)
-                    .background(MuesliTheme.surfacePrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+            if model.provider != .bundledLocal, model.provider != .localGGUF {
+                modelsTabActionButton(model.isEnabled ? tr("Disable", "Отключить") : tr("Enable", "Включить")) {
+                    controller.setConfiguredModelEnabled(id: model.id, enabled: !model.isEnabled)
                 }
+                Button {
+                    controller.removeConfiguredModel(id: model.id)
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(MuesliTheme.textSecondary)
+                .padding(.horizontal, MuesliTheme.spacing12)
+                .padding(.vertical, 4)
+                .background(MuesliTheme.surfacePrimary)
+                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
             }
-            .padding(.leading, 38)
         }
         .padding(.horizontal, MuesliTheme.spacing12)
         .padding(.vertical, 7)
