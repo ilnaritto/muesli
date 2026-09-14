@@ -57,6 +57,7 @@ struct HomeView: View {
     @State private var insightsHeaderMeasuredHeight: CGFloat?
     @State private var showClearInsightsHistoryConfirmation = false
     @State private var permissionStatus = FeaturePermissionStatus()
+    @State private var postProcessorRedirectReason: String?
     @State private var showConnectModelSheet = false
 
     var body: some View {
@@ -956,6 +957,17 @@ struct HomeView: View {
                 .frame(width: proxy.size.width, alignment: .leading)
             }
         }
+        .alert(
+            tr("Cleanup model needed", "Нужна модель очистки"),
+            isPresented: Binding(
+                get: { postProcessorRedirectReason != nil },
+                set: { if !$0 { postProcessorRedirectReason = nil } }
+            )
+        ) {
+            Button(tr("OK", "ОК"), role: .cancel) { postProcessorRedirectReason = nil }
+        } message: {
+            Text(postProcessorRedirectReason ?? "")
+        }
     }
 
     // MARK: - Features tour (task 5)
@@ -977,7 +989,14 @@ struct HomeView: View {
     private var dictationHeroCard: some View {
         FeatureCellContainer(isHero: true) {
             FeatureCellHeader(icon: "mic.fill", title: tr("Voice dictation", "Диктовка голосом"), titleSize: 15) {
-                PermissionBadge(granted: permissionStatus.dictationGranted) { requestDictationPermissions() }
+                PermissionBadge(granted: permissionStatus.dictationGranted) {
+                    if permissionStatus.dictationGranted {
+                        openPrivacyPane(dictationMissingPane())
+                    } else {
+                        requestDictationPermissions()
+                        openPrivacyPane(dictationMissingPane())
+                    }
+                }
             }
             HStack {
                 Spacer(minLength: 0)
@@ -999,7 +1018,14 @@ struct HomeView: View {
     private var meetingsHeroCard: some View {
         FeatureCellContainer(isHero: true) {
             FeatureCellHeader(icon: "person.2.fill", title: tr("Meetings, summarized", "Встречи в готовых заметках"), titleSize: 15) {
-                PermissionBadge(granted: permissionStatus.meetingsGranted) { requestMeetingsPermissions() }
+                PermissionBadge(granted: permissionStatus.meetingsGranted) {
+                    if permissionStatus.meetingsGranted {
+                        openPrivacyPane(meetingsMissingPane())
+                    } else {
+                        requestMeetingsPermissions()
+                        openPrivacyPane(meetingsMissingPane())
+                    }
+                }
             }
             Text(tr("A meeting → a ready recap", "Встреча → готовая сводка"))
                 .font(.system(size: 15, weight: .bold))
@@ -1268,6 +1294,29 @@ struct HomeView: View {
         CGRequestScreenCaptureAccess()
     }
 
+    // The hero badges bundle several real permissions into one granted/not
+    // status — tapping still needs to land on ONE specific System Settings
+    // pane (per the same "one button" rule as the individual permission
+    // tiles). Point at whichever required permission is still missing;
+    // once everything's granted, falls through to the last one checked —
+    // a reasonable default landing spot, not a wrong answer.
+    private func dictationMissingPane() -> String {
+        if !permissionStatus.microphone { return "Privacy_Microphone" }
+        if !permissionStatus.accessibility { return "Privacy_Accessibility" }
+        return "Privacy_ListenEvent"
+    }
+
+    private func meetingsMissingPane() -> String {
+        if !permissionStatus.microphone { return "Privacy_Microphone" }
+        return "Privacy_ScreenCapture"
+    }
+
+    private func openPrivacyPane(_ pane: String) {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     private func openSettings(_ section: SettingsSection, modelsTab: ModelsTab? = nil) {
         if let modelsTab {
             appState.modelsTab = modelsTab
@@ -1296,8 +1345,17 @@ struct HomeView: View {
                 }
             ],
             compact: true,
+            // Not just a UI hit-testing question — `setPostProcessorEnabled`
+            // genuinely REFUSES to turn this on and redirects to Models
+            // when no cleanup model is downloaded yet, returning a message
+            // explaining why. The toggle used to silently discard that
+            // message, so the redirect looked unexplained ("не просто его
+            // включает а ведёт в настройки"). Now it's shown as an alert,
+            // same as `SettingsView`'s equivalent toggle already does.
             toggle: FeatureToggle(isOn: appState.config.enablePostProcessor) {
-                controller.setPostProcessorEnabled(!appState.config.enablePostProcessor)
+                if let reason = controller.setPostProcessorEnabled(!appState.config.enablePostProcessor) {
+                    postProcessorRedirectReason = reason
+                }
             }
         )
     }
@@ -1721,17 +1779,25 @@ struct PermissionBadge: View {
 /// permission items (Camera, Automation) have no request action, so they
 /// get a plain label in the same visual slot `PermissionBadge` occupies
 /// for grantable ones, instead of a button.
+/// Tappable, like `PermissionBadge` — same "one button, not a label plus a
+/// separate arrow icon" rule applies to informational items (Camera,
+/// Automation): there's nothing to grant, but the pill itself still jumps
+/// to the matching System Settings pane on tap.
 struct StatusPill: View {
     let text: String
+    let action: () -> Void
 
     var body: some View {
-        Text(text)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(MuesliTheme.textTertiary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(MuesliTheme.textPrimary.opacity(0.06)))
-            .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+        Button(action: action) {
+            Text(text)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(MuesliTheme.textTertiary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(MuesliTheme.textPrimary.opacity(0.06)))
+                .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 }
 

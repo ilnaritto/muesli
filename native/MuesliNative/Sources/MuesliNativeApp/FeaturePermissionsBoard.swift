@@ -282,25 +282,22 @@ struct FeaturePermissionsBoard: View {
     /// matching System Settings pane together — whichever one actually
     /// does something, the user ends up looking at the right place either
     /// way. Once granted, the same pill's tap just opens the pane (nothing
-    /// left to request). The small arrow icon is now only for
-    /// informational items (Camera/Automation), which have no grant
-    /// button of their own.
+    /// left to request). Informational items (Camera/Automation) have no
+    /// grant action at all, so their pill's only job is opening the pane —
+    /// same one-tappable-thing rule, no separate arrow icon needed.
     private func permissionCard(_ item: Item) -> some View {
         FeatureCellContainer {
             FeatureCellHeader(icon: item.icon, title: item.title) {
-                HStack(spacing: 6) {
-                    switch item.kind {
-                    case .grantable(let granted, let action):
-                        PermissionBadge(
-                            granted: granted,
-                            action: granted
-                                ? { openPrivacyPane(item.pane) }
-                                : { action(); openPrivacyPane(item.pane) }
-                        )
-                    case .informational(let note):
-                        openPaneButton(item.pane)
-                        StatusPill(text: note)
-                    }
+                switch item.kind {
+                case .grantable(let granted, let action):
+                    PermissionBadge(
+                        granted: granted,
+                        action: granted
+                            ? { openPrivacyPane(item.pane) }
+                            : { action(); openPrivacyPane(item.pane) }
+                    )
+                case .informational(let note):
+                    StatusPill(text: note) { openPrivacyPane(item.pane) }
                 }
             }
             Text(item.unlocks)
@@ -311,17 +308,6 @@ struct FeaturePermissionsBoard: View {
         }
     }
 
-    private func openPaneButton(_ pane: String) -> some View {
-        Button {
-            openPrivacyPane(pane)
-        } label: {
-            Image(systemName: "arrow.up.forward.square")
-                .font(.system(size: 11))
-                .foregroundStyle(MuesliTheme.textTertiary)
-        }
-        .buttonStyle(.plain)
-        .help(tr("Open in System Settings", "Открыть в Системных настройках"))
-    }
 
     private func openPrivacyPane(_ pane: String) {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
