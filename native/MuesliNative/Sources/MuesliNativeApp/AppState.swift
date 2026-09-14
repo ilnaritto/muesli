@@ -224,6 +224,11 @@ final class AppState {
     /// from `DashboardRootView`, which doesn't unmount across tab
     /// switches, so the explanation survives the redirect.
     var postProcessorRedirectReason: String?
+    /// Set together with navigating to `.dictionary` from the Функции
+    /// page's "Add a word" button — `DictionaryView` consumes it on
+    /// appear to open straight into its add-word form instead of just
+    /// landing on the plain list.
+    var dictionaryShouldStartAdding = false
     var modelPreparationTitle: String?
     var modelPreparationDetail: String?
     var modelPreparationProgress: Double?

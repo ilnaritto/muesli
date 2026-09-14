@@ -34,6 +34,13 @@ struct DictionaryView: View {
         }
         .onAppear {
             controller.reconcilePendingDictionaryCorrectionAccessibilityEnable()
+            if appState.dictionaryShouldStartAdding {
+                appState.dictionaryShouldStartAdding = false
+                isAdding = true
+                newWord = ""
+                newReplacement = ""
+                newThreshold = 0.85
+            }
         }
         .alert(tr("Enable Accessibility?", "Включить универсальный доступ?"), isPresented: $isShowingAccessibilityPrompt) {
             Button(tr("Cancel", "Отмена"), role: .cancel) {

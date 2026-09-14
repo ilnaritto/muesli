@@ -1092,7 +1092,7 @@ struct HomeView: View {
                 FeatureCellHeader(icon: "square.and.arrow.down.fill", title: tr("On-device", "На устройстве")) {
                     FeatureCellChevron()
                 }
-                Text(tr("Recognize speech as text — offline. Don't write summaries (that's the model above).", "Распознают речь в текст — офлайн. Не пишут сводку (это модель выше)."))
+                Text(tr("Recognize speech as text — offline.", "Распознают речь в текст — офлайн."))
                     .font(.system(size: 11.5, weight: .regular))
                     .foregroundStyle(MuesliTheme.textSecondary)
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
@@ -1153,7 +1153,7 @@ struct HomeView: View {
                     FeatureCellChevron()
                 }
                 VStack(alignment: .leading, spacing: 6) {
-                    ChatBubble(text: tr("When's the next call?", "Когда следующая созвонка?"), isMe: false)
+                    ChatBubble(text: tr("When's the next call?", "Когда следующий созвон?"), isMe: false)
                     ChatBubble(text: tr("Thursday at 3pm.", "В четверг в 15:00."), isMe: true)
                 }
             }
@@ -1407,8 +1407,9 @@ struct HomeView: View {
             title: tr("Dictionary", "Словарь"),
             subtitle: subtitle,
             actions: [
-                FeatureAction(label: tr("Open", "Открыть"), isPrimary: true) {
+                FeatureAction(label: tr("Add a word", "Добавить слово"), isPrimary: true) {
                     openSettings(.dictionary)
+                    appState.dictionaryShouldStartAdding = true
                 }
             ],
             compact: true
