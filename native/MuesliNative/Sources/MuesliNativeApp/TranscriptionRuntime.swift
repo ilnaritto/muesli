@@ -377,13 +377,26 @@ actor TranscriptionCoordinator {
         indicASRLanguage: IndicASRLanguage = IndicASRLanguage.defaultLanguage
     ) async throws -> SpeechTranscriptionResult {
         // Meeting chunks intentionally skip Qwen/custom-word post-processing for reconciliation.
-        // Run VAD to skip silent chunks (prevents hallucinations)
+        // Run VAD to skip silent/mostly-silent chunks (prevents hallucinations).
+        //
+        // The old gate was `vadResults.contains { $0.probability > 0.5 }` — ANY
+        // single ~30ms window above threshold sent the WHOLE 3-5s chunk to the
+        // ASR model. A brief noise blip (a cough, a mic bump, the system-audio
+        // noise floor) was enough to admit a chunk that's otherwise silence —
+        // and ASR models are well-known to hallucinate plausible-sounding
+        // filler ("Mm-hmm.", "Ye ah. Well, yeah, yeah.", stray words in the
+        // wrong language) when fed audio with little or no real speech.
+        // Confirmed live in a real meeting transcript. Requiring a real
+        // FRACTION of the chunk to show active voice (not just one window)
+        // filters that out while still admitting real, if soft, speech.
         if let vadManager {
             do {
                 let vadResults = try await vadManager.process(url)
-                let hasSpeech = vadResults.contains { $0.probability > 0.5 }
-                if !hasSpeech {
-                    fputs("[muesli-native] VAD: chunk is silent, skipping transcription\n", stderr)
+                let activeFraction = vadResults.isEmpty
+                    ? 0
+                    : Double(vadResults.filter { $0.isVoiceActive }.count) / Double(vadResults.count)
+                if activeFraction < 0.15 {
+                    fputs("[muesli-native] VAD: chunk is mostly silent (active fraction \(String(format: "%.2f", activeFraction))), skipping transcription\n", stderr)
                     return SpeechTranscriptionResult(text: "", segments: [])
                 }
             } catch {
@@ -661,10 +674,26 @@ actor TranscriptionCoordinator {
 
     // MARK: - FluidAudio (Parakeet on ANE)
 
+    // FluidAudio's own docs put `confidence` on a 0.1 (empty transcription) to
+    // 1.0 (perfect) scale — the average of the TDT decoder's per-token softmax
+    // probabilities. This app used to read `.text`/`.tokenTimings`/`.duration`
+    // off `ASRResult` and silently discard `.confidence` entirely, so a
+    // near-empty/uncertain decode (the model's own signal that it likely
+    // guessed rather than heard real speech) was shown to the user exactly
+    // like a confident one. Confirmed live: garbage text in a meeting
+    // transcript ("Mm-hmm.", a stray Spanish word) is the classic symptom of
+    // exactly this — low-confidence hallucinated filler passed straight
+    // through. Below this cutoff, treat it as noise rather than real speech.
+    private static let minFluidAudioConfidence: Float = 0.35
+
     private func transcribeWithFluidAudio(url: URL) async throws -> SpeechTranscriptionResult {
         fputs("[muesli-native] transcribing with FluidAudio: \(url.lastPathComponent)\n", stderr)
         let result = try await fluidTranscriber.transcribe(wavURL: url)
-        fputs("[muesli-native] FluidAudio result: \(result.text.prefix(80)) (took \(String(format: "%.3f", result.processingTime))s)\n", stderr)
+        fputs("[muesli-native] FluidAudio result: \(result.text.prefix(80)) (confidence \(String(format: "%.2f", result.confidence)), took \(String(format: "%.3f", result.processingTime))s)\n", stderr)
+        if result.confidence < Self.minFluidAudioConfidence {
+            fputs("[muesli-native] FluidAudio: confidence below \(Self.minFluidAudioConfidence), discarding likely-hallucinated result\n", stderr)
+            return SpeechTranscriptionResult(text: "", segments: [])
+        }
         let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
         let segments = (result.tokenTimings ?? []).map { timing in
             SpeechSegment(start: timing.startTime, end: timing.endTime, text: timing.token)
