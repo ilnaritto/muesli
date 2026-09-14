@@ -941,7 +941,8 @@ struct HomeView: View {
 
                         FeaturePermissionsBoard(
                             useCoreAudioTap: appState.config.useCoreAudioTap,
-                            status: permissionStatus
+                            status: permissionStatus,
+                            width: boardWidth
                         )
                     }
                     .onAppear {
@@ -1684,22 +1685,24 @@ struct PermissionBadge: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 5) {
-                if granted {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 8, weight: .bold))
-                }
+                Image(systemName: granted ? "checkmark" : "arrow.forward")
+                    .font(.system(size: 9, weight: .bold))
                 Text(granted ? tr("Granted", "Разрешена") : tr("Grant access", "Выдать доступ"))
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 11, weight: .bold))
             }
-            .foregroundStyle(granted ? MuesliTheme.success : MuesliTheme.textSecondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .foregroundStyle(granted ? MuesliTheme.success : .white)
+            .padding(.horizontal, granted ? 8 : 11)
+            .padding(.vertical, granted ? 4 : 6)
             .background(
-                Capsule().fill(granted ? MuesliTheme.success.opacity(0.12) : MuesliTheme.textPrimary.opacity(0.06))
+                Capsule().fill(granted ? MuesliTheme.success.opacity(0.12) : MuesliTheme.accent)
             )
             .overlay(
-                Capsule().strokeBorder(granted ? MuesliTheme.success.opacity(0.3) : MuesliTheme.surfaceBorder, lineWidth: 1)
+                Capsule().strokeBorder(granted ? MuesliTheme.success.opacity(0.3) : .clear, lineWidth: 1)
             )
+            // A subtle shadow on the actionable state only — helps it read
+            // as a pressable button, not just another status label, per
+            // feedback that "grant access" needed to be more obvious.
+            .shadow(color: granted ? .clear : MuesliTheme.accent.opacity(0.35), radius: 6, y: 2)
         }
         .buttonStyle(.plain)
     }

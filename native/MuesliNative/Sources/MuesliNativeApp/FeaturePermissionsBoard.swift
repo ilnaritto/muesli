@@ -90,8 +90,18 @@ final class FeaturePermissionStatus {
 struct FeaturePermissionsBoard: View {
     let useCoreAudioTap: Bool
     let status: FeaturePermissionStatus
+    /// Explicit board width, same value `mainFeaturesBoard(width:)` gets —
+    /// used to size the mosaic's full-width/paired rows, not a uniform
+    /// grid (per live feedback + the picked "Вариант B" mockup: the
+    /// permission tiles should read as the same kind of mosaic as the
+    /// cards above, not a separate grid section).
+    let width: CGFloat
 
     @State private var eventStore = EKEventStore()
+
+    // Keep in sync with `HomeView.mainFeaturesBoard`'s `boardSpacing` — the
+    // two mosaics should read as one continuous rhythm.
+    private static let spacing: CGFloat = 14
 
     private enum ItemKind {
         /// A real macOS permission with a system prompt this page can request.
@@ -206,6 +216,26 @@ struct FeaturePermissionsBoard: View {
         }.count
     }
 
+    /// Chunks a flat item list into mosaic rows: the first two items pair
+    /// up, the third stands alone full-width to break the rhythm, then the
+    /// rest pair off two-at-a-time with a trailing odd item (if any) also
+    /// full-width — the exact grouping picked from the "Вариант B" mockup,
+    /// generalized so it still reads right whether or not the conditional
+    /// System Audio item is present.
+    private func rows(for items: [Item]) -> [[Item]] {
+        guard items.count > 3 else { return items.map { [$0] } }
+        var result: [[Item]] = [[items[0], items[1]], [items[2]]]
+        var rest = Array(items[3...])
+        while !rest.isEmpty {
+            if rest.count == 1 {
+                result.append([rest.removeFirst()])
+            } else {
+                result.append([rest.removeFirst(), rest.removeFirst()])
+            }
+        }
+        return result
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(tr("ACCESS & PERMISSIONS · \(grantedCount)/\(grantableCount)", "ДОСТУП И РАЗРЕШЕНИЯ · \(grantedCount)/\(grantableCount)"))
@@ -213,9 +243,17 @@ struct FeaturePermissionsBoard: View {
                 .foregroundStyle(MuesliTheme.textTertiary)
                 .textCase(.uppercase)
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 11)], spacing: 11) {
-                ForEach(items) { item in
-                    permissionCard(item)
+            let half = (width - Self.spacing) / 2
+            VStack(spacing: Self.spacing) {
+                ForEach(Array(rows(for: items).enumerated()), id: \.offset) { _, row in
+                    if row.count == 2 {
+                        HStack(alignment: .top, spacing: Self.spacing) {
+                            permissionCard(row[0]).frame(width: half)
+                            permissionCard(row[1]).frame(width: half)
+                        }
+                    } else {
+                        permissionCard(row[0]).frame(width: width)
+                    }
                 }
             }
         }
