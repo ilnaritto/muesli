@@ -213,17 +213,17 @@ struct ModelsView: View {
         Button {
             showAddModelSheet = true
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Image(systemName: "plus.circle.fill")
                 Text(tr("Connect a cloud model", "Подключить облачную модель"))
             }
-            .font(.system(size: 13, weight: .semibold))
+            .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(.white)
-            .padding(.horizontal, MuesliTheme.spacing16)
-            .padding(.vertical, 10)
+            .padding(.horizontal, MuesliTheme.spacing12)
+            .padding(.vertical, 7)
             .background(MuesliTheme.accent)
             .clipShape(Capsule())
-            .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
+            .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
         }
         .buttonStyle(.plain)
     }
@@ -238,14 +238,11 @@ struct ModelsView: View {
         color: Color,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        HStack(alignment: .top, spacing: MuesliTheme.spacing16) {
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(color.opacity(0.55))
-                .frame(width: 3)
-
-            VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
-                content()
-            }
+        // Per direct feedback ("линия цветная слева лишняя") — the section
+        // header's own colored icon already tells sections apart; a second
+        // colored accent rule next to it was redundant.
+        VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
+            content()
         }
     }
 
@@ -254,8 +251,12 @@ struct ModelsView: View {
     // "и так понятно" what each column is).
 
     private func tableContainer<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        // Per direct feedback ("серый цвет слишком ядрёный") — swapped the
+        // lighter `surfacePrimary` (meant for small pills/badges standing
+        // out from a card) for `backgroundRaised`, a much closer, quieter
+        // step up from the page background for a container this large.
         VStack(spacing: 0, content: content)
-            .background(MuesliTheme.surfacePrimary)
+            .background(MuesliTheme.backgroundRaised)
             .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
             .overlay(
                 RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
@@ -275,26 +276,26 @@ struct ModelsView: View {
         color: Color,
         subtitle: String? = nil
     ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(color)
                     Image(systemName: icon)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.white)
                 }
-                .frame(width: 26, height: 26)
+                .frame(width: 21, height: 21)
 
                 Text(title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(MuesliTheme.textPrimary)
             }
             if let subtitle {
                 Text(subtitle)
                     .font(MuesliTheme.caption())
                     .foregroundStyle(MuesliTheme.textSecondary)
-                    .padding(.leading, 36)
+                    .padding(.leading, 29)
             }
         }
     }
@@ -421,14 +422,14 @@ struct ModelsView: View {
         return VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
             HStack(alignment: .center, spacing: MuesliTheme.spacing12) {
                 Image(systemName: model.provider == .chatGPTOAuth ? "sparkles" : (model.provider.isLocal ? "cpu" : "icloud"))
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(MuesliTheme.accent)
-                    .frame(width: 36, height: 36)
+                    .frame(width: 26, height: 26)
                     .background(Circle().fill(MuesliTheme.accentSubtle))
 
                 HStack(spacing: 8) {
                     Text(model.displayName)
-                        .font(MuesliTheme.headline())
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(MuesliTheme.textPrimary)
                     Text(model.provider.isLocal ? tr("Local", "Локальная") : tr("Cloud", "Облачная"))
                         .font(.system(size: 10, weight: .medium))
@@ -485,10 +486,10 @@ struct ModelsView: View {
                     .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
                 }
             }
-            .padding(.leading, 48)
+            .padding(.leading, 38)
         }
         .padding(.horizontal, MuesliTheme.spacing12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 7)
         .opacity(model.isEnabled ? 1 : 0.6)
     }
 
@@ -1013,7 +1014,7 @@ struct ModelsView: View {
 
                 HStack(spacing: 6) {
                     Text(title)
-                        .font(MuesliTheme.headline())
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(MuesliTheme.textPrimary)
                     Text(defaultBadge)
                         .font(.system(size: 10, weight: .semibold))
@@ -1051,11 +1052,11 @@ struct ModelsView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(MuesliTheme.textTertiary)
                 }
-                .padding(.leading, 48)
+                .padding(.leading, 38)
             }
         }
         .padding(.horizontal, MuesliTheme.spacing12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 7)
     }
 
     @ViewBuilder
@@ -1087,6 +1088,9 @@ struct ModelsView: View {
     // everywhere now, regardless of whether a card's icon is a brand PNG
     // or a system symbol — and a generic fallback icon instead of
     // rendering nothing when a card has no logo asset.
+    // Per direct feedback ("всё такое огромное") — shrunk from 36pt to
+    // 26pt now that this sits in a dense table row instead of a standalone
+    // card header.
     private func brandLogo(_ name: String?) -> some View {
         ZStack {
             Circle().fill(MuesliTheme.accentSubtle)
@@ -1096,15 +1100,15 @@ struct ModelsView: View {
                 Image(nsImage: nsImage)
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 18, height: 18)
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                    .frame(width: 13, height: 13)
+                    .clipShape(RoundedRectangle(cornerRadius: 2))
             } else {
                 Image(systemName: "waveform")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(MuesliTheme.accent)
             }
         }
-        .frame(width: 36, height: 36)
+        .frame(width: 26, height: 26)
     }
 
     private func logoForBackend(_ option: BackendOption) -> String? {
@@ -1186,7 +1190,7 @@ struct ModelsView: View {
 
                 HStack(spacing: 6) {
                     Text(option.label)
-                        .font(MuesliTheme.headline())
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(MuesliTheme.textPrimary)
 
                     if option.recommended {
@@ -1270,7 +1274,7 @@ struct ModelsView: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(MuesliTheme.accent)
                 }
-                .padding(.leading, 48)
+                .padding(.leading, 38)
             }
 
             if isDownloading {
@@ -1281,11 +1285,11 @@ struct ModelsView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(MuesliTheme.textTertiary)
                 }
-                .padding(.leading, 48)
+                .padding(.leading, 38)
             }
         }
         .padding(.horizontal, MuesliTheme.spacing12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 7)
     }
 
     private func comingSoonCard(option: BackendOption) -> some View {
