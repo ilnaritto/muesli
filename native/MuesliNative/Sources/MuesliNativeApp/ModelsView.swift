@@ -100,20 +100,21 @@ struct ModelsView: View {
                         .id(ModelsTab.text)
 
                         sectionGroup(color: Color(hex: 0x00C7BE)) {
-                            // Tapping the section HEADER opens the same
-                            // connect sheet as the pinned top-right button —
-                            // a second obvious entry point right where this
-                            // "add more" section already lives.
-                            Button {
-                                showAddModelSheet = true
-                            } label: {
-                                modelsSectionHeader(
-                                    title: tr("Add more", "Добавить ещё"),
-                                    icon: "square.grid.2x2",
-                                    color: Color(hex: 0x00C7BE)
-                                )
-                            }
-                            .buttonStyle(.plain)
+                            // NOT a button (was one — turned out to be
+                            // confusing: "добавить ещё и добавить облачную
+                            // модель это одно и тоже?"). `AddModelSheet`
+                            // only connects a cloud LLM for Text & cleanup
+                            // ("такая модель скачивается на своей вкладке —
+                            // Распознавание или Очистка") — it has nothing
+                            // to do with the speech backends previewed
+                            // below, so this header shouldn't open it. The
+                            // one real "add a model" action stays the
+                            // pinned `connectCloudModelButton` up top.
+                            modelsSectionHeader(
+                                title: tr("Add more", "Добавить ещё"),
+                                icon: "square.grid.2x2",
+                                color: Color(hex: 0x00C7BE)
+                            )
                             addMoreSectionContent
                         }
                         .id(ModelsTab.catalog)
