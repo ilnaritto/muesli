@@ -29,20 +29,11 @@ enum MuesliTheme {
         light: .black, lightAlpha: 0.08
     )
 
-    // MARK: - Feature banner (Функции page "Вариант 1" — one outer banner
-    // surface, lighter nested cells inside it)
+    // MARK: - Feature cards (Функции page)
 
-    static let bannerFillTop = Color.adaptiveAlpha(
-        dark: .white, darkAlpha: 0.05,
-        light: .black, lightAlpha: 0.035
-    )
-    static let bannerFillBottom = Color.adaptiveAlpha(
-        dark: .white, darkAlpha: 0.015,
-        light: .black, lightAlpha: 0.01
-    )
-    /// A much lighter nested surface than `backgroundBase` — used for cards
-    /// living INSIDE a `FeatureBanner`, so they read as part of the same
-    /// panel rather than independently floating cards.
+    /// A lighter surface than `backgroundBase` — used for the Функции
+    /// page's own cards/tiles so they read distinctly from the rest of the
+    /// app's standard-weight cards.
     static let cellFill = Color.adaptiveAlpha(
         dark: .white, darkAlpha: 0.045,
         light: .black, lightAlpha: 0.035

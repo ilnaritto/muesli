@@ -914,10 +914,6 @@ struct HomeView: View {
             // can feed back into this number, unlike the old in-content
             // probe.
             let boardWidth = min(proxy.size.width - MuesliTheme.spacing24 * 2, 1100)
-            // The banner's own horizontal padding (see `FeatureBanner`) eats
-            // into the space available to the board's explicit-pixel-width
-            // cards — compensated once here, not re-measured inside.
-            let innerWidth = boardWidth - 40
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -932,15 +928,16 @@ struct HomeView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    // One cohesive banner surface — the main board and the
-                    // permissions section used to be two independently
-                    // bordered pieces (round 8 feedback: "снизу разрешения
-                    // надо тоже как то пихнуть в баннер") — now nested
-                    // inside a single `FeatureBanner`, matching the
-                    // design-canvas mockup's two-level nesting (one outer
-                    // panel, lighter cells inside it).
+                    // One cohesive group — the main board and the
+                    // permissions section used to be two separate pieces
+                    // with a gap between them (round 8 feedback: "снизу
+                    // разрешения надо тоже как то пихнуть в баннер"); now
+                    // one continuous flow of cards. No shared outer
+                    // background/border — per follow-up feedback, only the
+                    // individual cards should have their own fill/border,
+                    // not an extra dark panel wrapping all of them.
                     FeatureBanner {
-                        mainFeaturesBoard(width: innerWidth)
+                        mainFeaturesBoard(width: boardWidth)
 
                         FeaturePermissionsBoard(
                             useCoreAudioTap: appState.config.useCoreAudioTap,
@@ -1633,23 +1630,16 @@ private struct FeatureCellContainer<Content: View>: View {
 /// the permissions section) lives inside — matches the design-canvas
 /// mockup's two-level nesting: one soft-gradient bordered panel, with
 /// lighter `FeatureCellContainer` cells nested inside it.
+/// Just a layout grouping now — per feedback, the outer dark fill/border
+/// read as an unwanted extra panel; only the individual cards should have
+/// their own background/border. Kept as a named wrapper (rather than
+/// inlining a bare `VStack` at the call site) so the shared 14pt spacing
+/// between the board and the permissions section stays in one place.
 private struct FeatureBanner<Content: View>: View {
     @ViewBuilder var content: () -> Content
-    private static var cornerRadius: CGFloat { 28 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14, content: content)
-            .padding(20)
-            .background(
-                RoundedRectangle(cornerRadius: Self.cornerRadius)
-                    .fill(
-                        LinearGradient(
-                            colors: [MuesliTheme.bannerFillTop, MuesliTheme.bannerFillBottom],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-            )
     }
 }
 
