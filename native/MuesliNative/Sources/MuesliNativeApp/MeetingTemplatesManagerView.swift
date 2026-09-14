@@ -269,6 +269,12 @@ struct MeetingTemplatesManagerView: View {
     @ViewBuilder
     private var editorPane: some View {
         ScrollView {
+            // The card wrapping this pane (call site in `body`) is given
+            // `maxWidth: .infinity` — but that only sizes the CARD, not this
+            // VStack's own content, which otherwise hugs its narrowest child
+            // (the fixed-width capsule buttons) instead of filling the card.
+            // Confirmed live: the whole form sat bunched in the card's
+            // top-left corner with the rest of the (much wider) card empty.
             VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
                 VStack(alignment: .leading, spacing: 6) {
                     if let id = selectedTemplateID, isProtectedSystemTemplate(id) {
@@ -398,6 +404,8 @@ struct MeetingTemplatesManagerView: View {
                 .padding(.top, MuesliTheme.spacing4)
             }
             .padding(.vertical, 2)
+            .padding(.horizontal, MuesliTheme.spacing16)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
