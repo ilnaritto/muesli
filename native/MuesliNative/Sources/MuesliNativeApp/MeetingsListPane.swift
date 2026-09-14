@@ -42,6 +42,15 @@ struct MeetingsListPane: View {
         FolderTreePresentation(folders: appState.folders, collapsedFolderIDs: [])
     }
 
+    /// The single meeting the "ready" accent glow applies to — `filteredMeetings`
+    /// is already sorted newest-first, so the first `.completed` record in it
+    /// is the most recently finished one. Deliberately just one record, not
+    /// every completed meeting (see the comment on `MeetingListItemView`'s
+    /// `isFreshlyCompleted`).
+    private var freshestCompletedMeetingID: Int64? {
+        filteredMeetings.first(where: { $0.status == .completed })?.id
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Pinned header: search + folder tabs stay put, the list scrolls below.
@@ -350,6 +359,7 @@ struct MeetingsListPane: View {
                                 isSelected: appState.selectedMeetingID == meeting.id,
                                 folders: appState.folders,
                                 isCompact: true,
+                                isFreshlyCompleted: meeting.id == freshestCompletedMeetingID,
                                 onSelect: { controller.showMeetingDocument(id: meeting.id) },
                                 onMove: { folderID in
                                     controller.moveMeeting(id: meeting.id, toFolder: folderID)
