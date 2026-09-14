@@ -606,11 +606,14 @@ struct ModelsView: View {
                         summaryModelToDelete = option
                     } label: {
                         Image(systemName: "trash")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.red.opacity(0.6))
-                            .frame(width: 20, height: 20)
+                            .font(.system(size: 12, weight: .medium))
                     }
                     .buttonStyle(.plain)
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .padding(.horizontal, MuesliTheme.spacing12)
+                    .padding(.vertical, 4)
+                    .background(MuesliTheme.surfacePrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
                 } else {
                     Button(tr("Download", "Скачать")) {
                         startSummaryDownload(option)
@@ -828,11 +831,14 @@ struct ModelsView: View {
                         postProcModelToDelete = option
                     } label: {
                         Image(systemName: "trash")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.red.opacity(0.6))
-                            .frame(width: 20, height: 20)
+                            .font(.system(size: 12, weight: .medium))
                     }
                     .buttonStyle(.plain)
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .padding(.horizontal, MuesliTheme.spacing12)
+                    .padding(.vertical, 4)
+                    .background(MuesliTheme.surfacePrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
                 } else {
                     Button(tr("Download", "Скачать")) {
                         startPostProcDownload(option)
@@ -1124,7 +1130,7 @@ struct ModelsView: View {
                         .font(.system(size: 12, weight: .medium))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.red.opacity(0.7))
+                .foregroundStyle(MuesliTheme.textSecondary)
                 .padding(.horizontal, MuesliTheme.spacing12)
                 .padding(.vertical, 4)
                 .background(MuesliTheme.surfacePrimary)
