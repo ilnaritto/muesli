@@ -57,7 +57,6 @@ struct HomeView: View {
     @State private var insightsHeaderMeasuredHeight: CGFloat?
     @State private var showClearInsightsHistoryConfirmation = false
     @State private var permissionStatus = FeaturePermissionStatus()
-    @State private var postProcessorRedirectReason: String?
     @State private var showConnectModelSheet = false
 
     var body: some View {
@@ -957,17 +956,6 @@ struct HomeView: View {
                 .frame(width: proxy.size.width, alignment: .leading)
             }
         }
-        .alert(
-            tr("Cleanup model needed", "Нужна модель очистки"),
-            isPresented: Binding(
-                get: { postProcessorRedirectReason != nil },
-                set: { if !$0 { postProcessorRedirectReason = nil } }
-            )
-        ) {
-            Button(tr("OK", "ОК"), role: .cancel) { postProcessorRedirectReason = nil }
-        } message: {
-            Text(postProcessorRedirectReason ?? "")
-        }
     }
 
     // MARK: - Features tour (task 5)
@@ -1354,7 +1342,7 @@ struct HomeView: View {
             // same as `SettingsView`'s equivalent toggle already does.
             toggle: FeatureToggle(isOn: appState.config.enablePostProcessor) {
                 if let reason = controller.setPostProcessorEnabled(!appState.config.enablePostProcessor) {
-                    postProcessorRedirectReason = reason
+                    appState.postProcessorRedirectReason = reason
                 }
             }
         )

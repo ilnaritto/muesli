@@ -216,6 +216,14 @@ final class AppState {
     var iCloudLastSyncedAt: Date?
     var contributionMilestonePrompt: ContributionMilestonePrompt?
     var pendingDiagnosticIncident: DiagnosticIncident?
+    /// Set when `setPostProcessorEnabled` refuses to turn cleanup on (no
+    /// model downloaded) and redirects to Models — that redirect swaps
+    /// `selectedTab` synchronously, so an alert scoped to the view the
+    /// toggle lives on (e.g. HomeView) never gets a chance to present
+    /// before its host view is replaced. Lives on `AppState` and is shown
+    /// from `DashboardRootView`, which doesn't unmount across tab
+    /// switches, so the explanation survives the redirect.
+    var postProcessorRedirectReason: String?
     var modelPreparationTitle: String?
     var modelPreparationDetail: String?
     var modelPreparationProgress: Double?
