@@ -28,13 +28,12 @@ struct FeatureToggle {
     let action: () -> Void
 }
 
-/// Round 5: settings-panel-style card — small looping demo clip up top
-/// (per repeated feedback that the page needs to actually show the
-/// animations, not just an icon), icon + title + subtitle below, and an
-/// optional functional toggle in the corner for features with a real
-/// on/off state (permission granted, model connected). Cards without a
-/// natural on/off state (Templates, Meeting chat, Insights) have no
-/// toggle — they're still single-tap-target navigation cards.
+/// Small icon+title+subtitle utility tile with an optional functional
+/// toggle in the corner for features with a real on/off state (permission
+/// granted, config boolean). Used for the 2×2 grid of small feature tiles
+/// in the mosaic board — the six flagship cards on the same page are their
+/// own bespoke views (see `HomeView.swift`'s card primitives) since each
+/// shows a different kind of live app data, not a generic subtitle.
 struct FeatureCard: View {
     let accent: Color
     let icon: String
@@ -42,26 +41,10 @@ struct FeatureCard: View {
     let subtitle: String
     let actions: [FeatureAction]
     var compact: Bool = false
-    /// Looks up `Contents/Resources/features-tour/<name>.gif` — plays on a
-    /// continuous loop, no hover gating.
-    var previewAssetName: String? = nil
-    /// Overrides the default preview strip height — used to give the hero
-    /// card (full row width, most important feature) a noticeably bigger
-    /// demo than the rest instead of matching the standard card's height.
-    var previewHeight: CGFloat? = nil
-    /// The single full-width card in a row of important-by-priority cards
-    /// gets larger type on top of the taller preview — a bit more visual
-    /// weight than just "not compact".
-    var isHero: Bool = false
     var toggle: FeatureToggle? = nil
 
     private var singleAction: FeatureAction? {
         actions.count == 1 ? actions.first : nil
-    }
-
-    private var previewURL: URL? {
-        guard let previewAssetName else { return nil }
-        return Bundle.main.url(forResource: previewAssetName, withExtension: "gif", subdirectory: "features-tour")
     }
 
     var body: some View {
@@ -77,17 +60,6 @@ struct FeatureCard: View {
 
     private var cardBody: some View {
         VStack(alignment: .leading, spacing: compact ? 10 : 14) {
-            if let previewURL {
-                LoopingGIFView(url: previewURL)
-                    .frame(height: previewHeight ?? (compact ? 72 : 110))
-                    .frame(maxWidth: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
-                            .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
-                    )
-            }
-
             HStack(alignment: .top, spacing: 10) {
                 FeatureIcon(
                     icon: icon,
@@ -109,12 +81,12 @@ struct FeatureCard: View {
             }
 
             Text(title)
-                .font(.system(size: isHero ? 20 : (compact ? 14 : 16), weight: .semibold))
+                .font(.system(size: compact ? 14 : 16, weight: .semibold))
                 .foregroundStyle(MuesliTheme.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
 
             Text(subtitle)
-                .font(.system(size: isHero ? 14 : (compact ? 12 : 13), weight: .regular))
+                .font(.system(size: compact ? 12 : 13, weight: .regular))
                 .foregroundStyle(MuesliTheme.textSecondary)
                 .lineSpacing(2)
                 .lineLimit(compact ? 2 : 3)
@@ -132,7 +104,7 @@ struct FeatureCard: View {
                 }
             }
         }
-        .padding(isHero ? MuesliTheme.spacing24 : MuesliTheme.spacing20)
+        .padding(MuesliTheme.spacing20)
         .frame(maxWidth: .infinity, minHeight: compact ? 130 : 230, maxHeight: .infinity, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
@@ -197,34 +169,5 @@ private struct FeatureIcon: View {
                 .foregroundStyle(.white)
         }
         .frame(width: tileSize, height: tileSize)
-    }
-}
-
-/// Continuously-looping GIF, no play/pause state, no hover gating — used
-/// for the small demo-clip strip at the top of a feature card. SwiftUI's
-/// `Image` never animates GIF frames, only `NSImageView.animates` does.
-private struct LoopingGIFView: NSViewRepresentable {
-    let url: URL
-
-    func makeNSView(context: Context) -> NSImageView {
-        let view = FixedSizeGIFImageView()
-        view.image = NSImage(contentsOf: url)
-        view.imageScaling = .scaleProportionallyUpOrDown
-        view.animates = true
-        return view
-    }
-
-    func updateNSView(_ nsView: NSImageView, context: Context) {
-        nsView.animates = true
-    }
-}
-
-/// `NSImageView`'s default `intrinsicContentSize` matches the loaded
-/// image's pixel size, which fights the SwiftUI `.frame` around it inside
-/// a `LazyVGrid` cell. Reporting no intrinsic size lets the SwiftUI-provided
-/// frame win.
-private final class FixedSizeGIFImageView: NSImageView {
-    override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
     }
 }

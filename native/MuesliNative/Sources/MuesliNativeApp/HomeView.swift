@@ -966,119 +966,221 @@ struct HomeView: View {
 
     // MARK: - Features tour (task 5)
 
-    /// New-user order: dictation → meetings → connect a model → templates →
-    /// meeting chat → Insights. Every card gets a looping demo clip (per
-    /// live feedback that the page needs to actually show the animations,
-    /// not just an icon) via `FeatureCard.previewAssetName`. Cards with a
-    /// real on/off state (a permission, a connected model) get a
-    /// FUNCTIONAL toggle — tapping it fires the actual request/connect
-    /// action right here, not just a status readout that sends the user to
-    /// Settings. Cards with no such state (Templates, Meeting chat,
-    /// Insights) stay plain single-tap-target navigation cards.
-    private var dictationCard: FeatureCard {
-        FeatureCard(
-            accent: MuesliTheme.accent,
-            icon: "mic.fill",
-            title: tr("Voice dictation", "Диктовка голосом"),
-            subtitle: tr("Hold Right Option and speak — or click the dictation icon in the panel above.", "Зажми Right Option и говори — или нажми на значок диктовки в панели сверху."),
-            actions: [
-                FeatureAction(label: tr("Set up dictation", "Настроить диктовку"), isPrimary: true) {
-                    openSettings(.dictation)
+    /// Content per card matches the design-canvas mockup approved as
+    /// "Вариант 1" ("1 — итог: мозаика, 2 колонки") — every card shows the
+    /// app's actual live data (connected models, engine count, the default
+    /// template's name, the real permission state) in a compact information
+    /// panel, not a generic marketing subtitle with a looping demo clip.
+    /// Only the two hero cards (a real on/off permission) get a status
+    /// badge; the rest are single-tap navigation cards to their Settings
+    /// section, mirroring the mockup's chevron affordance.
+    private var dictationHeroCard: some View {
+        Button {
+            openSettings(.dictation)
+        } label: {
+            FeatureCellContainer(isHero: true) {
+                FeatureCellHeader(icon: "mic.fill", title: tr("Voice dictation", "Диктовка голосом"), titleSize: 15) {
+                    PermissionBadge(granted: dictationPermissionGranted) { requestDictationPermissions() }
                 }
-            ],
-            previewAssetName: "dictation",
-            previewHeight: 170,
-            isHero: true,
-            toggle: FeatureToggle(isOn: dictationPermissionGranted) {
-                requestDictationPermissions()
+                HStack {
+                    Spacer(minLength: 0)
+                    HotkeyGlyph(symbol: "⌥", badgeIcon: "mic.fill")
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 4)
+                Text(tr("Hold Right Option and speak — the text lands right at your cursor.", "Зажми Right Option и говори — текст сам встаёт у курсора."))
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
             }
-        )
+        }
+        .buttonStyle(.plain)
     }
 
-    private var meetingsCard: FeatureCard {
-        FeatureCard(
-            accent: MuesliTheme.accent,
-            icon: "person.2.fill",
-            title: tr("Meetings, summarized", "Встречи в готовых заметках"),
-            subtitle: tr("Muesli listens, then hands you a clean recap in your own template.", "Muesli слушает встречу, а после выдаёт аккуратную сводку по твоему шаблону."),
-            actions: [
-                FeatureAction(label: tr("Meeting settings", "Настройки встреч"), isPrimary: true) {
-                    openSettings(.meetings)
+    private var meetingsHeroCard: some View {
+        Button {
+            openSettings(.meetings)
+        } label: {
+            FeatureCellContainer(isHero: true) {
+                FeatureCellHeader(icon: "person.2.fill", title: tr("Meetings, summarized", "Встречи в готовых заметках"), titleSize: 15) {
+                    PermissionBadge(granted: meetingsPermissionGranted) { requestMeetingsPermissions() }
                 }
-            ],
-            previewAssetName: "meetings",
-            previewHeight: 170,
-            isHero: true,
-            toggle: FeatureToggle(isOn: meetingsPermissionGranted) {
-                requestMeetingsPermissions()
+                Text(tr("A meeting → a ready recap", "Встреча → готовая сводка"))
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(MuesliTheme.textPrimary)
+                Text(tr("Microphone and screen audio. You just talk — the note builds itself, in your template.", "Микрофон и звук с экрана. Ты просто разговариваешь — заметка соберётся сама, по шаблону."))
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(MuesliTheme.textSecondary)
             }
-        )
+        }
+        .buttonStyle(.plain)
     }
 
-    private var aiModelCard: FeatureCard {
-        FeatureCard(
-            accent: MuesliTheme.accent,
-            icon: "sparkles",
-            title: tr("Connect an AI model", "Подключить ИИ-модель"),
-            subtitle: tr("ChatGPT, an API key, Ollama or your own endpoint — for summaries and chat.", "ChatGPT, API-ключ, Ollama или свой эндпоинт — для сводок и чатов."),
-            actions: [
-                FeatureAction(label: tr("Connect a model", "Подключить модель"), isPrimary: true) {
-                    showConnectModelSheet = true
+    private var connectModelCard: some View {
+        Button {
+            showConnectModelSheet = true
+        } label: {
+            FeatureCellContainer {
+                FeatureCellHeader(icon: "link", title: tr("Connect a model", "Подключить модель")) {
+                    FeatureCellChevron()
                 }
-            ],
-            compact: true,
-            toggle: FeatureToggle(isOn: hasConnectedAIModel) {
-                showConnectModelSheet = true
+                Text("ChatGPT · OpenAI · OpenRouter · Ollama")
+                    .font(.system(size: 10.5, weight: .regular))
+                    .foregroundStyle(MuesliTheme.textTertiary)
+
+                let models = Array(controller.configuredModels(role: .textGeneration).prefix(3))
+                let activeID = controller.defaultConfiguredModelID(role: .textGeneration)
+                if models.isEmpty {
+                    Text(tr("No model connected yet", "Пока не подключена ни одна модель"))
+                        .font(.system(size: 11.5, weight: .regular))
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(models) { model in
+                            let isActive = model.id == activeID
+                            HStack(spacing: 7) {
+                                Circle()
+                                    .fill(isActive ? MuesliTheme.success : MuesliTheme.textPrimary.opacity(0.25))
+                                    .frame(width: 5, height: 5)
+                                Text(model.displayName)
+                                    .font(.system(size: 11.5, weight: isActive ? .semibold : .regular))
+                                    .foregroundStyle(isActive ? MuesliTheme.textPrimary : MuesliTheme.textSecondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                }
+
+                HStack(spacing: 6) {
+                    ZStack {
+                        Circle().strokeBorder(MuesliTheme.textPrimary.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [2]))
+                        Image(systemName: "plus")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(MuesliTheme.textTertiary)
+                    }
+                    .frame(width: 13, height: 13)
+                    Text(tr("Add a model", "Добавить модель"))
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                }
+                .padding(.top, 2)
             }
-        )
+        }
+        .buttonStyle(.plain)
     }
 
-    private var templatesCard: FeatureCard {
-        FeatureCard(
-            accent: MuesliTheme.accent,
-            icon: "square.text.square.fill",
-            title: tr("Note templates", "Шаблоны заметок"),
-            subtitle: tr("Choose how notes are structured, or write your own prompt.", "Выбери, как оформлять заметки, или напиши свой шаблон и промпт."),
-            actions: [
-                FeatureAction(label: tr("Manage templates", "Управление шаблонами"), isPrimary: true) {
-                    controller.showMeetingTemplatesManager()
+    // Engine count/names are real, documented in this project's own
+    // CLAUDE.md ("11 ASR models: Parakeet v3/v2, Whisper Tiny/Small/
+    // Medium/Large Turbo, Cohere Transcribe, Nemotron 3.5 Multilingual,
+    // SenseVoice Small, Qwen3 ASR, Indic ASR") — not invented for this card.
+    private var onDeviceModelsCard: some View {
+        Button {
+            openSettings(.models, modelsTab: .speech)
+        } label: {
+            FeatureCellContainer {
+                FeatureCellHeader(icon: "square.and.arrow.down.fill", title: tr("On-device", "На устройстве")) {
+                    FeatureCellChevron()
                 }
-            ],
-            compact: true,
-            previewAssetName: "templates"
-        )
+                Text(tr("Recognize speech as text — offline. Don't write summaries (that's the model above).", "Распознают речь в текст — офлайн. Не пишут сводку (это модель выше)."))
+                    .font(.system(size: 11.5, weight: .regular))
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text("11")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(MuesliTheme.textPrimary)
+                    Text(tr("engines", "движков"))
+                        .font(.system(size: 11.5, weight: .regular))
+                        .foregroundStyle(MuesliTheme.textSecondary)
+                }
+                HStack(spacing: 6) {
+                    EngineTagPill(text: "Parakeet")
+                    EngineTagPill(text: "Whisper")
+                    EngineTagPill(text: "+9")
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
-    private var meetingChatCard: FeatureCard {
-        FeatureCard(
-            accent: MuesliTheme.accent,
-            icon: "bubble.left.and.text.bubble.right.fill",
-            title: tr("Chat with your meeting", "Чат с встречей"),
-            subtitle: tr("Ask any meeting a question, get an answer grounded in it.", "Задай вопрос по встрече — получи ответ строго по этому разговору."),
-            actions: [
-                FeatureAction(label: tr("Open a meeting", "Открыть встречу"), isPrimary: true) {
-                    openSettings(.meetings)
+    private var templatesCard: some View {
+        Button {
+            controller.showMeetingTemplatesManager()
+        } label: {
+            FeatureCellContainer {
+                FeatureCellHeader(icon: "square.text.square.fill", title: tr("Note templates", "Шаблоны заметок")) {
+                    FeatureCellChevron()
                 }
-            ],
-            compact: true,
-            previewAssetName: "meeting-chat"
-        )
+                let defaultTemplate = controller.defaultMeetingTemplate()
+                HStack(spacing: 5) {
+                    Text(tr("Template: ", "Шаблон: ") + defaultTemplate.name)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(MuesliTheme.textPrimary.opacity(0.85))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 7, weight: .semibold))
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(MuesliTheme.textPrimary.opacity(0.06)))
+                .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+
+                Text(tr("Picks how every new meeting note is structured.", "Определяет, как оформляется каждая новая заметка о встрече."))
+                    .font(.system(size: 11.5, weight: .regular))
+                    .foregroundStyle(MuesliTheme.textSecondary)
+            }
+        }
+        .buttonStyle(.plain)
     }
 
-    private var insightsCard: FeatureCard {
-        FeatureCard(
-            accent: MuesliTheme.accent,
-            icon: "sparkles",
-            title: tr("Insights — ask across all meetings", "Инсайты — вопросы по всем встречам"),
-            subtitle: tr("One chat that reads every meeting in the period you pick.", "Один чат, который читает сразу все встречи за выбранный период."),
-            actions: [
-                FeatureAction(label: tr("Open Insights", "Открыть Инсайты"), isPrimary: true) {
-                    selectedSection = .insights
+    private var meetingChatCard: some View {
+        Button {
+            openSettings(.meetings)
+        } label: {
+            FeatureCellContainer {
+                FeatureCellHeader(icon: "bubble.left.and.text.bubble.right.fill", title: tr("Chat with your meeting", "Чат с встречей")) {
+                    FeatureCellChevron()
                 }
-            ],
-            compact: false,
-            previewAssetName: "insights"
-        )
+                VStack(alignment: .leading, spacing: 6) {
+                    ChatBubble(text: tr("When's the next call?", "Когда следующая созвонка?"), isMe: false)
+                    ChatBubble(text: tr("Thursday at 3pm.", "В четверг в 15:00."), isMe: true)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var insightsCard: some View {
+        Button {
+            selectedSection = .insights
+        } label: {
+            FeatureCellContainer {
+                FeatureCellHeader(icon: "magnifyingglass", title: tr("Insights — across all meetings", "Инсайты по всем встречам")) {
+                    FeatureCellChevron()
+                }
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                    Text(tr("What did we agree with the client?", "О чём договорились с клиентом?"))
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundStyle(MuesliTheme.textSecondary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.black.opacity(0.15)))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+
+                HStack(spacing: 6) {
+                    InsightHintChip(text: tr("My tasks", "Мои задачи"))
+                    InsightHintChip(text: tr("Decisions", "Решения"))
+                    InsightHintChip(text: tr("Risks", "Риски"))
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     // Gutter between cards — bumped from the original 11pt per feedback
@@ -1132,14 +1234,14 @@ struct HomeView: View {
         let half = (width - Self.boardSpacing) / 2
 
         VStack(spacing: Self.boardSpacing) {
-            dictationCard
+            dictationHeroCard
                 .frame(width: width, height: Self.heroRowHeight)
 
-            meetingsCard
+            meetingsHeroCard
                 .frame(width: width, height: Self.heroRowHeight)
 
             HStack(spacing: Self.boardSpacing) {
-                aiModelCard.frame(width: half, height: Self.smallRowHeight)
+                connectModelCard.frame(width: half, height: Self.smallRowHeight)
                 onDeviceModelsCard.frame(width: half, height: Self.smallRowHeight)
             }
 
@@ -1161,10 +1263,6 @@ struct HomeView: View {
                 dictionaryCard.frame(width: half, height: Self.tinyRowHeight)
             }
         }
-    }
-
-    private var hasConnectedAIModel: Bool {
-        !controller.configuredModels(role: .textGeneration).isEmpty
     }
 
     private func requestDictationPermissions() {
@@ -1215,33 +1313,17 @@ struct HomeView: View {
     // Small icon(+toggle) tiles — no preview clips, just icon + toggle
     // where the feature has a real on/off setting (Smart cleanup, Voice
     // commands, Screen video all map straight to a config boolean already
-    // used in Settings). On-device models and Dictionary are plain list
-    // pages with no on/off state, so they stay simple navigate cards.
-    // Folded into the same mosaic as the flagship cards below (round 6:
-    // per a bento-dashboard layout reference, these read as one cohesive
-    // board of proportionally-sized tiles rather than two separate
-    // sections split by a "MORE" heading).
-    private var onDeviceModelsCard: FeatureCard {
-        FeatureCard(
-            accent: MuesliTheme.accent,
-            icon: "square.and.arrow.down.fill",
-            title: tr("On-device models", "Модели на устройстве"),
-            subtitle: tr("11 speech models, all offline — nothing leaves your Mac.", "11 моделей распознавания, всё офлайн — ничего не уходит в облако."),
-            actions: [
-                FeatureAction(label: tr("Manage", "Управление"), isPrimary: true) {
-                    openSettings(.models, modelsTab: .speech)
-                }
-            ],
-            compact: true
-        )
-    }
-
+    // used in Settings). Dictionary has no on/off state, so it stays a
+    // simple navigate card. Folded into the same mosaic as the flagship
+    // cards above (round 6: per a bento-dashboard layout reference, these
+    // read as one cohesive board of proportionally-sized tiles rather than
+    // two separate sections split by a "MORE" heading).
     private var smartCleanupCard: FeatureCard {
         FeatureCard(
             accent: MuesliTheme.accent,
             icon: "wand.and.stars",
             title: tr("Smart cleanup", "Умная чистка"),
-            subtitle: tr("Drops the “ums”, fixes casing, formats lists.", "Убирает «эээ», ставит регистр, оформляет списки."),
+            subtitle: tr("“um, so like” → “So,”", "«эээ ну как бы» → «Итак,»"),
             actions: [
                 FeatureAction(label: tr("Set up", "Настроить"), isPrimary: true) {
                     openSettings(.models, modelsTab: .cleanup)
@@ -1291,11 +1373,20 @@ struct HomeView: View {
     }
 
     private var dictionaryCard: FeatureCard {
-        FeatureCard(
+        let entries = appState.config.customWords.prefix(2)
+        let subtitle: String
+        if entries.isEmpty {
+            subtitle = tr("Custom words for names and terms transcription often gets wrong.", "Свои слова для имён и терминов, которые транскрипция часто путает.")
+        } else {
+            subtitle = entries
+                .map { "«\($0.word)» → \($0.replacement ?? $0.word)" }
+                .joined(separator: " · ")
+        }
+        return FeatureCard(
             accent: MuesliTheme.accent,
             icon: "character.book.closed.fill",
             title: tr("Dictionary", "Словарь"),
-            subtitle: tr("Custom words for names and terms transcription often gets wrong.", "Свои слова для имён и терминов, которые транскрипция часто путает."),
+            subtitle: subtitle,
             actions: [
                 FeatureAction(label: tr("Open", "Открыть"), isPrimary: true) {
                     openSettings(.dictionary)
@@ -1535,6 +1626,188 @@ struct HomeView: View {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
         return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+// MARK: - Vertical mosaic card primitives (design-canvas "Вариант 1")
+//
+// The approved mockup's cards aren't icon+subtitle+demo-clip panels — each
+// one is a small information display (a permission badge, a connected-model
+// list, an engine count, a template chip, a chat preview, a search prompt).
+// These primitives are the shared visual language every card in
+// `mainFeaturesBoard` is built from, matching the mockup's `.cell`/`.row-top`/
+// `.granted`/`.chev` styles one-to-one.
+
+private struct FeatureCellContainer<Content: View>: View {
+    var isHero: Bool = false
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12, content: content)
+            .padding(isHero ? MuesliTheme.spacing20 : MuesliTheme.spacing16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
+                    .fill(MuesliTheme.backgroundBase)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL))
+            .overlay(
+                RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
+                    .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+            )
+    }
+}
+
+private struct FeatureCellHeader<Trailing: View>: View {
+    let icon: String
+    let title: String
+    var titleSize: CGFloat = 13.5
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        HStack(spacing: 9) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(MuesliTheme.textPrimary.opacity(0.07))
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(MuesliTheme.textPrimary.opacity(0.82))
+            }
+            .frame(width: 28, height: 28)
+
+            Text(title)
+                .font(.system(size: titleSize, weight: .semibold))
+                .foregroundStyle(MuesliTheme.textPrimary)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+
+            trailing()
+        }
+    }
+}
+
+private struct PermissionBadge: View {
+    let granted: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                if granted {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 8, weight: .bold))
+                }
+                Text(granted ? tr("Granted", "Разрешена") : tr("Grant access", "Выдать доступ"))
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .foregroundStyle(granted ? MuesliTheme.success : MuesliTheme.textSecondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule().fill(granted ? MuesliTheme.success.opacity(0.12) : MuesliTheme.textPrimary.opacity(0.06))
+            )
+            .overlay(
+                Capsule().strokeBorder(granted ? MuesliTheme.success.opacity(0.3) : MuesliTheme.surfaceBorder, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct FeatureCellChevron: View {
+    var body: some View {
+        ZStack {
+            Circle().fill(MuesliTheme.textPrimary.opacity(0.05))
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(MuesliTheme.textSecondary)
+        }
+        .frame(width: 20, height: 20)
+    }
+}
+
+/// The hotkey glyph on the Dictation hero card — a big rounded tile with the
+/// literal key symbol, badged with a small mic icon. Stands in for the
+/// mockup's "⌥" key-hero illustration; no demo video.
+private struct HotkeyGlyph: View {
+    let symbol: String
+    let badgeIcon: String
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(MuesliTheme.textPrimary.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .strokeBorder(MuesliTheme.accent.opacity(0.45), lineWidth: 1.5)
+                        .padding(-6)
+                )
+                .frame(width: 68, height: 68)
+            Text(symbol)
+                .font(.system(size: 24, weight: .bold))
+                .foregroundStyle(MuesliTheme.textPrimary.opacity(0.92))
+                .frame(width: 68, height: 68)
+
+            ZStack {
+                Circle().fill(MuesliTheme.accent)
+                Image(systemName: badgeIcon)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.black.opacity(0.85))
+            }
+            .frame(width: 22, height: 22)
+            .offset(x: 6, y: 6)
+        }
+        .padding(.bottom, 6)
+    }
+}
+
+private struct EngineTagPill: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(MuesliTheme.textSecondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(MuesliTheme.textPrimary.opacity(0.06)))
+            .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+    }
+}
+
+private struct InsightHintChip: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(MuesliTheme.textSecondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(MuesliTheme.textPrimary.opacity(0.05)))
+            .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+    }
+}
+
+private struct ChatBubble: View {
+    let text: String
+    let isMe: Bool
+
+    var body: some View {
+        HStack {
+            if isMe { Spacer(minLength: 24) }
+            Text(text)
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(MuesliTheme.textPrimary.opacity(0.9))
+                .padding(.horizontal, 11)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(isMe ? MuesliTheme.accent.opacity(0.32) : MuesliTheme.textPrimary.opacity(0.07))
+                )
+            if !isMe { Spacer(minLength: 24) }
+        }
     }
 }
 
