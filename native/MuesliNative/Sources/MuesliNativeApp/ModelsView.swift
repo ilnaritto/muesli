@@ -81,19 +81,15 @@ struct ModelsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(tr("Models", "Модели"))
-                    .font(MuesliTheme.pageTitle())
-                    .foregroundStyle(MuesliTheme.textPrimary)
-
-                Text(tr("Download and manage transcription models. The active model is used for dictation.", "Скачивайте модели транскрипции и управляйте ими. Активная модель используется для диктовки."))
-                    .font(MuesliTheme.callout())
-                    .foregroundStyle(MuesliTheme.textSecondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, MuesliTheme.spacing32)
-            .padding(.top, MuesliTheme.spacing32)
-
+            // No page title/subtitle here — same call as
+            // `MeetingTemplatesManagerView`'s `isEmbedded` case: the left
+            // Settings sidebar already shows "Models"/"Модели"
+            // (`SettingsSection.title`), and `SecondaryColumn` right below
+            // shows it again as its own header — a third "Модели" up here
+            // was a duplicated heading, not a page needing its own title
+            // (this view is only ever embedded in Settings, never
+            // presented standalone, so there's no case that still needs it).
+            //
             // `maxHeight: .infinity` on `SecondaryColumn` alone wasn't
             // enough — confirmed live, the sidebar still rendered short
             // next to a taller content column. Flexible-frame propagation
