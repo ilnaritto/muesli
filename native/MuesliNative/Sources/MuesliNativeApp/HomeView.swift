@@ -1601,7 +1601,12 @@ struct HomeView: View {
 // `mainFeaturesBoard` is built from, matching the mockup's `.cell`/`.row-top`/
 // `.granted`/`.chev` styles one-to-one.
 
-private struct FeatureCellContainer<Content: View>: View {
+// FeatureCellContainer/FeatureCellHeader/PermissionBadge/StatusPill are
+// `internal` (not `private`), so `FeaturePermissionsBoard.swift` can reuse
+// the exact same card language for its permission tiles — per live
+// feedback that the permissions section should visually match the cards
+// above it, not have its own distinct card style.
+struct FeatureCellContainer<Content: View>: View {
     var isHero: Bool = false
     @ViewBuilder var content: () -> Content
 
@@ -1643,7 +1648,7 @@ private struct FeatureBanner<Content: View>: View {
     }
 }
 
-private struct FeatureCellHeader<Trailing: View>: View {
+struct FeatureCellHeader<Trailing: View>: View {
     let icon: String
     let title: String
     var titleSize: CGFloat = 13.5
@@ -1672,7 +1677,7 @@ private struct FeatureCellHeader<Trailing: View>: View {
     }
 }
 
-private struct PermissionBadge: View {
+struct PermissionBadge: View {
     let granted: Bool
     let action: () -> Void
 
@@ -1697,6 +1702,24 @@ private struct PermissionBadge: View {
             )
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// A static (non-tappable) status pill — the informational-only
+/// permission items (Camera, Automation) have no request action, so they
+/// get a plain label in the same visual slot `PermissionBadge` occupies
+/// for grantable ones, instead of a button.
+struct StatusPill: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(MuesliTheme.textTertiary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(MuesliTheme.textPrimary.opacity(0.06)))
+            .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
     }
 }
 

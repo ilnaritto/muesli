@@ -221,67 +221,34 @@ struct FeaturePermissionsBoard: View {
         }
     }
 
+    /// Same card language as the main board above (`FeatureCellContainer`
+    /// + `FeatureCellHeader` + `PermissionBadge`) — per live feedback that
+    /// this section needs to visually match, not have its own bespoke
+    /// icon/title/bottom-button layout. The whole card opens the matching
+    /// System Settings pane (mirrors the main cards' whole-card-tappable
+    /// pattern); the badge is its own nested tap target for the grant
+    /// action specifically.
     private func permissionCard(_ item: Item) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: item.icon)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(statusColor(for: item.kind))
-                Spacer()
-                Button {
-                    openPrivacyPane(item.pane)
-                } label: {
-                    Image(systemName: "arrow.up.forward.square")
-                        .font(.system(size: 11))
-                        .foregroundStyle(MuesliTheme.textTertiary)
+        Button {
+            openPrivacyPane(item.pane)
+        } label: {
+            FeatureCellContainer {
+                FeatureCellHeader(icon: item.icon, title: item.title) {
+                    switch item.kind {
+                    case .grantable(let granted, let action):
+                        PermissionBadge(granted: granted, action: action)
+                    case .informational(let note):
+                        StatusPill(text: note)
+                    }
                 }
-                .buttonStyle(.plain)
-                .help(tr("Open in System Settings", "Открыть в Системных настройках"))
-            }
-            Text(item.title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(MuesliTheme.textPrimary)
-            Text(item.unlocks)
-                .font(.system(size: 11))
-                .foregroundStyle(MuesliTheme.textSecondary)
-                .lineLimit(3)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            Spacer(minLength: 0)
-
-            switch item.kind {
-            case .grantable(let granted, let action):
-                if granted {
-                    Text(tr("Granted", "Разрешено"))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(MuesliTheme.success)
-                } else {
-                    Button(tr("Grant access", "Предоставить доступ"), action: action)
-                        .buttonStyle(.plain)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(MuesliTheme.accent.opacity(0.9)))
-                }
-            case .informational(let note):
-                Text(note)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(MuesliTheme.textTertiary)
+                Text(item.unlocks)
+                    .font(.system(size: 11.5, weight: .regular))
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(MuesliTheme.spacing12)
-        .frame(maxWidth: .infinity, minHeight: 105, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).fill(MuesliTheme.cellFill))
-        .overlay(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
-    }
-
-    private func statusColor(for kind: ItemKind) -> Color {
-        switch kind {
-        case .grantable(let granted, _): return granted ? MuesliTheme.success : MuesliTheme.accent
-        case .informational: return MuesliTheme.textTertiary
-        }
+        .buttonStyle(.plain)
     }
 
     private func openPrivacyPane(_ pane: String) {
