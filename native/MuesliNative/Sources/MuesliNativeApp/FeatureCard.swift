@@ -43,27 +43,8 @@ struct FeatureCard: View {
     var compact: Bool = false
     var toggle: FeatureToggle? = nil
 
-    private var singleAction: FeatureAction? {
-        actions.count == 1 ? actions.first : nil
-    }
-
     var body: some View {
-        Group {
-            // A Toggle nested inside this card's own tap-to-navigate Button
-            // never received its own clicks on macOS — the outer Button
-            // swallowed the tap, so flipping the switch silently navigated
-            // to Settings instead (confirmed live: "умная чистка —
-            // переход в настройки"). Whole-card-as-button and an inner
-            // Toggle can't coexist; when there's a toggle, the action (if
-            // any) renders as its own small sibling button instead — see
-            // `cardBody` below.
-            if let singleAction, toggle == nil {
-                Button(action: singleAction.action) { cardBody }
-                    .buttonStyle(.plain)
-            } else {
-                cardBody
-            }
-        }
+        cardBody
     }
 
     private var cardBody: some View {
@@ -103,11 +84,14 @@ struct FeatureCard: View {
 
             Spacer(minLength: 0)
 
-            // When there's a toggle, even a single action renders as its
-            // own visible button (a sibling of the Toggle) instead of
-            // being folded into a whole-card Button — see the note in
-            // `body` above.
-            if !actions.isEmpty && (actions.count > 1 || toggle != nil) {
+            // Always rendered as an explicit, visible button — this card
+            // used to fold a single action into an invisible whole-card
+            // tap target with no visible affordance at all, which is why
+            // a relabeled action ("Добавить слово") never actually showed
+            // up on screen (confirmed live: "не вижу кнопки"). A toggle,
+            // if present, lives in its own row above and never nests
+            // inside this button.
+            if !actions.isEmpty {
                 HStack(spacing: 8) {
                     ForEach(actions) { action in
                         actionButton(action)
