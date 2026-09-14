@@ -354,7 +354,9 @@ struct SettingsView: View {
 
     private var generalSettingsPane: some View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing24) {
-            settingsSection(tr("General", "Общие")) {
+            // No label — would just repeat the "Общие"/"General" page title
+            // right above it.
+            settingsSection("") {
                 VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
                     settingsRow(tr("Launch at login", "Запускать при входе в систему")) {
                         settingsSwitch(isOn: appState.config.launchAtLogin) { newValue in
@@ -661,7 +663,9 @@ struct SettingsView: View {
 
     private var computerUseSettingsPane: some View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing24) {
-            settingsSection(tr("Computer Use", "Компьютер")) {
+            // No label — would just repeat the "Компьютер"/"Computer Use"
+            // page title right above it.
+            settingsSection("") {
                 settingsRow(tr("Enable planner", "Включить планировщик")) {
                     settingsSwitch(isOn: appState.config.enableComputerUsePlanner) { newValue in
                         controller.updateConfig { $0.enableComputerUsePlanner = newValue }
@@ -1659,13 +1663,20 @@ struct SettingsView: View {
     // MARK: - Layout Primitives
 
     @ViewBuilder
+    // An empty title omits the caption entirely — for the one section per
+    // pane whose label would otherwise just repeat the page's own title
+    // right above it (confirmed live: "Компьютер компьютер",
+    // "Общие общие"). The boxed content still renders; only the redundant
+    // second heading is skipped.
     private func settingsSection(_ title: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(MuesliTheme.textTertiary)
-                .textCase(.uppercase)
-                .padding(.leading, 2)
+            if !title.isEmpty {
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(MuesliTheme.textTertiary)
+                    .textCase(.uppercase)
+                    .padding(.leading, 2)
+            }
 
             VStack(alignment: .leading, spacing: 0) {
                 content()

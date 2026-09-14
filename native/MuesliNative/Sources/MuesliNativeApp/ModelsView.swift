@@ -94,35 +94,42 @@ struct ModelsView: View {
             .padding(.horizontal, MuesliTheme.spacing32)
             .padding(.top, MuesliTheme.spacing32)
 
-            HStack(alignment: .top, spacing: MuesliTheme.spacing16) {
-                SecondaryColumn(title: tr("Models", "Модели"), width: 240) {
-                    modelsSidebar
-                }
-
-                // Matches `MeetingTemplatesManagerView`'s editor-pane wrapper
-                // exactly: an explicit `maxHeight: .infinity` here, not just
-                // on the parent HStack. Without it the ScrollView reported
-                // its content's own (shorter) height instead of filling the
-                // space offered, leaving it visibly shorter than
-                // `SecondaryColumn`'s sidebar next to it.
-                ScrollView {
-                    Group {
-                        switch appState.modelsTab {
-                        case .speech:
-                            speechTabContent
-                        case .text:
-                            textModelsTabContent
-                        case .cleanup:
-                            cleanupTabContent
-                        case .catalog:
-                            catalogTabContent
-                        }
+            // `maxHeight: .infinity` on `SecondaryColumn` alone wasn't
+            // enough — confirmed live, the sidebar still rendered short
+            // next to a taller content column. Flexible-frame propagation
+            // through this many nested VStack/HStack layers evidently
+            // wasn't resolving to a concrete height reliably. A
+            // `GeometryReader` here reports exactly how much vertical space
+            // this row was actually given by ITS parent (after the title
+            // block above takes its own natural height) and both children
+            // are pinned to that concrete number — no ambiguity left for
+            // either one to under- or over-report.
+            GeometryReader { proxy in
+                HStack(alignment: .top, spacing: MuesliTheme.spacing16) {
+                    SecondaryColumn(title: tr("Models", "Модели"), width: 240) {
+                        modelsSidebar
                     }
-                    .padding(MuesliTheme.spacing24)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    ScrollView {
+                        Group {
+                            switch appState.modelsTab {
+                            case .speech:
+                                speechTabContent
+                            case .text:
+                                textModelsTabContent
+                            case .cleanup:
+                                cleanupTabContent
+                            case .catalog:
+                                catalogTabContent
+                            }
+                        }
+                        .padding(MuesliTheme.spacing24)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .padding(.vertical, 8)
                 }
-                .frame(maxHeight: .infinity, alignment: .top)
-                .padding(.vertical, 8)
+                .frame(height: proxy.size.height)
             }
             .padding(.horizontal, MuesliTheme.spacing32)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
