@@ -1007,6 +1007,8 @@ struct HomeView: View {
                 }
             ],
             previewAssetName: "meetings",
+            previewHeight: 170,
+            isHero: true,
             toggle: FeatureToggle(isOn: meetingsPermissionGranted) {
                 requestMeetingsPermissions()
             }
@@ -1074,7 +1076,7 @@ struct HomeView: View {
                     selectedSection = .insights
                 }
             ],
-            compact: true,
+            compact: false,
             previewAssetName: "insights"
         )
     }
@@ -1088,7 +1090,6 @@ struct HomeView: View {
     // no clipping, so an undersized parent frame doesn't crop overflow, it
     // lets content spill past the card's border into the row below.
     private static let heroRowHeight: CGFloat = 380
-    private static let mediumRowHeight: CGFloat = 300
     private static let smallRowHeight: CGFloat = 230
     // Icon(+toggle)-only tiles (no gif) — sized as small squarish widgets,
     // not stretched to match a gif card's height, per the bento-dashboard
@@ -1096,15 +1097,18 @@ struct HomeView: View {
     // together, instead of one bare card inflated to a big card's height.
     private static let tinyRowHeight: CGFloat = 150
 
-    /// Per Ilnar's repeated ask: cards vary in row-width by importance —
-    /// dictation gets the full row (3/3), meetings gets two-thirds next to
-    /// a stacked pair of small tiles in the remaining third, the next three
-    /// gif cards share equal thirds, and the small icon-only utility tiles
-    /// close out the board four-across. Widths are computed EXPLICITLY
-    /// from `width` (not left to automatic HStack negotiation, which only
-    /// splits evenly) — not SwiftUI's `Grid`/`.gridCellColumns` (confirmed
-    /// buggy for inconsistent per-row spans in an earlier pass on this
-    /// same board).
+    /// Vertical mosaic, approved on the design canvas ("Вариант 1"): two
+    /// full-width hero rows for the two flagship features (dictation,
+    /// meetings — the only two with a real on/off permission), then two
+    /// medium-card pairs (connect-a-model + on-device models; templates +
+    /// meeting-chat), then Insights promoted to its own full-width row
+    /// (the one card left without a natural pair, and the next most-used
+    /// feature after the two heroes), and finally the four icon+toggle
+    /// utility cards as a 2×2 grid instead of one cramped four-across row.
+    /// Widths are computed EXPLICITLY from `width` (not left to automatic
+    /// HStack negotiation) — not SwiftUI's `Grid`/`.gridCellColumns`
+    /// (confirmed buggy for inconsistent per-row spans in an earlier pass
+    /// on this same board).
     ///
     /// `width` is passed in from `functionsContent`'s outer
     /// `GeometryReader`, NOT measured locally in here — an earlier version
@@ -1125,38 +1129,36 @@ struct HomeView: View {
     /// computed to literally sum to the available space.
     @ViewBuilder
     private func mainFeaturesBoard(width: CGFloat) -> some View {
-        let twoThirds = (width - Self.boardSpacing) * 2 / 3
-        let halfRowThird = width - Self.boardSpacing - twoThirds
-        let thirdOfThree = (width - Self.boardSpacing * 2) / 3
-        let quarterOfFour = (width - Self.boardSpacing * 3) / 4
-        // The two small tiles stacked next to meetingsCard split its
-        // height exactly, so the row's outer edges line up.
-        let stackedTileHeight = (Self.mediumRowHeight - Self.boardSpacing) / 2
+        let half = (width - Self.boardSpacing) / 2
 
         VStack(spacing: Self.boardSpacing) {
             dictationCard
                 .frame(width: width, height: Self.heroRowHeight)
 
+            meetingsCard
+                .frame(width: width, height: Self.heroRowHeight)
+
             HStack(spacing: Self.boardSpacing) {
-                meetingsCard.frame(width: twoThirds, height: Self.mediumRowHeight)
-                VStack(spacing: Self.boardSpacing) {
-                    aiModelCard.frame(height: stackedTileHeight)
-                    onDeviceModelsCard.frame(height: stackedTileHeight)
-                }
-                .frame(width: halfRowThird)
+                aiModelCard.frame(width: half, height: Self.smallRowHeight)
+                onDeviceModelsCard.frame(width: half, height: Self.smallRowHeight)
             }
 
             HStack(spacing: Self.boardSpacing) {
-                templatesCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
-                meetingChatCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
-                insightsCard.frame(width: thirdOfThree, height: Self.smallRowHeight)
+                templatesCard.frame(width: half, height: Self.smallRowHeight)
+                meetingChatCard.frame(width: half, height: Self.smallRowHeight)
+            }
+
+            insightsCard
+                .frame(width: width, height: Self.smallRowHeight)
+
+            HStack(spacing: Self.boardSpacing) {
+                smartCleanupCard.frame(width: half, height: Self.tinyRowHeight)
+                voiceCommandsCard.frame(width: half, height: Self.tinyRowHeight)
             }
 
             HStack(spacing: Self.boardSpacing) {
-                smartCleanupCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                voiceCommandsCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                screenVideoCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
-                dictionaryCard.frame(width: quarterOfFour, height: Self.tinyRowHeight)
+                screenVideoCard.frame(width: half, height: Self.tinyRowHeight)
+                dictionaryCard.frame(width: half, height: Self.tinyRowHeight)
             }
         }
     }
