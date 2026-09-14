@@ -56,9 +56,7 @@ struct HomeView: View {
     @State private var insightsCustomDate = Date()
     @State private var insightsHeaderMeasuredHeight: CGFloat?
     @State private var showClearInsightsHistoryConfirmation = false
-    @State private var dictationPermissionGranted = false
-    @State private var meetingsPermissionGranted = false
-    @State private var featurePermissionPollTimer: Timer?
+    @State private var permissionStatus = FeaturePermissionStatus()
     @State private var showConnectModelSheet = false
 
     var body: some View {
@@ -916,6 +914,10 @@ struct HomeView: View {
             // can feed back into this number, unlike the old in-content
             // probe.
             let boardWidth = min(proxy.size.width - MuesliTheme.spacing24 * 2, 1100)
+            // The banner's own horizontal padding (see `FeatureBanner`) eats
+            // into the space available to the board's explicit-pixel-width
+            // cards — compensated once here, not re-measured inside.
+            let innerWidth = boardWidth - 40
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -930,32 +932,26 @@ struct HomeView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    // Presentation board — settings-panel-style cards: a looping
-                    // demo clip, icon + title + description, and (for features
-                    // with a real on/off state) a FUNCTIONAL toggle that fires
-                    // the request/connect action right here, not just a status
-                    // readout sending the user to Settings. The full permissions
-                    // picture sits right below (this is the "settings in
-                    // presentational format" page — Overview stays pure usage
-                    // stats, access/permissions content lives here instead).
-                    Text(tr("MAIN FEATURES", "ОСНОВНЫЕ ФУНКЦИИ"))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                        .textCase(.uppercase)
+                    // One cohesive banner surface — the main board and the
+                    // permissions section used to be two independently
+                    // bordered pieces (round 8 feedback: "снизу разрешения
+                    // надо тоже как то пихнуть в баннер") — now nested
+                    // inside a single `FeatureBanner`, matching the
+                    // design-canvas mockup's two-level nesting (one outer
+                    // panel, lighter cells inside it).
+                    FeatureBanner {
+                        mainFeaturesBoard(width: innerWidth)
 
-                    // One mosaic, not a "flagship" board plus a separate "MORE"
-                    // grid — round 6 feedback (with a bento-dashboard reference)
-                    // was that splitting them into two sections with a heading
-                    // between made the page read as disconnected pieces rather
-                    // than one cohesive board. Every card, gif-preview or
-                    // icon-only, is now sized proportionally to its own content
-                    // within a single composition.
-                    mainFeaturesBoard(width: boardWidth)
-                        .onAppear { startFeaturePermissionPolling() }
-                        .onDisappear { stopFeaturePermissionPolling() }
-
-                    FeaturePermissionsBoard(useCoreAudioTap: appState.config.useCoreAudioTap)
-                        .padding(.top, 14)
+                        FeaturePermissionsBoard(
+                            useCoreAudioTap: appState.config.useCoreAudioTap,
+                            status: permissionStatus
+                        )
+                    }
+                    .onAppear {
+                        permissionStatus.useCoreAudioTap = appState.config.useCoreAudioTap
+                        permissionStatus.startPolling()
+                    }
+                    .onDisappear { permissionStatus.stopPolling() }
                 }
                 .padding(.horizontal, MuesliTheme.spacing24)
                 .padding(.vertical, MuesliTheme.spacing20)
@@ -980,7 +976,7 @@ struct HomeView: View {
         } label: {
             FeatureCellContainer(isHero: true) {
                 FeatureCellHeader(icon: "mic.fill", title: tr("Voice dictation", "Диктовка голосом"), titleSize: 15) {
-                    PermissionBadge(granted: dictationPermissionGranted) { requestDictationPermissions() }
+                    PermissionBadge(granted: permissionStatus.dictationGranted) { requestDictationPermissions() }
                 }
                 HStack {
                     Spacer(minLength: 0)
@@ -1004,7 +1000,7 @@ struct HomeView: View {
         } label: {
             FeatureCellContainer(isHero: true) {
                 FeatureCellHeader(icon: "person.2.fill", title: tr("Meetings, summarized", "Встречи в готовых заметках"), titleSize: 15) {
-                    PermissionBadge(granted: meetingsPermissionGranted) { requestMeetingsPermissions() }
+                    PermissionBadge(granted: permissionStatus.meetingsGranted) { requestMeetingsPermissions() }
                 }
                 Text(tr("A meeting → a ready recap", "Встреча → готовая сводка"))
                     .font(.system(size: 15, weight: .bold))
@@ -1183,21 +1179,14 @@ struct HomeView: View {
         .buttonStyle(.plain)
     }
 
-    // Gutter between cards — bumped from the original 11pt per feedback
-    // that the board read as cramped ("отступы маленькие").
-    private static let boardSpacing: CGFloat = 16
-    // Sized to fit each row's actual card content (preview strip + padding
-    // + icon row + title + subtitle, all bumped alongside FeatureCard's own
-    // padding/spacing) with headroom to spare — FeatureCard's cardBody has
-    // no clipping, so an undersized parent frame doesn't crop overflow, it
-    // lets content spill past the card's border into the row below.
-    private static let heroRowHeight: CGFloat = 380
-    private static let smallRowHeight: CGFloat = 230
-    // Icon(+toggle)-only tiles (no gif) — sized as small squarish widgets,
-    // not stretched to match a gif card's height, per the bento-dashboard
-    // layout reference: small utility toggles are small tiles, tiling
-    // together, instead of one bare card inflated to a big card's height.
-    private static let tinyRowHeight: CGFloat = 150
+    // Gutter between cards — matches the mockup's banner/pair `gap: 14px`.
+    // Row heights are NOT forced here — each card sizes to its own content
+    // via `FeatureCellContainer`'s `minHeight` floor (a floor, not a
+    // ceiling); forcing a fixed height per row was tuned for the old
+    // gif-demo-era content and left new, much lighter content (a badge, a
+    // short list, a few chips) stranded in oversized, visibly stretched
+    // cards — exactly the "некрасиво расширено" feedback this fixes.
+    private static let boardSpacing: CGFloat = 14
 
     /// Vertical mosaic, approved on the design canvas ("Вариант 1"): two
     /// full-width hero rows for the two flagship features (dictation,
@@ -1235,32 +1224,32 @@ struct HomeView: View {
 
         VStack(spacing: Self.boardSpacing) {
             dictationHeroCard
-                .frame(width: width, height: Self.heroRowHeight)
+                .frame(width: width)
 
             meetingsHeroCard
-                .frame(width: width, height: Self.heroRowHeight)
+                .frame(width: width)
 
-            HStack(spacing: Self.boardSpacing) {
-                connectModelCard.frame(width: half, height: Self.smallRowHeight)
-                onDeviceModelsCard.frame(width: half, height: Self.smallRowHeight)
+            HStack(alignment: .top, spacing: Self.boardSpacing) {
+                connectModelCard.frame(width: half)
+                onDeviceModelsCard.frame(width: half)
             }
 
-            HStack(spacing: Self.boardSpacing) {
-                templatesCard.frame(width: half, height: Self.smallRowHeight)
-                meetingChatCard.frame(width: half, height: Self.smallRowHeight)
+            HStack(alignment: .top, spacing: Self.boardSpacing) {
+                templatesCard.frame(width: half)
+                meetingChatCard.frame(width: half)
             }
 
             insightsCard
-                .frame(width: width, height: Self.smallRowHeight)
+                .frame(width: width)
 
-            HStack(spacing: Self.boardSpacing) {
-                smartCleanupCard.frame(width: half, height: Self.tinyRowHeight)
-                voiceCommandsCard.frame(width: half, height: Self.tinyRowHeight)
+            HStack(alignment: .top, spacing: Self.boardSpacing) {
+                smartCleanupCard.frame(width: half)
+                voiceCommandsCard.frame(width: half)
             }
 
-            HStack(spacing: Self.boardSpacing) {
-                screenVideoCard.frame(width: half, height: Self.tinyRowHeight)
-                dictionaryCard.frame(width: half, height: Self.tinyRowHeight)
+            HStack(alignment: .top, spacing: Self.boardSpacing) {
+                screenVideoCard.frame(width: half)
+                dictionaryCard.frame(width: half)
             }
         }
     }
@@ -1277,29 +1266,6 @@ struct HomeView: View {
     private func requestMeetingsPermissions() {
         AVCaptureDevice.requestAccess(for: .audio) { _ in }
         CGRequestScreenCaptureAccess()
-    }
-
-    private func startFeaturePermissionPolling() {
-        refreshFeaturePermissions()
-        featurePermissionPollTimer?.invalidate()
-        let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            refreshFeaturePermissions()
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        featurePermissionPollTimer = timer
-    }
-
-    private func stopFeaturePermissionPolling() {
-        featurePermissionPollTimer?.invalidate()
-        featurePermissionPollTimer = nil
-    }
-
-    private func refreshFeaturePermissions() {
-        dictationPermissionGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-            && AXIsProcessTrusted()
-            && CGPreflightListenEventAccess()
-        meetingsPermissionGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-            && CGPreflightScreenCaptureAccess()
     }
 
     private func openSettings(_ section: SettingsSection, modelsTab: ModelsTab? = nil) {
@@ -1642,17 +1608,50 @@ private struct FeatureCellContainer<Content: View>: View {
     var isHero: Bool = false
     @ViewBuilder var content: () -> Content
 
+    /// A floor, not a forced height — content is free to grow past it, but
+    /// a content-light card (e.g. Insights alone in its full-width row)
+    /// doesn't collapse to near-nothing next to a taller sibling.
+    private var minHeight: CGFloat { isHero ? 150 : 110 }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12, content: content)
             .padding(isHero ? MuesliTheme.spacing20 : MuesliTheme.spacing16)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: minHeight, maxHeight: .infinity, alignment: .topLeading)
             .background(
                 RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
-                    .fill(MuesliTheme.backgroundBase)
+                    .fill(MuesliTheme.cellFill)
             )
             .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL))
             .overlay(
                 RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
+                    .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+            )
+    }
+}
+
+/// The outer "banner" surface the whole Функции board (and, folded in,
+/// the permissions section) lives inside — matches the design-canvas
+/// mockup's two-level nesting: one soft-gradient bordered panel, with
+/// lighter `FeatureCellContainer` cells nested inside it.
+private struct FeatureBanner<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+    private static var cornerRadius: CGFloat { 28 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14, content: content)
+            .padding(20)
+            .background(
+                RoundedRectangle(cornerRadius: Self.cornerRadius)
+                    .fill(
+                        LinearGradient(
+                            colors: [MuesliTheme.bannerFillTop, MuesliTheme.bannerFillBottom],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Self.cornerRadius)
                     .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
             )
     }

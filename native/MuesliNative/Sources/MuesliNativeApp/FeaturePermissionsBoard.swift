@@ -1,8 +1,76 @@
 import AppKit
 import AVFoundation
 import EventKit
+import Observation
 import SwiftUI
 import MuesliCore
+
+/// The single source of truth for every permission status shown on the
+/// Функции page — both the two hero cards' badges (Dictation, Meetings)
+/// and `FeaturePermissionsBoard`'s tiles read from one shared instance
+/// instead of each running its own 1s polling timer over overlapping
+/// system checks.
+@Observable
+final class FeaturePermissionStatus {
+    var microphone = false
+    var accessibility = false
+    var inputMonitoring = false
+    var screenRecording = false
+    var systemAudio = false
+    var calendar = false
+    var isCheckingSystemAudio = false
+
+    private var timer: Timer?
+    /// Set by the owning view before `startPolling()` — a `HomeView`
+    /// property, not known at `@State` property-initializer time (can't
+    /// reference `self.appState` there), so this stays a plain settable
+    /// var instead of an init parameter.
+    var useCoreAudioTap = false
+
+    var dictationGranted: Bool { microphone && accessibility && inputMonitoring }
+    var meetingsGranted: Bool { microphone && screenRecording }
+
+    func startPolling() {
+        refresh()
+        timer?.invalidate()
+        let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.refresh()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    func stopPolling() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    func refresh() {
+        microphone = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        accessibility = AXIsProcessTrusted()
+        inputMonitoring = CGPreflightListenEventAccess()
+        screenRecording = CGPreflightScreenCaptureAccess()
+        switch EKEventStore.authorizationStatus(for: .event) {
+        case .fullAccess, .authorized: calendar = true
+        default: calendar = false
+        }
+        refreshSystemAudioIfNeeded()
+    }
+
+    private func refreshSystemAudioIfNeeded() {
+        guard useCoreAudioTap, !isCheckingSystemAudio else { return }
+        isCheckingSystemAudio = true
+        Task { [weak self] in
+            let granted = await Task.detached(priority: .utility) {
+                CoreAudioSystemRecorder.checkSystemAudioPermission()
+            }.value
+            await MainActor.run {
+                self?.systemAudio = granted
+                self?.isCheckingSystemAudio = false
+            }
+        }
+    }
+}
 
 /// Round 5: the presentational "what does Muesli need access to, and why"
 /// section, relocated from the Overview/dashboard page onto the Функции
@@ -12,17 +80,17 @@ import MuesliCore
 /// Always visible (never self-hides once everything's granted) — this is
 /// meant to double as a presentational substitute for Settings → the
 /// technical permissions list, not a one-time nag.
+///
+/// Round 8: folded into the same `FeatureBanner` as the main feature board
+/// (per live feedback that this read as a bolted-on separate section) —
+/// status is now owned by the shared `FeaturePermissionStatus` (see
+/// `HomeView.swift`) instead of this view's own polling timer, since
+/// `HomeView` already polls overlapping permissions for the two hero
+/// cards' badges; one timer, one source of truth.
 struct FeaturePermissionsBoard: View {
     let useCoreAudioTap: Bool
+    let status: FeaturePermissionStatus
 
-    @State private var microphoneGranted = false
-    @State private var accessibilityGranted = false
-    @State private var inputMonitoringGranted = false
-    @State private var screenRecordingGranted = false
-    @State private var systemAudioGranted = false
-    @State private var calendarGranted = false
-    @State private var isCheckingSystemAudio = false
-    @State private var pollTimer: Timer?
     @State private var eventStore = EKEventStore()
 
     private enum ItemKind {
@@ -48,7 +116,7 @@ struct FeaturePermissionsBoard: View {
                 id: "mic", icon: "mic.fill",
                 title: tr("Microphone", "Микрофон"),
                 unlocks: tr("Needed for dictation and meeting recording.", "Нужен для диктовки и записи встреч."),
-                kind: .grantable(granted: microphoneGranted) {
+                kind: .grantable(granted: status.microphone) {
                     AVCaptureDevice.requestAccess(for: .audio) { _ in }
                 },
                 pane: "Privacy_Microphone"
@@ -57,7 +125,7 @@ struct FeaturePermissionsBoard: View {
                 id: "accessibility", icon: "cursorarrow.rays",
                 title: tr("Accessibility", "Универсальный доступ"),
                 unlocks: tr("Needed to paste dictated text where you're typing.", "Нужен, чтобы вставлять продиктованный текст куда ты печатаешь."),
-                kind: .grantable(granted: accessibilityGranted) {
+                kind: .grantable(granted: status.accessibility) {
                     let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
                     AXIsProcessTrustedWithOptions(opts)
                 },
@@ -67,7 +135,7 @@ struct FeaturePermissionsBoard: View {
                 id: "inputMonitoring", icon: "keyboard.fill",
                 title: tr("Input Monitoring", "Мониторинг ввода"),
                 unlocks: tr("Needed for the hold-to-talk dictation hotkey.", "Нужен для горячей клавиши диктовки."),
-                kind: .grantable(granted: inputMonitoringGranted) {
+                kind: .grantable(granted: status.inputMonitoring) {
                     if !CGRequestListenEventAccess() { openPrivacyPane("Privacy_ListenEvent") }
                 },
                 pane: "Privacy_ListenEvent"
@@ -76,7 +144,7 @@ struct FeaturePermissionsBoard: View {
                 id: "screenRecording", icon: "display",
                 title: tr("Screen Recording", "Запись экрана"),
                 unlocks: tr("Needed to capture what others say in a meeting.", "Нужен, чтобы записывать то, что говорят другие на встрече."),
-                kind: .grantable(granted: screenRecordingGranted) {
+                kind: .grantable(granted: status.screenRecording) {
                     CGRequestScreenCaptureAccess()
                 },
                 pane: "Privacy_ScreenCapture"
@@ -88,7 +156,7 @@ struct FeaturePermissionsBoard: View {
                 id: "systemAudio", icon: "waveform",
                 title: tr("System Audio", "Системный звук"),
                 unlocks: tr("Needed to capture meeting audio via the CoreAudio tap.", "Нужен для захвата звука встречи через CoreAudio."),
-                kind: .grantable(granted: systemAudioGranted) {
+                kind: .grantable(granted: status.systemAudio) {
                     Task { await CoreAudioSystemRecorder.requestSystemAudioAccess() }
                 },
                 pane: "Privacy_ScreenCapture"
@@ -100,7 +168,7 @@ struct FeaturePermissionsBoard: View {
                 id: "calendar", icon: "calendar",
                 title: tr("Calendar", "Календарь"),
                 unlocks: tr("Optional — shows upcoming meetings and their join links.", "Опционально — показывает ближайшие встречи и ссылки на подключение."),
-                kind: .grantable(granted: calendarGranted) {
+                kind: .grantable(granted: status.calendar) {
                     eventStore.requestFullAccessToEvents { _, _ in }
                 },
                 pane: "Privacy_Calendars"
@@ -140,16 +208,10 @@ struct FeaturePermissionsBoard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(tr("Access & Permissions", "Доступ и разрешения"))
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(MuesliTheme.textPrimary)
-                Text(grantedCount == grantableCount
-                    ? tr("Everything's granted — \(grantedCount)/\(grantableCount).", "Всё выдано — \(grantedCount)/\(grantableCount).")
-                    : tr("The same as Settings → Permissions, just explained.", "То же самое, что в Настройках → Разрешения, только с объяснением."))
-                    .font(MuesliTheme.caption())
-                    .foregroundStyle(MuesliTheme.textTertiary)
-            }
+            Text(tr("ACCESS & PERMISSIONS · \(grantedCount)/\(grantableCount)", "ДОСТУП И РАЗРЕШЕНИЯ · \(grantedCount)/\(grantableCount)"))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(MuesliTheme.textTertiary)
+                .textCase(.uppercase)
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 11)], spacing: 11) {
                 ForEach(items) { item in
@@ -157,8 +219,6 @@ struct FeaturePermissionsBoard: View {
                 }
             }
         }
-        .onAppear { startPolling() }
-        .onDisappear { stopPolling() }
     }
 
     private func permissionCard(_ item: Item) -> some View {
@@ -212,8 +272,8 @@ struct FeaturePermissionsBoard: View {
             }
         }
         .padding(MuesliTheme.spacing12)
-        .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).fill(MuesliTheme.backgroundBase))
+        .frame(maxWidth: .infinity, minHeight: 105, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).fill(MuesliTheme.cellFill))
         .overlay(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
     }
 
@@ -227,47 +287,6 @@ struct FeaturePermissionsBoard: View {
     private func openPrivacyPane(_ pane: String) {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
             NSWorkspace.shared.open(url)
-        }
-    }
-
-    private func startPolling() {
-        refreshStatuses()
-        pollTimer?.invalidate()
-        let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            refreshStatuses()
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        pollTimer = timer
-    }
-
-    private func stopPolling() {
-        pollTimer?.invalidate()
-        pollTimer = nil
-    }
-
-    private func refreshStatuses() {
-        microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        accessibilityGranted = AXIsProcessTrusted()
-        inputMonitoringGranted = CGPreflightListenEventAccess()
-        screenRecordingGranted = CGPreflightScreenCaptureAccess()
-        switch EKEventStore.authorizationStatus(for: .event) {
-        case .fullAccess, .authorized: calendarGranted = true
-        default: calendarGranted = false
-        }
-        refreshSystemAudioIfNeeded()
-    }
-
-    private func refreshSystemAudioIfNeeded() {
-        guard useCoreAudioTap, !isCheckingSystemAudio else { return }
-        isCheckingSystemAudio = true
-        Task {
-            let granted = await Task.detached(priority: .utility) {
-                CoreAudioSystemRecorder.checkSystemAudioPermission()
-            }.value
-            await MainActor.run {
-                systemAudioGranted = granted
-                isCheckingSystemAudio = false
-            }
         }
     }
 }

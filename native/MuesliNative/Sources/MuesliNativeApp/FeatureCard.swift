@@ -105,10 +105,10 @@ struct FeatureCard: View {
             }
         }
         .padding(MuesliTheme.spacing20)
-        .frame(maxWidth: .infinity, minHeight: compact ? 130 : 230, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: compact ? 110 : 150, maxHeight: .infinity, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
-                .fill(MuesliTheme.backgroundBase)
+                .fill(MuesliTheme.cellFill)
         )
         // Nothing else in this view clips — when a parent gives the card
         // less room than its content needs (e.g. a narrow windowed-mode
