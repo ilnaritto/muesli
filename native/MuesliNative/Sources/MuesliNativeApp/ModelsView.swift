@@ -67,54 +67,72 @@ struct ModelsView: View {
         // the existing "jump here" deep links from HomeView.swift still
         // land in the right place — they just scroll now instead of
         // switching a selected tab.
-        ScrollViewReader { scrollProxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: MuesliTheme.spacing32) {
-                    modelsSectionHeader(
-                        title: tr("Speech recognition", "Распознавание речи"),
-                        icon: "waveform",
-                        color: Color(hex: 0x007AFF)
-                    )
-                    speechTabContent
+        //
+        // Per direct feedback ("визуально цветом отделим что к чему
+        // относится") each section is wrapped in a tinted `sectionGroup`
+        // matching its header's accent color, and ("кнопку добавить
+        // облачную модель закрепить при скролле") the connect-cloud-model
+        // action lives in a fixed top-right overlay instead of scrolling
+        // away with the page.
+        ZStack(alignment: .topTrailing) {
+            ScrollViewReader { scrollProxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: MuesliTheme.spacing24) {
+                        sectionGroup(color: Color(hex: 0x007AFF)) {
+                            modelsSectionHeader(
+                                title: tr("Speech recognition", "Распознавание речи"),
+                                icon: "waveform",
+                                color: Color(hex: 0x007AFF)
+                            )
+                            speechTabContent
+                        }
                         .id(ModelsTab.speech)
 
-                    modelsSectionHeader(
-                        title: tr("Text & cleanup", "Текстовые и очистка"),
-                        icon: "text.bubble",
-                        color: Color(hex: 0xAF52DE),
-                        subtitle: tr("One connected model can handle both — turn each on for whatever it should do.", "Одна подключённая модель может делать и то, и другое — включи то, для чего она нужна.")
-                    )
-                    textAndCleanupContent
+                        sectionGroup(color: Color(hex: 0xAF52DE)) {
+                            modelsSectionHeader(
+                                title: tr("Text & cleanup", "Текстовые и очистка"),
+                                icon: "text.bubble",
+                                color: Color(hex: 0xAF52DE),
+                                subtitle: tr("One connected model can handle both — turn each on for whatever it should do.", "Одна подключённая модель может делать и то, и другое — включи то, для чего она нужна.")
+                            )
+                            textAndCleanupContent
+                        }
                         .id(ModelsTab.text)
 
-                    // Per direct feedback: the prominent "connect a cloud
-                    // model" action moved up here (right at the top of the
-                    // section it actually adds to) — the bottom section's
-                    // own big pill button was a redundant second copy of
-                    // the same action. Tapping that section's HEADER now
-                    // opens the same sheet instead.
-                    Button {
-                        showAddModelSheet = true
-                    } label: {
-                        modelsSectionHeader(
-                            title: tr("Add more", "Добавить ещё"),
-                            icon: "square.grid.2x2",
-                            color: Color(hex: 0x00C7BE)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    addMoreSectionContent
+                        sectionGroup(color: Color(hex: 0x00C7BE)) {
+                            // Tapping the section HEADER opens the same
+                            // connect sheet as the pinned top-right button —
+                            // a second obvious entry point right where this
+                            // "add more" section already lives.
+                            Button {
+                                showAddModelSheet = true
+                            } label: {
+                                modelsSectionHeader(
+                                    title: tr("Add more", "Добавить ещё"),
+                                    icon: "square.grid.2x2",
+                                    color: Color(hex: 0x00C7BE)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            addMoreSectionContent
+                        }
                         .id(ModelsTab.catalog)
+                    }
+                    .padding(MuesliTheme.spacing24)
+                    .padding(.top, MuesliTheme.spacing24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(MuesliTheme.spacing24)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .onAppear {
-                let anchor = appState.modelsTab == .cleanup ? ModelsTab.text : appState.modelsTab
-                DispatchQueue.main.async {
-                    scrollProxy.scrollTo(anchor, anchor: .top)
+                .onAppear {
+                    let anchor = appState.modelsTab == .cleanup ? ModelsTab.text : appState.modelsTab
+                    DispatchQueue.main.async {
+                        scrollProxy.scrollTo(anchor, anchor: .top)
+                    }
                 }
             }
+
+            connectCloudModelButton
+                .padding(.top, MuesliTheme.spacing20)
+                .padding(.trailing, MuesliTheme.spacing24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .sheet(isPresented: $showAddModelSheet) {
@@ -187,6 +205,48 @@ struct ModelsView: View {
     }
 
     // MARK: - Section header (one continuous page instead of tabs)
+
+    /// Pinned top-right action — stays in place while the page scrolls
+    /// (see the `ZStack(alignment: .topTrailing)` in `body`), so it's
+    /// always reachable regardless of which section is in view.
+    private var connectCloudModelButton: some View {
+        Button {
+            showAddModelSheet = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "plus.circle.fill")
+                Text(tr("Connect a cloud model", "Подключить облачную модель"))
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, MuesliTheme.spacing16)
+            .padding(.vertical, 10)
+            .background(MuesliTheme.accent)
+            .clipShape(Capsule())
+            .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Wraps one page section in a tint matching its header's accent color
+    /// so the eye can tell at a glance where "Speech recognition" ends and
+    /// "Text & cleanup" begins, instead of every section reading as the
+    /// same neutral gray column.
+    private func sectionGroup<Content: View>(
+        color: Color,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
+            content()
+        }
+        .padding(MuesliTheme.spacing16)
+        .background(color.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium + 6, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium + 6, style: .continuous)
+                .strokeBorder(color.opacity(0.28), lineWidth: 1)
+        )
+    }
 
     private func modelsSectionHeader(
         title: String,
@@ -295,23 +355,9 @@ struct ModelsView: View {
 
     @ViewBuilder
     private var textAndCleanupContent: some View {
-        Button {
-            showAddModelSheet = true
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "plus.circle.fill")
-                Text(tr("Connect a cloud model", "Подключить облачную модель"))
-            }
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, MuesliTheme.spacing16)
-            .padding(.vertical, 10)
-            .background(MuesliTheme.accent)
-            .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .padding(.bottom, MuesliTheme.spacing4)
-
+        // The prominent "connect a cloud model" action now lives in the
+        // pinned top-right overlay (`connectCloudModelButton` in `body`) —
+        // no in-line copy of it here anymore.
         VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
             let models = combinedTextAndCleanupModels
 
