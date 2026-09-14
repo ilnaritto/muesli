@@ -13,7 +13,6 @@ struct AddModelSheet: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    @State private var role: ModelRole
     @State private var provider: ModelProvider
     @State private var displayName: String = ""
     @State private var modelID: String = ""
@@ -24,22 +23,18 @@ struct AddModelSheet: View {
     @State private var testSucceeded = false
     @State private var showValidationError = false
 
-    init(controller: MuesliController, initialRole: ModelRole) {
-        self.controller = controller
-        _role = State(initialValue: initialRole)
-        _provider = State(initialValue: Self.availableProviders(for: initialRole).first ?? .openAICompatible)
-    }
+    /// Round 3: dropped the role picker — every provider connectable here
+    /// (ChatGPT, an OpenAI/Anthropic-compatible endpoint, Ollama, LM Studio)
+    /// speaks the same chat-completion capability and is now automatically
+    /// available on BOTH the Text and Cleanup tabs (`ConfiguredModel.roles`).
+    /// Bundled/local downloadable models (Parakeet, Whisper, the
+    /// post-processor GGUFs) keep their own download-progress cards on the
+    /// Speech/Cleanup tabs — nothing to connect here for those.
+    static let availableProviders: [ModelProvider] = [.chatGPTOAuth, .openAICompatible, .anthropicCompatible, .ollama, .lmStudio]
 
-    static func availableProviders(for role: ModelRole) -> [ModelProvider] {
-        switch role {
-        case .textGeneration:
-            return [.chatGPTOAuth, .openAICompatible, .anthropicCompatible, .ollama, .lmStudio]
-        case .transcription, .cleanup:
-            // Bundled local models are downloaded from their own tab (they
-            // need download-progress UI, not a form); this sheet only adds
-            // custom remote endpoints for these two roles.
-            return [.openAICompatible]
-        }
+    init(controller: MuesliController) {
+        self.controller = controller
+        _provider = State(initialValue: Self.availableProviders.first ?? .chatGPTOAuth)
     }
 
     var body: some View {
@@ -48,7 +43,6 @@ struct AddModelSheet: View {
             Divider().background(MuesliTheme.surfaceBorder)
             ScrollView {
                 VStack(alignment: .leading, spacing: MuesliTheme.spacing20) {
-                    roleSection
                     providerSection
                     parameterFields
                     testConnectionSection
@@ -60,10 +54,6 @@ struct AddModelSheet: View {
         }
         .frame(width: 460, height: 560)
         .background(MuesliTheme.backgroundDeep)
-        .onChange(of: role) { _, newRole in
-            provider = Self.availableProviders(for: newRole).first ?? .openAICompatible
-            resetFields()
-        }
         .onChange(of: provider) { _, _ in
             resetFields()
         }
@@ -109,29 +99,19 @@ struct AddModelSheet: View {
         .padding(MuesliTheme.spacing20)
     }
 
-    private var roleSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            fieldLabel(tr("Role", "Роль"))
-            Picker("", selection: $role) {
-                ForEach(ModelRole.allCases, id: \.self) { role in
-                    Text(role.title).tag(role)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-        }
-    }
-
     private var providerSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             fieldLabel(tr("Provider", "Провайдер"))
             Picker("", selection: $provider) {
-                ForEach(Self.availableProviders(for: role), id: \.self) { provider in
+                ForEach(Self.availableProviders, id: \.self) { provider in
                     Text(provider.title).tag(provider)
                 }
             }
             .labelsHidden()
             .pickerStyle(.menu)
+            Text(tr("Available on the Text and Cleanup tabs.", "Доступна на вкладках «Текстовые» и «Очистка»."))
+                .font(.system(size: 11))
+                .foregroundStyle(MuesliTheme.textTertiary)
         }
     }
 
@@ -289,7 +269,6 @@ struct AddModelSheet: View {
             guard controller.appState.isChatGPTAuthenticated else { return }
             controller.addConfiguredModel(
                 displayName: displayName.isEmpty ? "ChatGPT" : displayName,
-                role: role,
                 provider: provider,
                 modelID: modelID
             )
@@ -302,7 +281,6 @@ struct AddModelSheet: View {
             }
             controller.addConfiguredModel(
                 displayName: displayName.isEmpty ? provider.title : displayName,
-                role: role,
                 provider: provider,
                 modelID: model,
                 endpointURL: url
@@ -316,7 +294,6 @@ struct AddModelSheet: View {
             }
             controller.addConfiguredModel(
                 displayName: displayName.isEmpty ? (URL(string: url)?.host ?? provider.title) : displayName,
-                role: role,
                 provider: provider,
                 modelID: model,
                 endpointURL: url,

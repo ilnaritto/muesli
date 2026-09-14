@@ -169,6 +169,90 @@ struct ModelRegistryTests {
         #expect(resolved.meetingSummaryBackend == "chatgpt")
         #expect(resolved.openAIAPIKey.isEmpty)
     }
+
+    // MARK: - Round 3: shared Text/Cleanup pool
+
+    @Test("a cloud provider's roles include both textGeneration and cleanup")
+    func cloudProviderRolesIncludeBoth() {
+        let model = ConfiguredModel(displayName: "OpenAI", role: .textGeneration, provider: .openAICompatible, modelID: "gpt-5.4-mini")
+        #expect(model.roles == [.textGeneration, .cleanup])
+    }
+
+    @Test("a bundled local provider keeps only its stored role")
+    func bundledProviderKeepsSingleRole() {
+        let transcription = ConfiguredModel(displayName: "Parakeet", role: .transcription, provider: .bundledLocal, modelID: "parakeet-v3")
+        let cleanup = ConfiguredModel(displayName: "Qwen3 (local)", role: .cleanup, provider: .bundledLocal, modelID: "qwen3-cleanup")
+        #expect(transcription.roles == [.transcription])
+        #expect(cleanup.roles == [.cleanup])
+    }
+
+    @Test("a text-generation model added under .textGeneration also resolves for cleanup")
+    func textModelResolvesForCleanup() {
+        let secretRef = ModelSecretsStore.save("sk-test-cleanup")
+        let model = ConfiguredModel(
+            displayName: "OpenAI",
+            role: .textGeneration,
+            provider: .openAICompatible,
+            modelID: "gpt-5.4-mini",
+            endpointURL: "https://api.openai.com/v1/chat/completions",
+            keychainRef: secretRef
+        )
+        var config = AppConfig()
+        config.configuredModels = [model]
+        config.defaultModelIDs[ModelRole.cleanup.rawValue] = model.id
+
+        let resolved = config.resolvedForCleanup()
+
+        #expect(resolved.postProcessorBackend == TranscriptCleanupBackendOption.hosted(.openAI).backend)
+        #expect(resolved.openAIAPIKey == "sk-test-cleanup")
+        #expect(resolved.postProcessorOpenAIModel == "gpt-5.4-mini")
+
+        ModelSecretsStore.delete(ref: secretRef)
+    }
+
+    @Test("resolvedForCleanup resolves the secret from the keychain even after migration wiped the plaintext field")
+    func resolvedForCleanupSurvivesMigrationSecretWipe() {
+        let secretRef = ModelSecretsStore.save("sk-post-migration")
+        let model = ConfiguredModel(
+            displayName: "OpenAI",
+            role: .textGeneration,
+            provider: .openAICompatible,
+            modelID: "gpt-5.4-mini",
+            endpointURL: "https://api.openai.com/v1/chat/completions",
+            keychainRef: secretRef
+        )
+        var config = AppConfig()
+        // Simulates migrateLegacyModelsToRegistryIfNeeded's plaintext wipe —
+        // resolvedForCleanup must still find the key via keychainRef, not
+        // this now-empty field.
+        config.openAIAPIKey = ""
+        config.configuredModels = [model]
+        config.defaultModelIDs[ModelRole.cleanup.rawValue] = model.id
+
+        let resolved = config.resolvedForCleanup()
+
+        #expect(resolved.openAIAPIKey == "sk-post-migration")
+
+        ModelSecretsStore.delete(ref: secretRef)
+    }
+
+    @Test("Text and Cleanup defaults are independently settable for the same shared model pool")
+    func textAndCleanupDefaultsAreIndependent() {
+        let modelA = ConfiguredModel(displayName: "OpenAI", role: .textGeneration, provider: .openAICompatible, modelID: "gpt-5.4-mini", endpointURL: "https://api.openai.com/v1/chat/completions")
+        let modelB = ConfiguredModel(displayName: "Ollama", role: .textGeneration, provider: .ollama, modelID: "qwen3.5", endpointURL: "http://localhost:11434")
+        var config = AppConfig()
+        config.configuredModels = [modelA, modelB]
+        config.defaultModelIDs[ModelRole.textGeneration.rawValue] = modelA.id
+        config.defaultModelIDs[ModelRole.cleanup.rawValue] = modelB.id
+
+        #expect(config.defaultModelIDs[ModelRole.textGeneration.rawValue] == modelA.id)
+        #expect(config.defaultModelIDs[ModelRole.cleanup.rawValue] == modelB.id)
+
+        let resolvedText = config.resolvedForTextGeneration()
+        let resolvedCleanup = config.resolvedForCleanup()
+        #expect(resolvedText.meetingSummaryBackend == MeetingSummaryBackendOption.openAI.backend)
+        #expect(resolvedCleanup.postProcessorBackend == TranscriptCleanupBackendOption.hosted(.ollama).backend)
+    }
 }
 
 @Suite("ModelSecretsStore")

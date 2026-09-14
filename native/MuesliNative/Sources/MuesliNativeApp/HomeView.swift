@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Charts
 import CoreImage.CIFilterBuiltins
 import SwiftUI
@@ -53,6 +54,10 @@ struct HomeView: View {
     @FocusState private var insightsInputFocused: Bool
     @State private var showInsightsDatePopover = false
     @State private var insightsCustomDate = Date()
+    @State private var insightsHeaderMeasuredHeight: CGFloat?
+    @State private var showClearInsightsHistoryConfirmation = false
+    @State private var permissionStatus = FeaturePermissionStatus()
+    @State private var showConnectModelSheet = false
 
     var body: some View {
         HStack(spacing: 5) {
@@ -63,11 +68,26 @@ struct HomeView: View {
             sectionContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .onAppear {
+            // Task 5: land on Features once after onboarding, so a new user
+            // sees the tour before the empty Overview stats. The permissions
+            // wizard itself is a separate flow — untouched.
+            if !appState.config.hasSeenFeaturesTour {
+                selectedSection = .functions
+                controller.updateConfig { $0.hasSeenFeaturesTour = true }
+            }
+        }
         .sheet(isPresented: $isBridgeQRCodePresented) {
             IPhoneBridgeQRCodeSheet(
                 deepLinkURL: IPhoneBridgeLinks.iOSSyncDeepLinkURL,
                 installURL: IPhoneBridgeLinks.installURL
             )
+        }
+        // Connecting a model right from the Функции page — per feedback
+        // that it must be possible to turn things on/connect them here,
+        // not just be sent off to Settings.
+        .sheet(isPresented: $showConnectModelSheet) {
+            AddModelSheet(controller: controller)
         }
     }
 
@@ -114,39 +134,37 @@ struct HomeView: View {
     @ViewBuilder
     private var insightsContent: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(tr("Insights", "Инсайты"))
-                    .font(MuesliTheme.pageTitle())
-                    .foregroundStyle(MuesliTheme.textPrimary)
-                Text(tr("Ask AI about your meetings — it reads all of them at once.", "Спроси ИИ про свои встречи — он читает сразу все."))
-                    .font(MuesliTheme.callout())
-                    .foregroundStyle(MuesliTheme.textTertiary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, MuesliTheme.spacing24)
-            .padding(.top, MuesliTheme.spacing20)
-            .padding(.bottom, MuesliTheme.spacing12)
-
-            ScrollViewReader { proxy in
-                ScrollView {
-                    if appState.insightsChatHistory.isEmpty && !appState.insightsChatAwaiting {
-                        insightsEmptyState
-                    } else {
-                        VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-                            ForEach(appState.insightsChatHistory) { turn in
-                                insightsBubble(turn).id(turn.id)
+            ZStack(alignment: .top) {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        if appState.insightsChatHistory.isEmpty && !appState.insightsChatAwaiting {
+                            insightsEmptyState
+                        } else {
+                            VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+                                ForEach(appState.insightsChatHistory) { turn in
+                                    insightsBubble(turn).id(turn.id)
+                                }
+                                if appState.insightsChatAwaiting {
+                                    insightsTypingBubble.id("insights-typing")
+                                }
                             }
-                            if appState.insightsChatAwaiting {
-                                insightsTypingBubble.id("insights-typing")
-                            }
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
                         }
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .padding(.top, MuesliTheme.spacing8)
                     }
+                    .contentMargins(.top, insightsHeaderClearance + MuesliTheme.spacing8, for: .scrollContent)
+                    .contentMargins(.bottom, MuesliTheme.spacing20, for: .scrollContent)
+                    .padding(.horizontal, MuesliTheme.spacing24)
+                    .onChange(of: appState.insightsChatHistory.count) { _, _ in insightsScrollToBottom(proxy) }
+                    .onChange(of: appState.insightsChatAwaiting) { _, _ in insightsScrollToBottom(proxy) }
                 }
-                .padding(.horizontal, MuesliTheme.spacing24)
-                .onChange(of: appState.insightsChatHistory.count) { _, _ in insightsScrollToBottom(proxy) }
-                .onChange(of: appState.insightsChatAwaiting) { _, _ in insightsScrollToBottom(proxy) }
+
+                insightsHeaderBackdropGradient
+                insightsFloatingHeader
+                    .onGeometryChange(for: CGFloat.self) { proxy in
+                        proxy.size.height
+                    } action: { height in
+                        insightsHeaderMeasuredHeight = height
+                    }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -164,6 +182,87 @@ struct HomeView: View {
         .frame(maxWidth: 900)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(.easeInOut(duration: 0.15), value: appState.config.insightsHintsEnabled)
+        .alert(tr("Clear History", "Очистить историю"), isPresented: $showClearInsightsHistoryConfirmation) {
+            Button(tr("Clear", "Очистить"), role: .destructive) {
+                appState.insightsChatHistory.removeAll()
+            }
+            Button(tr("Cancel", "Отмена"), role: .cancel) {}
+        } message: {
+            Text(tr("This clears the conversation. Your date, folder, and model selection stay as they are.", "Это очистит переписку. Выбранные период, папка и модель останутся прежними."))
+        }
+    }
+
+    // MARK: Insights — floating pill header (task 3)
+
+    private var insightsHeaderClearance: CGFloat {
+        insightsHeaderMeasuredHeight ?? 74
+    }
+
+    /// Soft fade under the floating pill so messages scrolling behind it
+    /// dim out instead of getting clipped — mirrors `headerBackdropGradient`
+    /// on the meeting page.
+    private var insightsHeaderBackdropGradient: some View {
+        LinearGradient(
+            stops: [
+                .init(color: MuesliTheme.backgroundDeep.opacity(0.7), location: 0),
+                .init(color: MuesliTheme.backgroundDeep.opacity(0), location: 1)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .frame(height: insightsHeaderClearance + 20)
+        .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private var insightsFloatingHeader: some View {
+        HStack(alignment: .center, spacing: 11) {
+            // Actual pill chip now, matching the meeting page's headerPill —
+            // was bare text over the gradient before, which didn't read as
+            // a pill at all.
+            VStack(alignment: .leading, spacing: 1) {
+                Text(tr("Insights", "Инсайты"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(MuesliTheme.textPrimary)
+                Text(tr("Ask AI about your meetings", "Спроси ИИ про свои встречи"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(MuesliTheme.textTertiary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Capsule().fill(MuesliTheme.backgroundBase))
+            .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+
+            insightsMoreMenu
+        }
+        .padding(.horizontal, MuesliTheme.spacing24)
+        .padding(.top, MuesliTheme.spacing20)
+        .padding(.bottom, MuesliTheme.spacing12)
+    }
+
+    private var insightsMoreMenu: some View {
+        Menu {
+            Button(role: .destructive) {
+                showClearInsightsHistoryConfirmation = true
+            } label: {
+                Label(tr("Clear History", "Очистить историю"), systemImage: "trash")
+            }
+            .disabled(appState.insightsChatHistory.isEmpty)
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(MuesliTheme.textSecondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .frame(width: 40, height: 40)
+        .background(Circle().fill(MuesliTheme.backgroundBase))
+        .overlay(Circle().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+        .contentShape(Circle())
+        .help(tr("More actions", "Другие действия"))
     }
 
     // MARK: Insights — empty state & bubbles
@@ -647,7 +746,11 @@ struct HomeView: View {
             }
             content()
         }
-        .frame(maxWidth: .infinity, minHeight: 190, alignment: .topLeading)
+        // maxHeight: .infinity lets a card whose own content is shorter
+        // (e.g. filler words with an empty-state hint) stretch to match a
+        // taller sibling in the same grid row, instead of leaving its own
+        // background/border shorter than the row and reading as "smaller".
+        .frame(maxWidth: .infinity, minHeight: 165, maxHeight: .infinity, alignment: .topLeading)
         .padding(MuesliTheme.spacing16)
         .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).fill(MuesliTheme.backgroundBase))
         .overlay(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
@@ -660,11 +763,11 @@ struct HomeView: View {
                     x: .value("Day", day.shortLabel),
                     y: .value("Minutes", day.minutes)
                 )
-                .foregroundStyle(MuesliTheme.accent)
+                .foregroundStyle(Color(hex: 0x34AADC))
                 .cornerRadius(4)
             }
             .chartYAxis { AxisMarks(position: .leading) }
-            .frame(height: 130)
+            .frame(height: 105)
         }
     }
 
@@ -676,16 +779,16 @@ struct HomeView: View {
                         x: .value("Week", point.weekStart),
                         y: .value("Minutes", point.avgMinutes)
                     )
-                    .foregroundStyle(MuesliTheme.accent)
+                    .foregroundStyle(Color(hex: 0x34C759))
                     .interpolationMethod(.catmullRom)
                     PointMark(
                         x: .value("Week", point.weekStart),
                         y: .value("Minutes", point.avgMinutes)
                     )
-                    .foregroundStyle(MuesliTheme.accent)
+                    .foregroundStyle(Color(hex: 0x34C759))
                 }
                 .chartXAxis { AxisMarks(values: .stride(by: .weekOfYear)) { _ in AxisGridLine() } }
-                .frame(height: 130)
+                .frame(height: 105)
             } else {
                 emptyHint(tr("Not enough meetings yet for a trend.", "Пока мало встреч для тренда."))
             }
@@ -698,17 +801,25 @@ struct HomeView: View {
                 emptyHint(tr("No words yet.", "Пока нет слов."))
             } else {
                 let maxCount = a.topWords.first?.count ?? 1
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(a.topWords.prefix(8)) { w in
-                        HStack(spacing: 8) {
+                // One accent color, shaded from strongest (most frequent) to
+                // faintest — a rainbow across unrelated hues read as noisy;
+                // shades of the same color still separate each row visually
+                // while reinforcing the rank/frequency order.
+                // Follows the user's chosen accent (MuesliTheme.accent),
+                // not a hardcoded hex — a fixed blue here read as wrong once
+                // Anna picked a different app accent (purple).
+                let base = MuesliTheme.accent
+                VStack(alignment: .leading, spacing: 7) {
+                    ForEach(Array(a.topWords.prefix(8).enumerated()), id: \.element.id) { index, w in
+                        HStack(spacing: 10) {
                             Text(w.word)
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: 13, weight: .medium))
                                 .foregroundStyle(MuesliTheme.textSecondary)
-                                .frame(width: 92, alignment: .leading)
+                                .frame(width: 96, alignment: .leading)
                                 .lineLimit(1)
                             GeometryReader { geo in
                                 Capsule()
-                                    .fill(MuesliTheme.accent.opacity(0.7))
+                                    .fill(base.opacity(max(0.3, 0.95 - Double(index) * 0.09)))
                                     .frame(width: max(6, geo.size.width * CGFloat(w.count) / CGFloat(maxCount)))
                             }
                             .frame(height: 8)
@@ -781,155 +892,528 @@ struct HomeView: View {
 
     @ViewBuilder
     private var functionsContent: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(tr("Features", "Функции"))
-                        .font(MuesliTheme.pageTitle())
-                        .foregroundStyle(MuesliTheme.textPrimary)
+        // `GeometryReader` used as the OUTER container (not nested inside
+        // the scrollable content) reports exactly what ITS OWN parent
+        // proposes — driven purely by the window/sidebar layout — and
+        // never gets inflated by what's inside the ScrollView. This
+        // matters here specifically: the board's cards used to measure
+        // their available width from a probe placed INSIDE the same
+        // content stack as the board itself, and a vertical `ScrollView`
+        // doesn't constrain its content's width to the viewport by
+        // default, so the board's own ~1100pt design demand echoed back
+        // as the "measured" width — a stable, window-size-INDEPENDENT
+        // fixed point (1100 minus padding), not the real window width.
+        // That's why nothing about the on-screen result ever changed
+        // across several rounds of fixing the scale math: the input was
+        // never actually connected to the window's true size. Measuring
+        // out here, above the ScrollView, breaks that loop structurally.
+        GeometryReader { proxy in
+            // Explicit width, clamped to the page's usual 1100pt cap —
+            // computed ONCE here from the real proposal, then handed down
+            // as a plain value. Nothing downstream (the board, its cards)
+            // can feed back into this number, unlike the old in-content
+            // probe.
+            let boardWidth = min(proxy.size.width - MuesliTheme.spacing24 * 2, 1100)
 
-                    Text(tr("Everything Muesli can do — and how to switch it on.", "Всё, что умеет Muesli, и как это включить."))
-                        .font(MuesliTheme.callout())
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(tr("Features", "Функции"))
+                            .font(MuesliTheme.pageTitle())
+                            .foregroundStyle(MuesliTheme.textPrimary)
 
-                // Flagship features — 2 per row, larger.
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 11), GridItem(.flexible(), spacing: 11)], spacing: 11) {
-                    ForEach(flagshipFeatures) { $0 }
-                }
+                        Text(tr("Everything Muesli can do — and how to switch it on.", "Всё, что умеет Muesli, и как это включить."))
+                            .font(MuesliTheme.callout())
+                            .foregroundStyle(MuesliTheme.textTertiary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Secondary features — 3 per row, compact.
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 11), count: 3), spacing: 11) {
-                    ForEach(compactFeatures) { $0 }
+                    // One cohesive group — the main board and the
+                    // permissions section used to be two separate pieces
+                    // with a gap between them (round 8 feedback: "снизу
+                    // разрешения надо тоже как то пихнуть в баннер"); now
+                    // one continuous flow of cards. No shared outer
+                    // background/border — per follow-up feedback, only the
+                    // individual cards should have their own fill/border,
+                    // not an extra dark panel wrapping all of them.
+                    FeatureBanner {
+                        mainFeaturesBoard(width: boardWidth)
+
+                        FeaturePermissionsBoard(
+                            useCoreAudioTap: appState.config.useCoreAudioTap,
+                            status: permissionStatus,
+                            width: boardWidth
+                        )
+                    }
+                    .onAppear {
+                        permissionStatus.useCoreAudioTap = appState.config.useCoreAudioTap
+                        permissionStatus.startPolling()
+                    }
+                    .onDisappear { permissionStatus.stopPolling() }
                 }
+                .padding(.horizontal, MuesliTheme.spacing24)
+                .padding(.vertical, MuesliTheme.spacing20)
+                .frame(width: proxy.size.width, alignment: .leading)
             }
-            .padding(.horizontal, MuesliTheme.spacing24)
-            .padding(.vertical, MuesliTheme.spacing20)
-            .frame(maxWidth: 1100, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func openSettings(_ section: SettingsSection) {
+    // MARK: - Features tour (task 5)
+
+    /// Content per card matches the design-canvas mockup approved as
+    /// "Вариант 1" ("1 — итог: мозаика, 2 колонки") — every card shows the
+    /// app's actual live data (connected models, engine count, the default
+    /// template's name, the real permission state) in a compact information
+    /// panel, not a generic marketing subtitle with a looping demo clip.
+    /// Only the two hero cards (a real on/off permission) get a status
+    /// badge; the rest are single-tap navigation cards to their Settings
+    /// section, mirroring the mockup's chevron affordance.
+    // Neither hero card wraps its whole body in a navigate-on-tap Button
+    // anymore — that Button used to sit AROUND the PermissionBadge, and on
+    // macOS the outer Button silently ate every tap meant for the badge
+    // (confirmed live), so "Выдать доступ" did nothing. The badge is now
+    // the card's only Button; `SettingsLinkButton` is a separate, sibling
+    // control for "go configure this," never nested inside anything else.
+    private var dictationHeroCard: some View {
+        FeatureCellContainer(isHero: true) {
+            FeatureCellHeader(icon: "mic.fill", title: tr("Voice dictation", "Диктовка голосом"), titleSize: 15) {
+                PermissionBadge(granted: permissionStatus.dictationGranted) {
+                    if permissionStatus.dictationGranted {
+                        openPrivacyPane(dictationMissingPane())
+                    } else {
+                        requestDictationPermissions()
+                        openPrivacyPane(dictationMissingPane())
+                    }
+                }
+            }
+            HStack {
+                Spacer(minLength: 0)
+                HotkeyGlyph(symbol: "⌥", badgeIcon: "mic.fill")
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 4)
+            Text(tr("Hold Right Option and speak — the text lands right at your cursor.", "Зажми Right Option и говори — текст сам встаёт у курсора."))
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(MuesliTheme.textSecondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+            SettingsLinkButton(label: tr("Set up dictation", "Настроить диктовку")) {
+                openSettings(.dictation)
+            }
+        }
+    }
+
+    private var meetingsHeroCard: some View {
+        FeatureCellContainer(isHero: true) {
+            FeatureCellHeader(icon: "person.2.fill", title: tr("Meetings, summarized", "Встречи в готовых заметках"), titleSize: 15) {
+                PermissionBadge(granted: permissionStatus.meetingsGranted) {
+                    if permissionStatus.meetingsGranted {
+                        openPrivacyPane(meetingsMissingPane())
+                    } else {
+                        requestMeetingsPermissions()
+                        openPrivacyPane(meetingsMissingPane())
+                    }
+                }
+            }
+            Text(tr("A meeting → a ready recap", "Встреча → готовая сводка"))
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(MuesliTheme.textPrimary)
+            Text(tr("Microphone and screen audio. You just talk — the note builds itself, in your template.", "Микрофон и звук с экрана. Ты просто разговариваешь — заметка соберётся сама, по шаблону."))
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(MuesliTheme.textSecondary)
+            SettingsLinkButton(label: tr("Meeting settings", "Настройки встреч")) {
+                openSettings(.meetings)
+            }
+        }
+    }
+
+    private var connectModelCard: some View {
+        Button {
+            showConnectModelSheet = true
+        } label: {
+            FeatureCellContainer {
+                FeatureCellHeader(icon: "link", title: tr("Connect a model", "Подключить модель")) {
+                    FeatureCellChevron()
+                }
+                Text("ChatGPT · OpenAI · OpenRouter · Ollama")
+                    .font(.system(size: 10.5, weight: .regular))
+                    .foregroundStyle(MuesliTheme.textTertiary)
+
+                let models = Array(controller.configuredModels(role: .textGeneration).prefix(3))
+                let activeID = controller.defaultConfiguredModelID(role: .textGeneration)
+                if models.isEmpty {
+                    Text(tr("No model connected yet", "Пока не подключена ни одна модель"))
+                        .font(.system(size: 11.5, weight: .regular))
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(models) { model in
+                            let isActive = model.id == activeID
+                            HStack(spacing: 7) {
+                                Circle()
+                                    .fill(isActive ? MuesliTheme.success : MuesliTheme.textPrimary.opacity(0.25))
+                                    .frame(width: 5, height: 5)
+                                Text(model.displayName)
+                                    .font(.system(size: 11.5, weight: isActive ? .semibold : .regular))
+                                    .foregroundStyle(isActive ? MuesliTheme.textPrimary : MuesliTheme.textSecondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                }
+
+                HStack(spacing: 6) {
+                    ZStack {
+                        Circle().strokeBorder(MuesliTheme.textPrimary.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [2]))
+                        Image(systemName: "plus")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(MuesliTheme.textTertiary)
+                    }
+                    .frame(width: 13, height: 13)
+                    Text(tr("Add a model", "Добавить модель"))
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                }
+                .padding(.top, 2)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // Engine count/names are real, documented in this project's own
+    // CLAUDE.md ("11 ASR models: Parakeet v3/v2, Whisper Tiny/Small/
+    // Medium/Large Turbo, Cohere Transcribe, Nemotron 3.5 Multilingual,
+    // SenseVoice Small, Qwen3 ASR, Indic ASR") — not invented for this card.
+    private var onDeviceModelsCard: some View {
+        Button {
+            openSettings(.models, modelsTab: .speech)
+        } label: {
+            FeatureCellContainer {
+                FeatureCellHeader(icon: "square.and.arrow.down.fill", title: tr("On-device", "На устройстве")) {
+                    FeatureCellChevron()
+                }
+                Text(tr("Recognize speech as text — offline.", "Распознают речь в текст — офлайн."))
+                    .font(.system(size: 11.5, weight: .regular))
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text("11")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(MuesliTheme.textPrimary)
+                    Text(tr("engines", "движков"))
+                        .font(.system(size: 11.5, weight: .regular))
+                        .foregroundStyle(MuesliTheme.textSecondary)
+                }
+                HStack(spacing: 6) {
+                    EngineTagPill(text: "Parakeet")
+                    EngineTagPill(text: "Whisper")
+                    EngineTagPill(text: "+9")
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var templatesCard: some View {
+        Button {
+            controller.showMeetingTemplatesManager()
+        } label: {
+            FeatureCellContainer {
+                FeatureCellHeader(icon: "square.text.square.fill", title: tr("Note templates", "Шаблоны заметок")) {
+                    FeatureCellChevron()
+                }
+                let defaultTemplate = controller.defaultMeetingTemplate()
+                HStack(spacing: 5) {
+                    Text(tr("Template: ", "Шаблон: ") + defaultTemplate.name)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(MuesliTheme.textPrimary.opacity(0.85))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 7, weight: .semibold))
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(MuesliTheme.textPrimary.opacity(0.06)))
+                .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+
+                Text(tr("Picks how every new meeting note is structured.", "Определяет, как оформляется каждая новая заметка о встрече."))
+                    .font(.system(size: 11.5, weight: .regular))
+                    .foregroundStyle(MuesliTheme.textSecondary)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var meetingChatCard: some View {
+        Button {
+            openSettings(.meetings)
+        } label: {
+            FeatureCellContainer {
+                FeatureCellHeader(icon: "bubble.left.and.text.bubble.right.fill", title: tr("Chat with your meeting", "Чат с встречей")) {
+                    FeatureCellChevron()
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    ChatBubble(text: tr("When's the next call?", "Когда следующий созвон?"), isMe: false)
+                    ChatBubble(text: tr("Thursday at 3pm.", "В четверг в 15:00."), isMe: true)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var insightsCard: some View {
+        Button {
+            selectedSection = .insights
+        } label: {
+            FeatureCellContainer {
+                FeatureCellHeader(icon: "magnifyingglass", title: tr("Insights — across all meetings", "Инсайты по всем встречам")) {
+                    FeatureCellChevron()
+                }
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                    Text(tr("What did we agree with the client?", "О чём договорились с клиентом?"))
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundStyle(MuesliTheme.textSecondary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.black.opacity(0.15)))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+
+                HStack(spacing: 6) {
+                    InsightHintChip(text: tr("My tasks", "Мои задачи"))
+                    InsightHintChip(text: tr("Decisions", "Решения"))
+                    InsightHintChip(text: tr("Risks", "Риски"))
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // Gutter between cards — matches the mockup's banner/pair `gap: 14px`.
+    // Row heights are NOT forced here — each card sizes to its own content
+    // via `FeatureCellContainer`'s `minHeight` floor (a floor, not a
+    // ceiling); forcing a fixed height per row was tuned for the old
+    // gif-demo-era content and left new, much lighter content (a badge, a
+    // short list, a few chips) stranded in oversized, visibly stretched
+    // cards — exactly the "некрасиво расширено" feedback this fixes.
+    private static let boardSpacing: CGFloat = 14
+
+    /// Vertical mosaic, approved on the design canvas ("Вариант 1"): two
+    /// full-width hero rows for the two flagship features (dictation,
+    /// meetings — the only two with a real on/off permission), then two
+    /// medium-card pairs (connect-a-model + on-device models; templates +
+    /// meeting-chat), then Insights promoted to its own full-width row
+    /// (the one card left without a natural pair, and the next most-used
+    /// feature after the two heroes), and finally the four icon+toggle
+    /// utility cards as a 2×2 grid instead of one cramped four-across row.
+    /// Widths are computed EXPLICITLY from `width` (not left to automatic
+    /// HStack negotiation) — not SwiftUI's `Grid`/`.gridCellColumns`
+    /// (confirmed buggy for inconsistent per-row spans in an earlier pass
+    /// on this same board).
+    ///
+    /// `width` is passed in from `functionsContent`'s outer
+    /// `GeometryReader`, NOT measured locally in here — an earlier version
+    /// had its own width probe living inside this same view tree, and its
+    /// "measured" value turned out to just be this board's own ~1100pt
+    /// design width echoing back (a vertical `ScrollView` doesn't clamp
+    /// its content's width to the viewport by default), a fixed point
+    /// completely disconnected from the real window size. Every fix to
+    /// the probe/consumption logic kept failing identically because the
+    /// INPUT itself was circular. Taking `width` as a plain parameter from
+    /// outside this view's own subtree removes that loop structurally.
+    ///
+    /// A true proportional "zoom out" (shrinking fonts/icons too, via
+    /// `.scaleEffect`) was attempted per explicit feedback and abandoned —
+    /// `.scaleEffect` composed unreliably with the rest of this layout.
+    /// Columns resize directly from `width` instead: text/icons stay their
+    /// natural size, but nothing can overflow, since every card's width is
+    /// computed to literally sum to the available space.
+    @ViewBuilder
+    private func mainFeaturesBoard(width: CGFloat) -> some View {
+        let half = (width - Self.boardSpacing) / 2
+
+        VStack(spacing: Self.boardSpacing) {
+            dictationHeroCard
+                .frame(width: width)
+
+            meetingsHeroCard
+                .frame(width: width)
+
+            HStack(alignment: .top, spacing: Self.boardSpacing) {
+                connectModelCard.frame(width: half)
+                onDeviceModelsCard.frame(width: half)
+            }
+
+            HStack(alignment: .top, spacing: Self.boardSpacing) {
+                templatesCard.frame(width: half)
+                meetingChatCard.frame(width: half)
+            }
+
+            insightsCard
+                .frame(width: width)
+
+            HStack(alignment: .top, spacing: Self.boardSpacing) {
+                smartCleanupCard.frame(width: half)
+                voiceCommandsCard.frame(width: half)
+            }
+
+            HStack(alignment: .top, spacing: Self.boardSpacing) {
+                screenVideoCard.frame(width: half)
+                dictionaryCard.frame(width: half)
+            }
+        }
+    }
+
+    private func requestDictationPermissions() {
+        AVCaptureDevice.requestAccess(for: .audio) { _ in }
+        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+        AXIsProcessTrustedWithOptions(opts)
+        if !CGRequestListenEventAccess() {
+            openSettings(.dictation)
+        }
+    }
+
+    private func requestMeetingsPermissions() {
+        AVCaptureDevice.requestAccess(for: .audio) { _ in }
+        CGRequestScreenCaptureAccess()
+    }
+
+    // The hero badges bundle several real permissions into one granted/not
+    // status — tapping still needs to land on ONE specific System Settings
+    // pane (per the same "one button" rule as the individual permission
+    // tiles). Point at whichever required permission is still missing;
+    // once everything's granted, falls through to the last one checked —
+    // a reasonable default landing spot, not a wrong answer.
+    private func dictationMissingPane() -> String {
+        if !permissionStatus.microphone { return "Privacy_Microphone" }
+        if !permissionStatus.accessibility { return "Privacy_Accessibility" }
+        return "Privacy_ListenEvent"
+    }
+
+    private func meetingsMissingPane() -> String {
+        if !permissionStatus.microphone { return "Privacy_Microphone" }
+        return "Privacy_ScreenCapture"
+    }
+
+    private func openPrivacyPane(_ pane: String) {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func openSettings(_ section: SettingsSection, modelsTab: ModelsTab? = nil) {
+        if let modelsTab {
+            appState.modelsTab = modelsTab
+        }
         appState.settingsSection = section
         appState.selectedTab = .settings
     }
 
-    private var flagshipFeatures: [IdentifiedView] {
-        [
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0xFF3B30),
-                icon: "mic.fill",
-                title: tr("Voice dictation", "Диктовка голосом"),
-                subtitle: tr("Forget the keyboard. Hold your hotkey, speak the way you think — polished text appears under your cursor in any app, instantly.", "Забудь про клавиатуру. Зажми клавишу, говори как думаешь — готовый текст мгновенно появляется под курсором в любом приложении."),
-                actions: [
-                    FeatureAction(label: tr("Set hotkey", "Настроить клавишу"), systemImage: "keyboard", isPrimary: true) {
-                        openSettings(.shortcuts)
-                    }
-                ]
-            )),
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0x34C759),
-                icon: "person.2.fill",
-                title: tr("Meetings, summarized", "Встречи в готовых заметках"),
-                subtitle: tr("Muesli listens to you and everyone else, then hands you a clean recap — decisions, action items, agreements — in your own template.", "Muesli слушает и тебя, и собеседников, а после встречи выдаёт аккуратную сводку — решения, задачи, договорённости — по твоему шаблону."),
-                actions: [
-                    FeatureAction(label: tr("Templates", "Шаблоны"), systemImage: "square.text.square.fill", isPrimary: true) {
-                        controller.showMeetingTemplatesManager()
-                    },
-                    FeatureAction(label: tr("Recording", "Запись"), systemImage: "gearshape.fill") {
-                        openSettings(.meetings)
-                    }
-                ]
-            )),
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0x5856D6),
-                icon: "bubble.left.and.text.bubble.right.fill",
-                title: tr("Chat with your meeting", "Чат с встречей"),
-                subtitle: tr("Stop re-reading transcripts. Just ask — “what did we decide on the budget?” — and get an answer grounded in that exact meeting.", "Не перечитывай транскрипт. Просто спроси — «что решили по бюджету?» — и получи ответ строго по этой встрече."),
-                actions: [
-                    FeatureAction(label: tr("Connect a model", "Подключить модель"), systemImage: "sparkles", isPrimary: true) {
-                        openSettings(.meetings)
-                    }
-                ]
-            )),
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0xFF9500),
-                icon: "display",
-                title: tr("Screen video with sound", "Видео экрана со звуком"),
-                subtitle: tr("Record the screen together with the audio — demos, calls, walkthroughs — and replay it right on the meeting page.", "Записывай экран вместе со звуком — демо, созвоны, разборы — и пересматривай прямо на странице встречи."),
-                actions: [
-                    FeatureAction(label: tr("Enable in settings", "Включить в настройках"), systemImage: "gearshape.fill", isPrimary: true) {
-                        openSettings(.meetings)
-                    }
-                ]
-            )),
-        ]
+    // Small icon(+toggle) tiles — no preview clips, just icon + toggle
+    // where the feature has a real on/off setting (Smart cleanup, Voice
+    // commands, Screen video all map straight to a config boolean already
+    // used in Settings). Dictionary has no on/off state, so it stays a
+    // simple navigate card. Folded into the same mosaic as the flagship
+    // cards above (round 6: per a bento-dashboard layout reference, these
+    // read as one cohesive board of proportionally-sized tiles rather than
+    // two separate sections split by a "MORE" heading).
+    private var smartCleanupCard: FeatureCard {
+        FeatureCard(
+            accent: MuesliTheme.accent,
+            icon: "wand.and.stars",
+            title: tr("Smart cleanup", "Умная чистка"),
+            subtitle: tr("“um, so like” → “So,”", "«эээ ну как бы» → «Итак,»"),
+            actions: [
+                FeatureAction(label: tr("Set up", "Настроить"), isPrimary: true) {
+                    openSettings(.models, modelsTab: .cleanup)
+                }
+            ],
+            compact: true,
+            // Not just a UI hit-testing question — `setPostProcessorEnabled`
+            // genuinely REFUSES to turn this on and redirects to Models
+            // when no cleanup model is downloaded yet, returning a message
+            // explaining why. The toggle used to silently discard that
+            // message, so the redirect looked unexplained ("не просто его
+            // включает а ведёт в настройки"). Now it's shown as an alert,
+            // same as `SettingsView`'s equivalent toggle already does.
+            toggle: FeatureToggle(isOn: appState.config.enablePostProcessor) {
+                if let reason = controller.setPostProcessorEnabled(!appState.config.enablePostProcessor) {
+                    appState.postProcessorRedirectReason = reason
+                }
+            }
+        )
     }
 
-    private var compactFeatures: [IdentifiedView] {
-        let cards: [IdentifiedView] = [
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0xAF52DE),
-                icon: "square.text.square.fill",
-                title: tr("Templates & language", "Шаблоны и язык"),
-                subtitle: tr("Your own note formats, in your language.", "Свои форматы заметок — хоть русский, хоть английский."),
-                actions: [
-                    FeatureAction(label: tr("Open", "Открыть"), isPrimary: true) {
-                        controller.showMeetingTemplatesManager()
-                    }
-                ],
-                compact: true
-            )),
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0x007AFF),
-                icon: "square.and.arrow.down.fill",
-                title: tr("On-device models", "Модели на устройстве"),
-                subtitle: tr("11 speech models, all offline — nothing leaves your Mac.", "11 моделей распознавания, всё офлайн — ничего не уходит в облако."),
-                actions: [
-                    FeatureAction(label: tr("Manage", "Управление"), isPrimary: true) {
-                        openSettings(.models)
-                    }
-                ],
-                compact: true
-            )),
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0x00C7BE),
-                icon: "wand.and.stars",
-                title: tr("Smart cleanup", "Умная чистка"),
-                subtitle: tr("Drops the “ums”, fixes casing, formats lists.", "Убирает «эээ», ставит регистр, оформляет списки."),
-                actions: [
-                    FeatureAction(label: tr("Set up", "Настроить"), isPrimary: true) {
-                        openSettings(.models)
-                    }
-                ],
-                compact: true
-            )),
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0xFF2D55),
-                icon: "cursorarrow.rays",
-                title: tr("Voice commands", "Голосовые команды"),
-                subtitle: tr("Tell your Mac what to do, hands-free.", "Управляй Mac голосом, без рук."),
-                actions: [
-                    FeatureAction(label: tr("Set up", "Настроить"), isPrimary: true) {
-                        openSettings(.computerUse)
-                    }
-                ],
-                compact: true
-            )),
-            IdentifiedView(FeatureCard(
-                accent: Color(hex: 0x8E8E93),
-                icon: "lock.fill",
-                title: tr("Private by design", "Приватность"),
-                subtitle: tr("Speech-to-text runs on your Mac — data stays with you.", "Речь в текст — на твоём Mac, данные остаются у тебя."),
-                actions: [],
-                compact: true
-            )),
-        ]
-        // TODO(sync): re-enable when the iPhone app ships — see SettingsView.sectionListPane,
-        // where the Sync settings section is hidden the same way.
-        return cards
+    private var voiceCommandsCard: FeatureCard {
+        FeatureCard(
+            accent: MuesliTheme.accent,
+            icon: "cursorarrow.rays",
+            title: tr("Voice commands", "Голосовые команды"),
+            subtitle: tr("Tell your Mac what to do, hands-free.", "Управляй Mac голосом, без рук."),
+            actions: [
+                FeatureAction(label: tr("Set up", "Настроить"), isPrimary: true) {
+                    openSettings(.computerUse)
+                }
+            ],
+            compact: true,
+            toggle: FeatureToggle(isOn: appState.config.enableComputerUsePlanner) {
+                controller.updateConfig { $0.enableComputerUsePlanner = !$0.enableComputerUsePlanner }
+            }
+        )
+    }
+
+    private var screenVideoCard: FeatureCard {
+        FeatureCard(
+            accent: MuesliTheme.accent,
+            icon: "display",
+            title: tr("Screen video with sound", "Видео экрана со звуком"),
+            subtitle: tr("Record the screen together with the audio, replay it on the meeting page.", "Записывай экран вместе со звуком, пересматривай на странице встречи."),
+            actions: [
+                FeatureAction(label: tr("Meeting settings", "Настройки встреч"), isPrimary: true) {
+                    openSettings(.meetings)
+                }
+            ],
+            compact: true,
+            toggle: FeatureToggle(isOn: appState.config.enableMeetingScreenVideo) {
+                controller.updateConfig { $0.enableMeetingScreenVideo = !$0.enableMeetingScreenVideo }
+            }
+        )
+    }
+
+    private var dictionaryCard: FeatureCard {
+        // `replacement` is optional — a word entered with no replacement
+        // just boosts recognition of that exact spelling, it doesn't
+        // correct anything. Showing "«зум» → зум" for one of those read as
+        // a broken/pointless example ("странный пример"); only entries
+        // with a REAL, different replacement make a legible example.
+        let examples = appState.config.customWords
+            .compactMap { word -> String? in
+                guard let replacement = word.replacement,
+                      !replacement.isEmpty,
+                      replacement != word.word else { return nil }
+                return "«\(word.word)» → \(replacement)"
+            }
+            .prefix(2)
+        let subtitle = examples.isEmpty
+            ? tr("Custom words for names and terms transcription often gets wrong.", "Свои слова для имён и терминов, которые транскрипция часто путает.")
+            : examples.joined(separator: " · ")
+        return FeatureCard(
+            accent: MuesliTheme.accent,
+            icon: "character.book.closed.fill",
+            title: tr("Dictionary", "Словарь"),
+            subtitle: subtitle,
+            actions: [
+                FeatureAction(label: tr("Add a word", "Добавить слово"), isPrimary: true) {
+                    openSettings(.dictionary)
+                    appState.dictionaryShouldStartAdding = true
+                }
+            ],
+            compact: true
+        )
     }
 
     // MARK: - iPhone bridge (moved from the Dictations page)
@@ -1162,6 +1646,265 @@ struct HomeView: View {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
         return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+// MARK: - Vertical mosaic card primitives (design-canvas "Вариант 1")
+//
+// The approved mockup's cards aren't icon+subtitle+demo-clip panels — each
+// one is a small information display (a permission badge, a connected-model
+// list, an engine count, a template chip, a chat preview, a search prompt).
+// These primitives are the shared visual language every card in
+// `mainFeaturesBoard` is built from, matching the mockup's `.cell`/`.row-top`/
+// `.granted`/`.chev` styles one-to-one.
+
+// FeatureCellContainer/FeatureCellHeader/PermissionBadge/StatusPill are
+// `internal` (not `private`), so `FeaturePermissionsBoard.swift` can reuse
+// the exact same card language for its permission tiles — per live
+// feedback that the permissions section should visually match the cards
+// above it, not have its own distinct card style.
+struct FeatureCellContainer<Content: View>: View {
+    var isHero: Bool = false
+    @ViewBuilder var content: () -> Content
+
+    /// A floor, not a forced height — content is free to grow past it, but
+    /// a content-light card (e.g. Insights alone in its full-width row)
+    /// doesn't collapse to near-nothing next to a taller sibling.
+    private var minHeight: CGFloat { isHero ? 150 : 110 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12, content: content)
+            .padding(isHero ? MuesliTheme.spacing20 : MuesliTheme.spacing16)
+            .frame(maxWidth: .infinity, minHeight: minHeight, maxHeight: .infinity, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
+                    .fill(MuesliTheme.cellFill)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL))
+            .overlay(
+                RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
+                    .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+            )
+    }
+}
+
+/// The outer "banner" surface the whole Функции board (and, folded in,
+/// the permissions section) lives inside — matches the design-canvas
+/// mockup's two-level nesting: one soft-gradient bordered panel, with
+/// lighter `FeatureCellContainer` cells nested inside it.
+/// Just a layout grouping now — per feedback, the outer dark fill/border
+/// read as an unwanted extra panel; only the individual cards should have
+/// their own background/border. Kept as a named wrapper (rather than
+/// inlining a bare `VStack` at the call site) so the shared 14pt spacing
+/// between the board and the permissions section stays in one place.
+private struct FeatureBanner<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14, content: content)
+    }
+}
+
+struct FeatureCellHeader<Trailing: View>: View {
+    let icon: String
+    let title: String
+    var titleSize: CGFloat = 13.5
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        HStack(spacing: 9) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(MuesliTheme.textPrimary.opacity(0.07))
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(MuesliTheme.textPrimary.opacity(0.82))
+            }
+            .frame(width: 28, height: 28)
+
+            Text(title)
+                .font(.system(size: titleSize, weight: .semibold))
+                .foregroundStyle(MuesliTheme.textPrimary)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+
+            trailing()
+        }
+    }
+}
+
+struct PermissionBadge: View {
+    let granted: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: granted ? "checkmark" : "arrow.forward")
+                    .font(.system(size: 9, weight: .bold))
+                Text(granted ? tr("Granted", "Разрешена") : tr("Grant access", "Выдать доступ"))
+                    .font(.system(size: 11, weight: .bold))
+            }
+            .foregroundStyle(granted ? MuesliTheme.success : .white)
+            .padding(.horizontal, granted ? 8 : 11)
+            .padding(.vertical, granted ? 4 : 6)
+            .background(
+                Capsule().fill(granted ? MuesliTheme.success.opacity(0.12) : MuesliTheme.accent)
+            )
+            .overlay(
+                Capsule().strokeBorder(granted ? MuesliTheme.success.opacity(0.3) : .clear, lineWidth: 1)
+            )
+            // A subtle shadow on the actionable state only — helps it read
+            // as a pressable button, not just another status label, per
+            // feedback that "grant access" needed to be more obvious.
+            .shadow(color: granted ? .clear : MuesliTheme.accent.opacity(0.35), radius: 6, y: 2)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// A static (non-tappable) status pill — the informational-only
+/// permission items (Camera, Automation) have no request action, so they
+/// get a plain label in the same visual slot `PermissionBadge` occupies
+/// for grantable ones, instead of a button.
+/// Tappable, like `PermissionBadge` — same "one button, not a label plus a
+/// separate arrow icon" rule applies to informational items (Camera,
+/// Automation): there's nothing to grant, but the pill itself still jumps
+/// to the matching System Settings pane on tap.
+struct StatusPill: View {
+    let text: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(text)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(MuesliTheme.textTertiary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(MuesliTheme.textPrimary.opacity(0.06)))
+                .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// A small text-link-style button for "go configure this in Settings" —
+/// always a SIBLING of a card's other interactive elements (a badge, a
+/// toggle), never wrapping them, so it can't swallow their taps the way a
+/// whole-card Button did.
+private struct SettingsLinkButton: View {
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Text(label)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .font(.system(size: 11.5, weight: .semibold))
+            .foregroundStyle(MuesliTheme.accent)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct FeatureCellChevron: View {
+    var body: some View {
+        ZStack {
+            Circle().fill(MuesliTheme.textPrimary.opacity(0.05))
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(MuesliTheme.textSecondary)
+        }
+        .frame(width: 20, height: 20)
+    }
+}
+
+/// The hotkey glyph on the Dictation hero card — a big rounded tile with the
+/// literal key symbol, badged with a small mic icon. Stands in for the
+/// mockup's "⌥" key-hero illustration; no demo video.
+private struct HotkeyGlyph: View {
+    let symbol: String
+    let badgeIcon: String
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(MuesliTheme.textPrimary.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .strokeBorder(MuesliTheme.accent.opacity(0.45), lineWidth: 1.5)
+                        .padding(-6)
+                )
+                .frame(width: 68, height: 68)
+            Text(symbol)
+                .font(.system(size: 24, weight: .bold))
+                .foregroundStyle(MuesliTheme.textPrimary.opacity(0.92))
+                .frame(width: 68, height: 68)
+
+            ZStack {
+                Circle().fill(MuesliTheme.accent)
+                Image(systemName: badgeIcon)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.black.opacity(0.85))
+            }
+            .frame(width: 22, height: 22)
+            .offset(x: 6, y: 6)
+        }
+        .padding(.bottom, 6)
+    }
+}
+
+private struct EngineTagPill: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(MuesliTheme.textSecondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(MuesliTheme.textPrimary.opacity(0.06)))
+            .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+    }
+}
+
+private struct InsightHintChip: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(MuesliTheme.textSecondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(MuesliTheme.textPrimary.opacity(0.05)))
+            .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
+    }
+}
+
+private struct ChatBubble: View {
+    let text: String
+    let isMe: Bool
+
+    var body: some View {
+        HStack {
+            if isMe { Spacer(minLength: 24) }
+            Text(text)
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(MuesliTheme.textPrimary.opacity(0.9))
+                .padding(.horizontal, 11)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(isMe ? MuesliTheme.accent.opacity(0.32) : MuesliTheme.textPrimary.opacity(0.07))
+                )
+            if !isMe { Spacer(minLength: 24) }
+        }
     }
 }
 

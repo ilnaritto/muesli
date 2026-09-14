@@ -61,7 +61,10 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Telegram-style distinct icon tile color per section.
+    /// Telegram-style distinct icon tile color per section — round 3
+    /// briefly flattened this to one accent color everywhere, round 5
+    /// restored it: a single flat color made sections harder to tell apart
+    /// at a glance in the sidebar list.
     var iconColor: Color {
         switch self {
         case .general: return Color(hex: 0x8E8E93)      // gray
@@ -213,6 +216,19 @@ final class AppState {
     var iCloudLastSyncedAt: Date?
     var contributionMilestonePrompt: ContributionMilestonePrompt?
     var pendingDiagnosticIncident: DiagnosticIncident?
+    /// Set when `setPostProcessorEnabled` refuses to turn cleanup on (no
+    /// model downloaded) and redirects to Models — that redirect swaps
+    /// `selectedTab` synchronously, so an alert scoped to the view the
+    /// toggle lives on (e.g. HomeView) never gets a chance to present
+    /// before its host view is replaced. Lives on `AppState` and is shown
+    /// from `DashboardRootView`, which doesn't unmount across tab
+    /// switches, so the explanation survives the redirect.
+    var postProcessorRedirectReason: String?
+    /// Set together with navigating to `.dictionary` from the Функции
+    /// page's "Add a word" button — `DictionaryView` consumes it on
+    /// appear to open straight into its add-word form instead of just
+    /// landing on the plain list.
+    var dictionaryShouldStartAdding = false
     var modelPreparationTitle: String?
     var modelPreparationDetail: String?
     var modelPreparationProgress: Double?
@@ -235,6 +251,10 @@ final class AppState {
     // Navigation
     var selectedTab: DashboardTab = .home
     var settingsSection: SettingsSection = .general
+    /// Lets other screens (e.g. the Функции page's "Connect an AI model"
+    /// card) deep-link to a specific Models tab — was local `@State` inside
+    /// `ModelsView`, unreachable from outside it.
+    var modelsTab: ModelsTab = .speech
 
     // Computed
     var selectedMeeting: MeetingRecord? {

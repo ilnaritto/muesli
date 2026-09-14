@@ -1,44 +1,25 @@
 import SwiftUI
 import MuesliCore
 
-/// Role-based tabs on the Models screen (task 8.2.1). Speech and Cleanup
-/// wrap the existing download UI (untouched — the download/state-tracking
-/// logic there already works); Text is the new registry-backed multi-model
-/// list; Catalog surfaces anything not yet downloaded/connected.
+/// The Models screen used to be four tabs keyed by this enum; per direct
+/// feedback ("часть будет не шибко-то удобно" — managing one connected
+/// model across two separate role tabs was busywork) it's now one
+/// continuous scrollable page (see `ModelsView.body`). This only survives
+/// as a set of `ScrollViewReader` anchor ids, so `HomeView.swift`'s
+/// existing "jump to Models → Cleanup" deep links still land in the right
+/// place — they scroll there now instead of switching a selected tab.
 enum ModelsTab: String, CaseIterable, Identifiable {
     case speech
     case text
     case cleanup
-    case catalog
 
     var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .speech: return tr("Speech", "Распознавание")
-        case .text: return tr("Text", "Текстовые")
-        case .cleanup: return tr("Cleanup", "Очистка")
-        case .catalog: return tr("Catalog", "Каталог")
-        }
-    }
-
-    /// nil for Catalog — "Add Model" opens with a role picker instead of a
-    /// preselected one.
-    var matchingModelRole: ModelRole? {
-        switch self {
-        case .speech: return .transcription
-        case .text: return .textGeneration
-        case .cleanup: return .cleanup
-        case .catalog: return nil
-        }
-    }
 }
 
 struct ModelsView: View {
     let appState: AppState
     let controller: MuesliController
 
-    @State private var selectedTab: ModelsTab = .speech
     @State private var showAddModelSheet = false
     @State private var nemotron35UpdateAvailable = false
     @State private var downloadingModels: Set<String> = []
@@ -77,37 +58,69 @@ struct ModelsView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: MuesliTheme.spacing24) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(tr("Models", "Модели"))
-                        .font(MuesliTheme.pageTitle())
-                        .foregroundStyle(MuesliTheme.textPrimary)
+        // One continuous scrollable page instead of four tabs — per direct
+        // feedback: a connected cloud model already serves both text
+        // generation AND cleanup at once (`ConfiguredModel.roles`), so
+        // switching tabs to manage what's really ONE thing was busywork.
+        // `ModelsTab` stays around as a scroll anchor (`.id(_:)` below) so
+        // the existing "jump here" deep links from HomeView.swift still
+        // land in the right place — they just scroll now instead of
+        // switching a selected tab.
+        //
+        // Per direct feedback ("визуально цветом отделим что к чему
+        // относится") each section is wrapped in a tinted `sectionGroup`
+        // matching its header's accent color, and ("кнопку добавить
+        // облачную модель закрепить при скролле") the connect-cloud-model
+        // action lives in a fixed top-right overlay instead of scrolling
+        // away with the page.
+        ZStack(alignment: .topTrailing) {
+            ScrollViewReader { scrollProxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: MuesliTheme.spacing24) {
+                        Text(tr("Models", "Модели"))
+                            .font(MuesliTheme.pageTitle())
+                            .foregroundStyle(MuesliTheme.textPrimary)
 
-                    Text(tr("Download and manage transcription models. The active model is used for dictation.", "Скачивайте модели транскрипции и управляйте ими. Активная модель используется для диктовки."))
-                        .font(MuesliTheme.callout())
-                        .foregroundStyle(MuesliTheme.textSecondary)
+                        sectionGroup(color: Color(hex: 0x007AFF)) {
+                            modelsSectionHeader(
+                                title: tr("Speech recognition", "Распознавание речи"),
+                                icon: "waveform",
+                                color: Color(hex: 0x007AFF)
+                            )
+                            speechTabContent
+                        }
+                        .id(ModelsTab.speech)
+
+                        sectionGroup(color: Color(hex: 0xAF52DE)) {
+                            modelsSectionHeader(
+                                title: tr("Text & cleanup", "Текстовые и очистка"),
+                                icon: "text.bubble",
+                                color: Color(hex: 0xAF52DE),
+                                subtitle: tr("One connected model can handle both — turn each on for whatever it should do.", "Одна подключённая модель может делать и то, и другое — включи то, для чего она нужна.")
+                            )
+                            textAndCleanupContent
+                        }
+                        .id(ModelsTab.text)
+                    }
+                    .padding(MuesliTheme.spacing24)
+                    .padding(.top, MuesliTheme.spacing24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                modelsTabBar
-
-                switch selectedTab {
-                case .speech:
-                    speechTabContent
-                case .text:
-                    textModelsTabContent
-                case .cleanup:
-                    postProcessorSection
-                case .catalog:
-                    catalogTabContent
+                .onAppear {
+                    let anchor = appState.modelsTab == .cleanup ? ModelsTab.text : appState.modelsTab
+                    DispatchQueue.main.async {
+                        scrollProxy.scrollTo(anchor, anchor: .top)
+                    }
                 }
             }
-            .padding(MuesliTheme.spacing32)
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+            connectCloudModelButton
+                .padding(.top, MuesliTheme.spacing20)
+                .padding(.trailing, MuesliTheme.spacing24)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .sheet(isPresented: $showAddModelSheet) {
-            AddModelSheet(controller: controller, initialRole: selectedTab.matchingModelRole ?? .textGeneration)
+            AddModelSheet(controller: controller)
         }
         .onAppear {
             checkDownloadedModels()
@@ -175,121 +188,184 @@ struct ModelsView: View {
         }
     }
 
-    // MARK: - Role tabs (task 8.2.1)
+    // MARK: - Section header (one continuous page instead of tabs)
 
-    private var modelsTabBar: some View {
-        CapsuleTabBarContainer {
-            ForEach(ModelsTab.allCases) { tab in
-                CapsuleTab(title: tab.title, isSelected: selectedTab == tab) {
-                    selectedTab = tab
-                }
+    /// Pinned top-right action — stays in place while the page scrolls
+    /// (see the `ZStack(alignment: .topTrailing)` in `body`), so it's
+    /// always reachable regardless of which section is in view.
+    private var connectCloudModelButton: some View {
+        Button {
+            showAddModelSheet = true
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "plus.circle.fill")
+                Text(tr("Connect a cloud model", "Подключить облачную модель"))
             }
-        } trailingAccessory: {
-            Button {
-                showAddModelSheet = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(MuesliTheme.textSecondary)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.trailing, MuesliTheme.spacing8)
-            .help(tr("Add model…", "Добавить модель…"))
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, MuesliTheme.spacing12)
+            .padding(.vertical, 7)
+            .background(MuesliTheme.accent)
+            .clipShape(Capsule())
+            .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Separates one page section from the next with a thin accent rule in
+    /// its header's color, instead of a full boxed background — a boxed
+    /// tint around cards that already have their own borders (and an
+    /// accent-glow border on the active one) read as clutter, nested boxes
+    /// inside boxes ("колхозно"). A simple color-coded rule is enough to
+    /// tell sections apart without competing with the cards themselves.
+    private func sectionGroup<Content: View>(
+        color: Color,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        // Per direct feedback ("линия цветная слева лишняя") — the section
+        // header's own colored icon already tells sections apart; a second
+        // colored accent rule next to it was redundant.
+        VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
+            content()
         }
     }
 
+    // MARK: - Table container (Variant A, approved: one bordered box per
+    // section, rows divided by hairlines, no repeated column-header row —
+    // "и так понятно" what each column is).
+
+    private func tableContainer<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        // Per direct feedback ("серый цвет слишком ядрёный") — swapped the
+        // lighter `surfacePrimary` (meant for small pills/badges standing
+        // out from a card) for `backgroundRaised`, a much closer, quieter
+        // step up from the page background for a container this large.
+        VStack(spacing: 0, content: content)
+            .background(MuesliTheme.backgroundRaised)
+            .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
+            .overlay(
+                RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
+                    .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+            )
+    }
+
+    private var tableRowDivider: some View {
+        Rectangle()
+            .fill(MuesliTheme.surfaceBorder)
+            .frame(height: 1)
+    }
+
+    private func modelsSectionHeader(
+        title: String,
+        icon: String,
+        color: Color,
+        subtitle: String? = nil
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(color)
+                    Image(systemName: icon)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+                .frame(width: 21, height: 21)
+
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(MuesliTheme.textPrimary)
+            }
+            if let subtitle {
+                Text(subtitle)
+                    .font(MuesliTheme.caption())
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .padding(.leading, 29)
+            }
+        }
+    }
+
+    // Approved layout ("вариант а таблица"): one bordered table box for the
+    // whole section, a hairline between rows, no repeated column-header
+    // row, and each row's icon is the actual provider/model logo (already
+    // what `brandLogo`/`familyTableRow`/`modelTableRow` render) instead of
+    // a lettered monogram.
     @ViewBuilder
     private var speechTabContent: some View {
-        familyCard(
-            title: tr("Parakeet Family", "Семейство Parakeet"),
-            subtitle: tr("NVIDIA speech models for fast everyday dictation.", "Речевые модели NVIDIA для быстрой повседневной диктовки."),
-            defaultBadge: tr("Default: v3", "По умолчанию: v3"),
-            logo: "nvidia-logo",
-            selection: $selectedParakeetModel,
-            options: BackendOption.parakeetFamily
-        )
+        tableContainer {
+            familyTableRow(
+                title: tr("Parakeet Family", "Семейство Parakeet"),
+                defaultBadge: tr("Default: v3", "По умолчанию: v3"),
+                logo: "nvidia-logo",
+                selection: $selectedParakeetModel,
+                options: BackendOption.parakeetFamily
+            )
+            tableRowDivider
+            familyTableRow(
+                title: "Whisper",
+                defaultBadge: tr("Default: Small", "По умолчанию: Small"),
+                logo: "openai-logo",
+                selection: $selectedWhisperModel,
+                options: BackendOption.whisperFamily
+            )
+            tableRowDivider
+            modelTableRow(option: .cohereTranscribe, logo: "cohere-logo")
+            tableRowDivider
+            modelTableRow(option: .nemotron35Multilingual, logo: "nvidia-logo")
+        }
 
-        familyCard(
-            title: "Whisper",
-            subtitle: tr("OpenAI Whisper variants. Runs on Apple Neural Engine via CoreML.", "Варианты OpenAI Whisper. Работают на Apple Neural Engine через CoreML."),
-            defaultBadge: tr("Default: Small", "По умолчанию: Small"),
-            logo: "openai-logo",
-            selection: $selectedWhisperModel,
-            options: BackendOption.whisperFamily
-        )
-
-        modelCard(option: .cohereTranscribe, logo: "cohere-logo")
-        modelCard(option: .nemotron35Multilingual, logo: "nvidia-logo")
         experimentalSection
     }
 
-    @ViewBuilder
-    private var catalogTabContent: some View {
-        if BackendOption.comingSoon.isEmpty {
-            Text(tr("Nothing new to download right now — check back later.", "Пока нечего скачивать — загляните позже."))
-                .font(MuesliTheme.callout())
-                .foregroundStyle(MuesliTheme.textTertiary)
-                .padding(.top, MuesliTheme.spacing8)
-        } else {
-            VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-                Text(tr("COMING SOON", "СКОРО"))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(MuesliTheme.textTertiary)
-                    .textCase(.uppercase)
-                    .padding(.leading, 2)
+    // MARK: - Text & cleanup (merged — a connected cloud model serves both)
 
-                VStack(spacing: MuesliTheme.spacing12) {
-                    ForEach(BackendOption.comingSoon, id: \.model) { option in
-                        comingSoonCard(option: option)
-                    }
-                }
+    /// Union of both roles' connected models, deduplicated by id. A cloud
+    /// model's `roles` set already contains both `.textGeneration` and
+    /// `.cleanup` (see `ModelRegistry.swift`), so it naturally appears once
+    /// here with both capability chips instead of showing up as two
+    /// separate cards across two tabs.
+    private var combinedTextAndCleanupModels: [ConfiguredModel] {
+        var seen = Set<String>()
+        var merged: [ConfiguredModel] = []
+        for model in controller.allConfiguredModels(role: .textGeneration) + controller.allConfiguredModels(role: .cleanup) {
+            if seen.insert(model.id).inserted {
+                merged.append(model)
             }
         }
+        return merged
     }
 
-    // MARK: - Text models tab (the registry's real multi-model role)
-
     @ViewBuilder
-    private var textModelsTabContent: some View {
+    private var textAndCleanupContent: some View {
+        // The prominent "connect a cloud model" action now lives in the
+        // pinned top-right overlay (`connectCloudModelButton` in `body`) —
+        // no in-line copy of it here anymore.
         VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
-            let models = controller.allConfiguredModels(role: .textGeneration)
-            let defaultID = controller.defaultConfiguredModelID(role: .textGeneration)
+            let models = combinedTextAndCleanupModels
 
             if models.isEmpty {
                 emptyTextModelsCard
             } else {
-                VStack(spacing: MuesliTheme.spacing12) {
-                    ForEach(models) { model in
-                        textModelCard(model, isDefault: model.id == defaultID)
+                tableContainer {
+                    ForEach(Array(models.enumerated()), id: \.element.id) { index, model in
+                        if index > 0 { tableRowDivider }
+                        combinedConfiguredModelRow(model)
                     }
                 }
             }
         }
 
         localSummarySection
+        postProcessorSection
     }
 
     private var emptyTextModelsCard: some View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-            Text(tr("No text model connected", "Нет подключённой текстовой модели"))
+            Text(tr("No cloud model connected", "Нет подключённой облачной модели"))
                 .font(MuesliTheme.headline())
                 .foregroundStyle(MuesliTheme.textPrimary)
-            Text(tr("Connect ChatGPT, an API key, or your own endpoint to generate meeting summaries and use the chat features.", "Подключите ChatGPT, API-ключ или свой эндпоинт, чтобы генерировать сводки встреч и пользоваться чатами."))
+            Text(tr("Connect ChatGPT, an API key, or your own endpoint to generate meeting summaries and clean up dictation.", "Подключите ChatGPT, API-ключ или свой эндпоинт, чтобы генерировать сводки встреч и очищать диктовку."))
                 .font(MuesliTheme.callout())
                 .foregroundStyle(MuesliTheme.textSecondary)
-            Button(tr("Add model…", "Добавить модель…")) {
-                showAddModelSheet = true
-            }
-            .buttonStyle(.plain)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, MuesliTheme.spacing12)
-            .padding(.vertical, 6)
-            .background(MuesliTheme.accent)
-            .clipShape(Capsule())
-            .padding(.top, 2)
         }
         .padding(MuesliTheme.spacing16)
         .background(MuesliTheme.backgroundRaised)
@@ -300,81 +376,110 @@ struct ModelsView: View {
         )
     }
 
-    private func textModelCard(_ model: ConfiguredModel, isDefault: Bool) -> some View {
-        VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-            HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
-                Image(systemName: model.provider == .chatGPTOAuth ? "sparkles" : "cpu")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(MuesliTheme.accent)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(MuesliTheme.accentSubtle))
+    /// One row, both capability chips — sits inside `textAndCleanupContent`'s
+    /// shared `tableContainer` rather than owning its own card border. Each
+    /// chip only appears if `model.roles` actually supports that job (a
+    /// bundled cleanup-only GGUF never gets a "meeting summaries" chip).
+    private func combinedConfiguredModelRow(_ model: ConfiguredModel) -> some View {
+        let isDefaultText = model.id == controller.defaultConfiguredModelID(role: .textGeneration)
+        let isDefaultCleanup = model.id == controller.activeCleanupModelID()
 
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 8) {
-                        Text(model.displayName)
-                            .font(MuesliTheme.headline())
-                            .foregroundStyle(MuesliTheme.textPrimary)
-                        Text(model.provider.isLocal ? tr("Local", "Локальная") : tr("Cloud", "Облачная"))
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(MuesliTheme.textTertiary)
-                    }
+        // Per direct feedback ("отключить и мусорка должны быть по
+        // середине строки справа, а то они сейчас ниже") — the whole row
+        // is one HStack now instead of a two-line VStack, so the trailing
+        // action buttons sit vertically centered against the (taller)
+        // leading name+chips column instead of trailing the second line.
+        return HStack(alignment: .center, spacing: MuesliTheme.spacing12) {
+            Image(systemName: model.provider == .chatGPTOAuth ? "sparkles" : (model.provider.isLocal ? "cpu" : "icloud"))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(MuesliTheme.accent)
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(MuesliTheme.accentSubtle))
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text(model.displayName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(MuesliTheme.textPrimary)
+                    Text(model.provider.isLocal ? tr("Local", "Локальная") : tr("Cloud", "Облачная"))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(MuesliTheme.textTertiary)
                     Text(model.modelID.isEmpty ? model.provider.title : model.modelID)
                         .font(MuesliTheme.caption())
                         .foregroundStyle(MuesliTheme.textSecondary)
                         .lineLimit(1)
+                    if !model.isEnabled {
+                        Text(tr("Disabled", "Отключена"))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(MuesliTheme.textTertiary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(MuesliTheme.surfacePrimary)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                    }
                 }
 
-                Spacer()
-
-                if isDefault {
-                    Text(tr("Active", "Активна"))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(MuesliTheme.success)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(MuesliTheme.success.opacity(0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                } else if !model.isEnabled {
-                    Text(tr("Disabled", "Отключена"))
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(MuesliTheme.surfacePrimary)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                HStack(spacing: MuesliTheme.spacing8) {
+                    if model.roles.contains(.textGeneration) {
+                        roleChip(tr("Meeting summaries", "Сводки встреч"), isOn: isDefaultText) {
+                            controller.setDefaultConfiguredModel(id: model.id, role: .textGeneration)
+                        }
+                    }
+                    if model.roles.contains(.cleanup) {
+                        roleChip(tr("Dictation cleanup", "Очистка диктовки"), isOn: isDefaultCleanup) {
+                            controller.selectCleanupModel(id: model.id)
+                        }
+                    }
                 }
             }
 
-            HStack(spacing: MuesliTheme.spacing8) {
-                if !isDefault, model.isEnabled {
-                    modelsTabActionButton(tr("Make default", "Сделать основной"), accent: true) {
-                        controller.setDefaultConfiguredModel(id: model.id, role: .textGeneration)
-                    }
+            Spacer()
+
+            if model.provider != .bundledLocal, model.provider != .localGGUF {
+                modelsTabActionButton(model.isEnabled ? tr("Disable", "Отключить") : tr("Enable", "Включить")) {
+                    controller.setConfiguredModelEnabled(id: model.id, enabled: !model.isEnabled)
                 }
-                if model.provider != .bundledLocal, model.provider != .localGGUF {
-                    modelsTabActionButton(model.isEnabled ? tr("Disable", "Отключить") : tr("Enable", "Включить")) {
-                        controller.setConfiguredModelEnabled(id: model.id, enabled: !model.isEnabled)
-                    }
-                    Button {
-                        controller.removeConfiguredModel(id: model.id)
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.red.opacity(0.6))
-                            .frame(width: 20, height: 20)
-                    }
-                    .buttonStyle(.plain)
+                Button {
+                    controller.removeConfiguredModel(id: model.id)
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12, weight: .medium))
                 }
+                .buttonStyle(.plain)
+                .foregroundStyle(MuesliTheme.textSecondary)
+                .padding(.horizontal, MuesliTheme.spacing12)
+                .padding(.vertical, 4)
+                .background(MuesliTheme.surfacePrimary)
+                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
             }
         }
-        .padding(MuesliTheme.spacing16)
-        .background(MuesliTheme.backgroundRaised)
-        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
-        .overlay(
-            RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
-                .strokeBorder(isDefault ? MuesliTheme.accent.opacity(0.5) : MuesliTheme.surfaceBorder, lineWidth: isDefault ? 1.5 : 1)
-        )
+        .padding(.horizontal, MuesliTheme.spacing12)
+        .padding(.vertical, 7)
         .opacity(model.isEnabled ? 1 : 0.6)
+    }
+
+    /// A capability toggle-chip: tapping an OFF chip makes this model the
+    /// active one for that job (the previously-active model's own chip
+    /// simply stops reading as ON, since both read from the same shared
+    /// default). Tapping an already-ON chip is a harmless no-op — there's
+    /// always exactly one active model per job, so there's no "off" state
+    /// to switch to.
+    private func roleChip(_ label: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 11.5, weight: .semibold))
+            }
+            .foregroundStyle(isOn ? MuesliTheme.accent : MuesliTheme.textSecondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(isOn ? MuesliTheme.accentSubtle : MuesliTheme.surfacePrimary)
+            .clipShape(Capsule())
+            .overlay(Capsule().strokeBorder(isOn ? MuesliTheme.accent.opacity(0.4) : MuesliTheme.surfaceBorder, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     private func modelsTabActionButton(_ title: String, accent: Bool = false, action: @escaping () -> Void) -> some View {
@@ -501,11 +606,14 @@ struct ModelsView: View {
                         summaryModelToDelete = option
                     } label: {
                         Image(systemName: "trash")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.red.opacity(0.6))
-                            .frame(width: 20, height: 20)
+                            .font(.system(size: 12, weight: .medium))
                     }
                     .buttonStyle(.plain)
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .padding(.horizontal, MuesliTheme.spacing12)
+                    .padding(.vertical, 4)
+                    .background(MuesliTheme.surfacePrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
                 } else {
                     Button(tr("Download", "Скачать")) {
                         startSummaryDownload(option)
@@ -567,9 +675,10 @@ struct ModelsView: View {
             .buttonStyle(.plain)
 
             if showExperimental {
-                VStack(spacing: MuesliTheme.spacing12) {
-                    ForEach(BackendOption.experimental, id: \.model) { option in
-                        modelCard(option: option, logo: logoForBackend(option))
+                tableContainer {
+                    ForEach(Array(BackendOption.experimental.enumerated()), id: \.element.model) { index, option in
+                        if index > 0 { tableRowDivider }
+                        modelTableRow(option: option, logo: logoForBackend(option))
                     }
                 }
             }
@@ -634,7 +743,11 @@ struct ModelsView: View {
 
     private func postProcModelCard(_ option: PostProcessorOption) -> some View {
         let isDownloaded = downloadedPostProcModels.contains(option.id)
-        let isActive = appState.activePostProcessor.id == option.id && isDownloaded
+        // Source of truth is the shared cleanup selection, not the
+        // local-only `activePostProcessor` mirror — otherwise a bundled
+        // card here can still read "Active" after the user switches
+        // cleanup to a connected cloud model above.
+        let isActive = controller.activeCleanupModelID() == MuesliController.bundledCleanupID(option) && isDownloaded
         let isDownloading = downloadingPostProcModels.contains(option.id)
         let progress = downloadProgressPostProc[option.id] ?? 0
 
@@ -703,7 +816,7 @@ struct ModelsView: View {
                 } else if isDownloaded {
                     if !isActive {
                         Button(tr("Set Active", "Сделать активной")) {
-                            controller.selectPostProcessor(option)
+                            controller.selectCleanupModel(id: MuesliController.bundledCleanupID(option))
                         }
                         .buttonStyle(.plain)
                         .font(.system(size: 12, weight: .medium))
@@ -718,11 +831,14 @@ struct ModelsView: View {
                         postProcModelToDelete = option
                     } label: {
                         Image(systemName: "trash")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.red.opacity(0.6))
-                            .frame(width: 20, height: 20)
+                            .font(.system(size: 12, weight: .medium))
                     }
                     .buttonStyle(.plain)
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .padding(.horizontal, MuesliTheme.spacing12)
+                    .padding(.vertical, 4)
+                    .background(MuesliTheme.surfacePrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
                 } else {
                     Button(tr("Download", "Скачать")) {
                         startPostProcDownload(option)
@@ -841,9 +957,17 @@ struct ModelsView: View {
         )
     }
 
-    private func familyCard(
+    // Per direct feedback ("надо попробовать компактнее, зачем всё это
+    // писать... пусть будет как в мини-табличке" then, once shown 3 mockup
+    // variants, explicitly approved: "вариант а таблица, но без первой
+    // строки [column headers] ... вместо иконок с первыми буквами можно
+    // значки провайдера") — one row per family inside the shared
+    // `tableContainer`, no per-row border/box of its own (the container
+    // draws ONE border around the whole section), no column-header row,
+    // and the leading icon is the real provider logo (`brandLogo`), never
+    // a lettered monogram.
+    private func familyTableRow(
         title: String,
-        subtitle: String,
         defaultBadge: String,
         logo: String? = nil,
         selection: Binding<String>,
@@ -855,39 +979,22 @@ struct ModelsView: View {
         let isDownloading = downloadingModels.contains(selectedOption.model)
         let progress = downloadProgress[selectedOption.model] ?? 0
 
-        return VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
-            HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
-                brandLogo(logo)
-                VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
-                    HStack(spacing: MuesliTheme.spacing8) {
-                        Text(title)
-                            .font(MuesliTheme.headline())
-                            .foregroundStyle(MuesliTheme.textPrimary)
-
-                        Text(defaultBadge)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(MuesliTheme.accent)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(MuesliTheme.accentSubtle)
-                            .clipShape(Capsule())
-                    }
-
-                    Text(subtitle)
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textSecondary)
-                }
-
-                Spacer()
-
-                familyStatusBadge(isActive: isActive, isDownloaded: isDownloaded)
-            }
-
+        return VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
             HStack(alignment: .center, spacing: MuesliTheme.spacing12) {
-                Text(tr("Variant", "Вариант"))
-                    .font(MuesliTheme.caption())
-                    .foregroundStyle(MuesliTheme.textTertiary)
-                    .frame(width: 52, alignment: .leading)
+                brandLogo(logo)
+
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(MuesliTheme.textPrimary)
+                    Text(defaultBadge)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(MuesliTheme.accent)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(MuesliTheme.accentSubtle)
+                        .clipShape(Capsule())
+                }
 
                 Picker("", selection: selection) {
                     ForEach(options, id: \.model) { option in
@@ -896,16 +1003,17 @@ struct ModelsView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
-                .frame(maxWidth: 220, alignment: .leading)
+                .frame(maxWidth: 150, alignment: .leading)
 
                 Text(selectedOption.sizeLabel)
                     .font(MuesliTheme.caption())
                     .foregroundStyle(MuesliTheme.textTertiary)
-            }
 
-            Text(selectedOption.description)
-                .font(MuesliTheme.caption())
-                .foregroundStyle(MuesliTheme.textSecondary)
+                Spacer()
+
+                familyStatusBadge(isActive: isActive, isDownloaded: isDownloaded)
+                actionButtons(for: selectedOption, isActive: isActive, isDownloaded: isDownloaded, isDownloading: isDownloading)
+            }
 
             if isDownloading {
                 VStack(alignment: .leading, spacing: 4) {
@@ -915,17 +1023,11 @@ struct ModelsView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(MuesliTheme.textTertiary)
                 }
+                .padding(.leading, 38)
             }
-
-            actionButtons(for: selectedOption, isActive: isActive, isDownloaded: isDownloaded, isDownloading: isDownloading)
         }
-        .padding(MuesliTheme.spacing16)
-        .background(MuesliTheme.backgroundRaised)
-        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
-        .overlay(
-            RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
-                .strokeBorder(isActive ? MuesliTheme.accent.opacity(0.5) : MuesliTheme.surfaceBorder, lineWidth: isActive ? 1.5 : 1)
-        )
+        .padding(.horizontal, MuesliTheme.spacing12)
+        .padding(.vertical, 7)
     }
 
     @ViewBuilder
@@ -950,17 +1052,34 @@ struct ModelsView: View {
     }
 
     @ViewBuilder
+    // Per direct feedback ("все модели должны быть в одинаковых
+    // плашках") — this used to render a bare 24×24 logo image with no
+    // background at all, while `combinedConfiguredModelCard`'s icon was a
+    // 36×36 SF Symbol in an accent-tinted circle. Same circular tile size
+    // everywhere now, regardless of whether a card's icon is a brand PNG
+    // or a system symbol — and a generic fallback icon instead of
+    // rendering nothing when a card has no logo asset.
+    // Per direct feedback ("всё такое огромное") — shrunk from 36pt to
+    // 26pt now that this sits in a dense table row instead of a standalone
+    // card header.
     private func brandLogo(_ name: String?) -> some View {
-        if let name,
-           let url = Bundle.main.url(forResource: name, withExtension: "png"),
-           let nsImage = NSImage(contentsOf: url) {
-            Image(nsImage: nsImage)
-                .resizable()
-                .scaledToFit()
-                .frame(width: 24, height: 24)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-                .padding(.top, 2)
+        ZStack {
+            Circle().fill(MuesliTheme.accentSubtle)
+            if let name,
+               let url = Bundle.main.url(forResource: name, withExtension: "png"),
+               let nsImage = NSImage(contentsOf: url) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 13, height: 13)
+                    .clipShape(RoundedRectangle(cornerRadius: 2))
+            } else {
+                Image(systemName: "waveform")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(MuesliTheme.accent)
+            }
         }
+        .frame(width: 26, height: 26)
     }
 
     private func logoForBackend(_ option: BackendOption) -> String? {
@@ -1008,11 +1127,14 @@ struct ModelsView: View {
                     modelToDelete = option
                 } label: {
                     Image(systemName: "trash")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.red.opacity(0.6))
-                        .frame(width: 20, height: 20)
+                        .font(.system(size: 12, weight: .medium))
                 }
                 .buttonStyle(.plain)
+                .foregroundStyle(MuesliTheme.textSecondary)
+                .padding(.horizontal, MuesliTheme.spacing12)
+                .padding(.vertical, 4)
+                .background(MuesliTheme.surfacePrimary)
+                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
             } else {
                 Button(tr("Download", "Скачать")) {
                     startDownload(option)
@@ -1028,44 +1150,69 @@ struct ModelsView: View {
         }
     }
 
-    private func modelCard(option: BackendOption, logo: String? = nil) -> some View {
+    // Same table-row treatment as `familyTableRow` — no border/box of its
+    // own, sits as one row inside the caller's `tableContainer`.
+    private func modelTableRow(option: BackendOption, logo: String? = nil) -> some View {
         let isActive = appState.selectedBackend == option
         let isDownloaded = downloadedModels.contains(option.model)
         let isDownloading = downloadingModels.contains(option.model)
         let progress = downloadProgress[option.model] ?? 0
 
-        return VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
-            HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
+        return VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+            HStack(alignment: .center, spacing: MuesliTheme.spacing12) {
                 brandLogo(logo)
-                VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
-                    HStack(spacing: MuesliTheme.spacing8) {
-                        Text(option.label)
-                            .font(MuesliTheme.headline())
-                            .foregroundStyle(MuesliTheme.textPrimary)
 
-                        if option.recommended {
-                            Text(tr("Recommended", "Рекомендуемая"))
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(MuesliTheme.accent)
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                        }
+                HStack(spacing: 6) {
+                    Text(option.label)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(MuesliTheme.textPrimary)
 
-                        Text(option.sizeLabel)
-                            .font(MuesliTheme.caption())
-                            .foregroundStyle(MuesliTheme.textTertiary)
+                    if option.recommended {
+                        Text(tr("Recommended", "Рекомендуемая"))
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(MuesliTheme.accent)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
                     }
-
-                    Text(option.description)
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textSecondary)
                 }
+
+                if option.backend == BackendOption.cohereTranscribe.backend {
+                    Picker("", selection: cohereLanguageSelection) {
+                        ForEach(CohereTranscribeLanguage.allCases, id: \.self) { language in
+                            Text(language.label).tag(language)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 140, alignment: .leading)
+                } else if option.backend == BackendOption.indicASR.backend {
+                    Picker("", selection: indicASRLanguageSelection) {
+                        ForEach(IndicASRLanguage.allCases, id: \.self) { language in
+                            Text(language.label).tag(language)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 140, alignment: .leading)
+                } else if option.backend == BackendOption.nemotron35Multilingual.backend {
+                    Picker("", selection: nemotron35LanguageSelection) {
+                        ForEach(Nemotron35Language.allCases, id: \.self) { language in
+                            Text(language.label).tag(language)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 140, alignment: .leading)
+                }
+
+                Text(option.sizeLabel)
+                    .font(MuesliTheme.caption())
+                    .foregroundStyle(MuesliTheme.textTertiary)
 
                 Spacer()
 
-                // Status badge
                 if isActive {
                     Text(tr("Active", "Активна"))
                         .font(.system(size: 11, weight: .semibold))
@@ -1083,78 +1230,27 @@ struct ModelsView: View {
                         .background(MuesliTheme.surfacePrimary)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                 }
+
+                actionButtons(for: option, isActive: isActive, isDownloaded: isDownloaded, isDownloading: isDownloading)
             }
 
-            if option.backend == BackendOption.cohereTranscribe.backend {
-                HStack(alignment: .center, spacing: MuesliTheme.spacing12) {
-                    Text(tr("Language", "Язык"))
+            if option.backend == BackendOption.nemotron35Multilingual.backend,
+               isDownloaded, nemotron35UpdateAvailable, !isDownloading {
+                HStack(spacing: MuesliTheme.spacing8) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 11))
+                        .foregroundStyle(MuesliTheme.accent)
+                    Text(tr("A newer model build is available.", "Доступна новая сборка модели."))
                         .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                        .frame(width: 64, alignment: .leading)
-
-                    Picker("", selection: cohereLanguageSelection) {
-                        ForEach(CohereTranscribeLanguage.allCases, id: \.self) { language in
-                            Text(language.label).tag(language)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: 220, alignment: .leading)
+                        .foregroundStyle(MuesliTheme.textSecondary)
+                    Button(tr("Update", "Обновить")) { updateNemotron35(option) }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(MuesliTheme.accent)
                 }
+                .padding(.leading, 38)
             }
 
-            if option.backend == BackendOption.indicASR.backend {
-                HStack(alignment: .center, spacing: MuesliTheme.spacing12) {
-                    Text(tr("Language", "Язык"))
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                        .frame(width: 64, alignment: .leading)
-
-                    Picker("", selection: indicASRLanguageSelection) {
-                        ForEach(IndicASRLanguage.allCases, id: \.self) { language in
-                            Text(language.label).tag(language)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: 220, alignment: .leading)
-                }
-            }
-
-            if option.backend == BackendOption.nemotron35Multilingual.backend {
-                HStack(alignment: .center, spacing: MuesliTheme.spacing12) {
-                    Text(tr("Language", "Язык"))
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                        .frame(width: 64, alignment: .leading)
-
-                    Picker("", selection: nemotron35LanguageSelection) {
-                        ForEach(Nemotron35Language.allCases, id: \.self) { language in
-                            Text(language.label).tag(language)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: 220, alignment: .leading)
-                }
-
-                if isDownloaded && nemotron35UpdateAvailable && !isDownloading {
-                    HStack(spacing: MuesliTheme.spacing8) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.system(size: 11))
-                            .foregroundStyle(MuesliTheme.accent)
-                        Text(tr("A newer model build is available.", "Доступна новая сборка модели."))
-                            .font(MuesliTheme.caption())
-                            .foregroundStyle(MuesliTheme.textSecondary)
-                        Button(tr("Update", "Обновить")) { updateNemotron35(option) }
-                            .buttonStyle(.plain)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(MuesliTheme.accent)
-                    }
-                }
-            }
-
-            // Progress bar when downloading
             if isDownloading {
                 VStack(alignment: .leading, spacing: 4) {
                     ProgressView(value: progress)
@@ -1163,57 +1259,13 @@ struct ModelsView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(MuesliTheme.textTertiary)
                 }
-            }
-
-            actionButtons(for: option, isActive: isActive, isDownloaded: isDownloaded, isDownloading: isDownloading)
-        }
-        .padding(MuesliTheme.spacing16)
-        .background(MuesliTheme.backgroundRaised)
-        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
-        .overlay(
-            RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
-                .strokeBorder(isActive ? MuesliTheme.accent.opacity(0.5) : MuesliTheme.surfaceBorder, lineWidth: isActive ? 1.5 : 1)
-        )
-    }
-
-    private func comingSoonCard(option: BackendOption) -> some View {
-        VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
-                    HStack(spacing: MuesliTheme.spacing8) {
-                        Text(option.label)
-                            .font(MuesliTheme.headline())
-                            .foregroundStyle(MuesliTheme.textTertiary)
-
-                        Text(tr("Experimental", "Экспериментальная"))
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(MuesliTheme.textTertiary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(MuesliTheme.surfacePrimary)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-
-                        Text(option.sizeLabel)
-                            .font(MuesliTheme.caption())
-                            .foregroundStyle(MuesliTheme.textTertiary.opacity(0.6))
-                    }
-
-                    Text(option.description)
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textTertiary.opacity(0.7))
-                }
-                Spacer()
+                .padding(.leading, 38)
             }
         }
-        .padding(MuesliTheme.spacing16)
-        .background(MuesliTheme.backgroundRaised.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
-        .overlay(
-            RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
-                .strokeBorder(MuesliTheme.surfaceBorder.opacity(0.5), lineWidth: 1)
-        )
-        .opacity(0.6)
+        .padding(.horizontal, MuesliTheme.spacing12)
+        .padding(.vertical, 7)
     }
+
 
     // MARK: - Post-Processor Actions
 

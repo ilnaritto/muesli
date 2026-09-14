@@ -29,6 +29,16 @@ enum MuesliTheme {
         light: .black, lightAlpha: 0.08
     )
 
+    // MARK: - Feature cards (Функции page)
+
+    /// A lighter surface than `backgroundBase` — used for the Функции
+    /// page's own cards/tiles so they read distinctly from the rest of the
+    /// app's standard-weight cards.
+    static let cellFill = Color.adaptiveAlpha(
+        dark: .white, darkAlpha: 0.045,
+        light: .black, lightAlpha: 0.035
+    )
+
     // MARK: - Text hierarchy
 
     static let textPrimary = Color.adaptiveAlpha(

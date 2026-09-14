@@ -55,24 +55,21 @@ struct MeetingListItemView: View {
     }
 
     var body: some View {
-        Group {
-            if isCompact {
-                HStack(alignment: .top, spacing: 10) {
-                    mediaKindTile
-                    mainContent
-                }
-            } else {
-                mainContent
-            }
-        }
+        mainContent
         .padding(isCompact ? MuesliTheme.spacing12 : MuesliTheme.spacing16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
             if isCompact {
                 // Inset vertically so the selection fill never touches the
-                // hairline separators between rows.
+                // hairline separators between rows. Final spec, after a few
+                // rounds of iterating on this: a finished meeting glows
+                // accent ONLY once the user has actually clicked it —
+                // no automatic "freshest" glow, no glow for any other
+                // status while selected. Gray-while-recording lives
+                // separately in `liveMeetingRow` (`MeetingsListPane.swift`),
+                // unconditional on selection.
                 RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
-                    .fill(isSelected ? MuesliTheme.selectionFill : Color.clear)
+                    .fill(isSelected && record.status == .completed ? MuesliTheme.selectionFill : Color.clear)
                     .padding(.vertical, 3)
             } else {
                 RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge)
@@ -155,28 +152,26 @@ struct MeetingListItemView: View {
         }
     }
 
-    /// 32×32 circular tile showing the recording type — Telegram-style avatar
-    /// slot. Compact rows only; the wide row has no room reserved for it.
-    private var mediaKindTile: some View {
-        let kind = MeetingMediaKind.resolve(record)
-        return ZStack {
-            Circle().fill(MuesliTheme.accentSubtle)
-            Image(systemName: kind.symbol)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(MuesliTheme.accent)
-        }
-        .frame(width: 32, height: 32)
-        .help(kind.help)
-    }
+    /// Recording-type glyph shown inline before the title, one theme color
+    /// for every kind — distinguished by glyph only, not color or a circle.
+    private var mediaKind: MeetingMediaKind { MeetingMediaKind.resolve(record) }
 
     @ViewBuilder
     private var mainContent: some View {
         VStack(alignment: .leading, spacing: isCompact ? 4 : MuesliTheme.spacing8) {
             HStack(alignment: .firstTextBaseline) {
-                Text(record.title)
-                    .font(isCompact ? .system(size: 13, weight: .medium) : MuesliTheme.headline())
-                    .foregroundStyle(MuesliTheme.textPrimary)
-                    .lineLimit(isCompact ? 1 : 2)
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    if isCompact {
+                        Image(systemName: mediaKind.symbol)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(MuesliTheme.accent)
+                            .help(mediaKind.help)
+                    }
+                    Text(record.title)
+                        .font(isCompact ? .system(size: 13, weight: .medium) : MuesliTheme.headline())
+                        .foregroundStyle(MuesliTheme.textPrimary)
+                        .lineLimit(isCompact ? 1 : 2)
+                }
 
                 Spacer(minLength: 4)
 
@@ -372,13 +367,19 @@ struct MeetingListItemView: View {
 
     // MARK: - Formatting
 
+    @ViewBuilder
     private var statusBadge: some View {
+        // Recording keeps its red DOT (MeetingDetailView.statusChip) as the
+        // one red accent per earlier feedback — this badge's fill goes gray
+        // instead of a matching red-tinted block, per live feedback that a
+        // solid/tinted red fill during recording reads as too loud.
+        let isRecording = record.status == .recording
         Text(record.status.displayLabel)
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(record.status.displayColor)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(record.status.displayColor.opacity(0.12))
+            .background(isRecording ? MuesliTheme.surfacePrimary : record.status.displayColor.opacity(0.12))
             .clipShape(Capsule())
     }
 

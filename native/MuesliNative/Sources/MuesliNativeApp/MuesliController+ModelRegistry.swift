@@ -23,7 +23,7 @@ extension MuesliController {
     /// All models available for a role: persisted registry entries plus
     /// (for transcription/cleanup) the already-downloaded bundled models.
     func configuredModels(role: ModelRole) -> [ConfiguredModel] {
-        var result = config.configuredModels.filter { $0.role == role && $0.isEnabled }
+        var result = config.configuredModels.filter { $0.roles.contains(role) && $0.isEnabled }
         switch role {
         case .transcription:
             result.append(contentsOf: Self.derivedTranscriptionModels())
@@ -53,7 +53,7 @@ extension MuesliController {
     /// Every persisted entry for a role, enabled or not — for the Models
     /// management screen, which needs to show disabled ones too.
     func allConfiguredModels(role: ModelRole) -> [ConfiguredModel] {
-        config.configuredModels.filter { $0.role == role }
+        config.configuredModels.filter { $0.roles.contains(role) }
     }
 
     /// `BackendOption.downloaded` stats the filesystem for every backend
@@ -151,6 +151,18 @@ extension MuesliController {
         updateConfig { $0.insightsModelID = id }
     }
 
+    // MARK: - Cleanup model selection (round 3: shared pool with Text)
+
+    /// The Cleanup tab's active model id: `defaultModelIDs[.cleanup]` if it's
+    /// still a connected cleanup-capable model, else the bundled default.
+    func activeCleanupModelID() -> String? {
+        let models = configuredModels(role: .cleanup)
+        if let id = defaultConfiguredModelID(role: .cleanup), models.contains(where: { $0.id == id }) {
+            return id
+        }
+        return Self.bundledCleanupID(appState.activePostProcessor)
+    }
+
     // MARK: - CRUD
 
     /// Adds a model to the registry. `secret` (an API key) is written to
@@ -158,7 +170,7 @@ extension MuesliController {
     @discardableResult
     func addConfiguredModel(
         displayName: String,
-        role: ModelRole,
+        role: ModelRole = .textGeneration,
         provider: ModelProvider,
         modelID: String,
         endpointURL: String = "",
@@ -215,7 +227,7 @@ extension MuesliController {
             if !enabled {
                 for role in ModelRole.allCases where config.defaultModelIDs[role.rawValue] == id {
                     config.defaultModelIDs[role.rawValue] = config.configuredModels.first {
-                        $0.role == role && $0.isEnabled && $0.id != id
+                        $0.roles.contains(role) && $0.isEnabled && $0.id != id
                     }?.id
                 }
             }
@@ -226,10 +238,13 @@ extension MuesliController {
         updateConfig { config in
             guard let index = config.configuredModels.firstIndex(where: { $0.id == id }) else { return }
             ModelSecretsStore.delete(ref: config.configuredModels[index].keychainRef)
-            let role = config.configuredModels[index].role
+            // A dual-role cloud model can be the default for both Text and
+            // Cleanup at once — clear/reassign every role it actually served,
+            // not just the single role it was originally added under.
+            let roles = config.configuredModels[index].roles
             config.configuredModels.remove(at: index)
-            if config.defaultModelIDs[role.rawValue] == id {
-                config.defaultModelIDs[role.rawValue] = config.configuredModels.first { $0.role == role && $0.isEnabled }?.id
+            for role in roles where config.defaultModelIDs[role.rawValue] == id {
+                config.defaultModelIDs[role.rawValue] = config.configuredModels.first { $0.roles.contains(role) && $0.isEnabled }?.id
             }
         }
     }
