@@ -82,7 +82,9 @@ struct ModelsView: View {
                         title: tr("Text & cleanup", "Текстовые и очистка"),
                         icon: "text.bubble",
                         color: Color(hex: 0xAF52DE),
-                        subtitle: tr("One connected model can handle both — turn each on for whatever it should do.", "Одна подключённая модель может делать и то, и другое — включи то, для чего она нужна.")
+                        subtitle: tr("One connected model can handle both — turn each on for whatever it should do.", "Одна подключённая модель может делать и то, и другое — включи то, для чего она нужна."),
+                        trailingButtonLabel: tr("Add model", "Добавить модель"),
+                        trailingButtonAction: { showAddModelSheet = true }
                     )
                     textAndCleanupContent
                         .id(ModelsTab.text)
@@ -177,7 +179,14 @@ struct ModelsView: View {
 
     // MARK: - Section header (one continuous page instead of tabs)
 
-    private func modelsSectionHeader(title: String, icon: String, color: Color, subtitle: String? = nil) -> some View {
+    private func modelsSectionHeader(
+        title: String,
+        icon: String,
+        color: Color,
+        subtitle: String? = nil,
+        trailingButtonLabel: String? = nil,
+        trailingButtonAction: (() -> Void)? = nil
+    ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 10) {
                 ZStack {
@@ -192,6 +201,24 @@ struct ModelsView: View {
                 Text(title)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(MuesliTheme.textPrimary)
+
+                // Per direct feedback: adding a model was reachable only
+                // from the "Добавить ещё" section at the very bottom of
+                // the page — this puts the same action right at the top
+                // of the section it actually affects too, no scrolling
+                // required.
+                if let trailingButtonLabel, let trailingButtonAction {
+                    Spacer(minLength: 8)
+                    Button(action: trailingButtonAction) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "plus.circle.fill")
+                            Text(trailingButtonLabel)
+                        }
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(MuesliTheme.accent)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             if let subtitle {
                 Text(subtitle)
@@ -202,28 +229,41 @@ struct ModelsView: View {
         }
     }
 
+    // Per direct feedback ("растянуто... сделать компактнее") — the four
+    // top-level engine cards used to stack one-per-row full width, reading
+    // as a long, sparse column. A 2-column grid uses the same page width
+    // more densely. `experimentalSection` stays its own full-width
+    // disclosure row below — a collapsed toggle spanning half a column
+    // reads oddly next to a real card.
     @ViewBuilder
     private var speechTabContent: some View {
-        familyCard(
-            title: tr("Parakeet Family", "Семейство Parakeet"),
-            subtitle: tr("NVIDIA speech models for fast everyday dictation.", "Речевые модели NVIDIA для быстрой повседневной диктовки."),
-            defaultBadge: tr("Default: v3", "По умолчанию: v3"),
-            logo: "nvidia-logo",
-            selection: $selectedParakeetModel,
-            options: BackendOption.parakeetFamily
-        )
+        LazyVGrid(
+            columns: [GridItem(.flexible(), spacing: MuesliTheme.spacing12), GridItem(.flexible())],
+            alignment: .leading,
+            spacing: MuesliTheme.spacing12
+        ) {
+            familyCard(
+                title: tr("Parakeet Family", "Семейство Parakeet"),
+                subtitle: tr("NVIDIA speech models for fast everyday dictation.", "Речевые модели NVIDIA для быстрой повседневной диктовки."),
+                defaultBadge: tr("Default: v3", "По умолчанию: v3"),
+                logo: "nvidia-logo",
+                selection: $selectedParakeetModel,
+                options: BackendOption.parakeetFamily
+            )
 
-        familyCard(
-            title: "Whisper",
-            subtitle: tr("OpenAI Whisper variants. Runs on Apple Neural Engine via CoreML.", "Варианты OpenAI Whisper. Работают на Apple Neural Engine через CoreML."),
-            defaultBadge: tr("Default: Small", "По умолчанию: Small"),
-            logo: "openai-logo",
-            selection: $selectedWhisperModel,
-            options: BackendOption.whisperFamily
-        )
+            familyCard(
+                title: "Whisper",
+                subtitle: tr("OpenAI Whisper variants. Runs on Apple Neural Engine via CoreML.", "Варианты OpenAI Whisper. Работают на Apple Neural Engine через CoreML."),
+                defaultBadge: tr("Default: Small", "По умолчанию: Small"),
+                logo: "openai-logo",
+                selection: $selectedWhisperModel,
+                options: BackendOption.whisperFamily
+            )
 
-        modelCard(option: .cohereTranscribe, logo: "cohere-logo")
-        modelCard(option: .nemotron35Multilingual, logo: "nvidia-logo")
+            modelCard(option: .cohereTranscribe, logo: "cohere-logo")
+            modelCard(option: .nemotron35Multilingual, logo: "nvidia-logo")
+        }
+
         experimentalSection
     }
 
