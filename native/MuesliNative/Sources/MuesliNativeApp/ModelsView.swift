@@ -77,6 +77,10 @@ struct ModelsView: View {
             ScrollViewReader { scrollProxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: MuesliTheme.spacing24) {
+                        Text(tr("Models", "Модели"))
+                            .font(MuesliTheme.pageTitle())
+                            .foregroundStyle(MuesliTheme.textPrimary)
+
                         sectionGroup(color: Color(hex: 0x007AFF)) {
                             modelsSectionHeader(
                                 title: tr("Speech recognition", "Распознавание речи"),
