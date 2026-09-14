@@ -271,19 +271,30 @@ struct FeaturePermissionsBoard: View {
     /// "нажимаю на — выдать доступ и ничего не происходит" — the tap was
     /// actually firing `openPrivacyPane` instead of the real request API,
     /// and for panes whose URL scheme doesn't resolve on this macOS
-    /// version that's visibly nothing). The "open in System Settings"
-    /// icon and the grant badge are now two separate sibling buttons in
-    /// the same row — useful together, since a permission macOS already
-    /// silently denied needs the pane, not another request call.
+    /// version that's visibly nothing).
+    ///
+    /// Once granted, there's nothing left to "grant" — the main pill's own
+    /// tap opens the matching System Settings pane instead (per live
+    /// feedback: a separate small arrow icon next to an already-green
+    /// "Разрешена" pill read as two buttons for one obvious action). The
+    /// small arrow icon only shows up while NOT yet granted, as the manual
+    /// fallback for a permission macOS has already silently denied, where
+    /// calling the request API again does nothing.
     private func permissionCard(_ item: Item) -> some View {
         FeatureCellContainer {
             FeatureCellHeader(icon: item.icon, title: item.title) {
                 HStack(spacing: 6) {
-                    openPaneButton(item.pane)
                     switch item.kind {
                     case .grantable(let granted, let action):
-                        PermissionBadge(granted: granted, action: action)
+                        if !granted {
+                            openPaneButton(item.pane)
+                        }
+                        PermissionBadge(
+                            granted: granted,
+                            action: granted ? { openPrivacyPane(item.pane) } : action
+                        )
                     case .informational(let note):
+                        openPaneButton(item.pane)
                         StatusPill(text: note)
                     }
                 }
