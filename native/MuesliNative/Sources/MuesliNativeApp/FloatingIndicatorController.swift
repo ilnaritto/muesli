@@ -273,6 +273,19 @@ final class FloatingIndicatorController: NSObject {
         collapsedTintAlpha: CGFloat
     ) {
         guard let panel, let contentView, let tint = tintLayer else { return }
+        // Captured BEFORE this call marks a new morph in flight below — true
+        // only when a PRIOR morph was genuinely still animating (a rapid
+        // hover in/out). The presentation-layer resume a few lines down
+        // exists specifically for that interruption case; using it
+        // unconditionally meant every ordinary, non-interrupted expand also
+        // read its "current" geometry off whatever the presentation layer
+        // happened to still be holding — a stale value from the LAST
+        // completed animation is not guaranteed to be the perfectly centered
+        // rect this state's math expects, and any drift there was baked
+        // into that expand's start point instead of the guaranteed-centered
+        // fallback. Live feedback: the pill visibly grows off-center on
+        // hover. Now the fallback only applies to a genuine interruption.
+        let resumingMidMorph = hoverMorphInFlight
         morphGeneration += 1
         let generation = morphGeneration
         let stateAtMorph = state
@@ -374,12 +387,18 @@ final class FloatingIndicatorController: NSObject {
             // fill/gradient look exists from the very first frames.
             if let glass = glassView {
                 // Same rule as tint below: a rapid hover in/out re-enters
-                // mid-morph. Hard-jumping to the bare strip rect here (instead
-                // of resuming from glass's own current on-screen frame) is
-                // what desyncs it from tint's presentation-based resume and
-                // reads as a second, offset pill for a frame or two.
-                let glassStart = glass.layer?.presentation()?.frame ?? start
-                let glassStartRadius = glass.layer?.presentation()?.cornerRadius ?? collapsedSize.height / 2
+                // mid-morph, and hard-jumping to the bare strip rect there
+                // (instead of resuming from glass's own current on-screen
+                // frame) desyncs it from tint's presentation-based resume,
+                // reading as a second, offset pill for a frame or two. But
+                // that resume must be scoped to an ACTUAL interruption
+                // (`resumingMidMorph`) — unconditionally trusting the
+                // presentation layer even for an ordinary, non-interrupted
+                // expand meant starting from whatever geometry the last
+                // completed animation happened to leave behind instead of
+                // the guaranteed-centered `start` rect.
+                let glassStart = resumingMidMorph ? (glass.layer?.presentation()?.frame ?? start) : start
+                let glassStartRadius = resumingMidMorph ? (glass.layer?.presentation()?.cornerRadius ?? collapsedSize.height / 2) : collapsedSize.height / 2
                 glass.frame = glassStart
                 glass.layer?.masksToBounds = true
                 glass.layer?.cornerRadius = glassStartRadius
@@ -402,12 +421,20 @@ final class FloatingIndicatorController: NSObject {
                 }
             }
 
-            // Start from the layer's PRESENTATION geometry: a rapid hover
-            // in/out re-enters mid-morph, and restarting from the bare strip
-            // flashes a phantom second pill under the half-open capsule.
-            let fromBounds = tint.presentation()?.bounds
-                ?? CGRect(origin: .zero, size: collapsedSize)
-            let fromRadius = tint.presentation()?.cornerRadius ?? collapsedSize.height / 2
+            // Start from the layer's PRESENTATION geometry only when
+            // genuinely resuming a rapid hover in/out mid-morph — restarting
+            // THAT case from the bare strip flashes a phantom second pill
+            // under the half-open capsule. An ordinary expand (no morph
+            // in flight beforehand) always starts from the plain,
+            // guaranteed-centered strip rect instead of the presentation
+            // layer's last-known geometry, which is not guaranteed to still
+            // be centered.
+            let fromBounds = resumingMidMorph
+                ? (tint.presentation()?.bounds ?? CGRect(origin: .zero, size: collapsedSize))
+                : CGRect(origin: .zero, size: collapsedSize)
+            let fromRadius = resumingMidMorph
+                ? (tint.presentation()?.cornerRadius ?? collapsedSize.height / 2)
+                : collapsedSize.height / 2
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             tint.anchorPoint = CGPoint(x: 0.5, y: 1.0)
