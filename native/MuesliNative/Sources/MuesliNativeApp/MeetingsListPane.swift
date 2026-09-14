@@ -560,6 +560,12 @@ struct MeetingsListPane: View {
     private func liveMeetingRow(_ meeting: MeetingRecord) -> some View {
         let isSelected = appState.selectedMeetingID == meeting.id
         VStack(alignment: .leading, spacing: 4) {
+            // Fixed height matching the plain-text title line in
+            // `MeetingListItemView`'s compact row (13pt medium ≈ 18pt line
+            // height) — the pause/stop buttons used to be 24pt tall with no
+            // cap on the HStack, so this row's top line (and the whole row,
+            // since the rest is identical) rendered visibly taller than a
+            // finished meeting's row. Per direct feedback: same height.
             HStack(spacing: MuesliTheme.spacing8) {
                 Circle()
                     .fill(activeMeetingStatusColor(for: meeting))
@@ -575,9 +581,9 @@ struct MeetingsListPane: View {
                         controller.toggleMeetingRecordingPause()
                     } label: {
                         Image(systemName: appState.isMeetingRecordingPaused ? "play.fill" : "pause.fill")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(appState.isMeetingRecordingPaused ? MuesliTheme.backgroundBase : MuesliTheme.textPrimary)
-                            .frame(width: 26, height: 24)
+                            .frame(width: 22, height: 18)
                             .background(appState.isMeetingRecordingPaused ? MuesliTheme.accent : MuesliTheme.surfacePrimary)
                             .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
                     }
@@ -589,9 +595,9 @@ struct MeetingsListPane: View {
                         controller.stopMeetingRecording()
                     } label: {
                         Image(systemName: "stop.fill")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(MuesliTheme.textPrimary)
-                            .frame(width: 26, height: 24)
+                            .frame(width: 22, height: 18)
                             .background(MuesliTheme.surfacePrimary)
                             .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
                     }
@@ -600,6 +606,7 @@ struct MeetingsListPane: View {
                     .help(tr("Stop", "Стоп"))
                 }
             }
+            .frame(height: 18)
 
             // Same fixed preview zone as regular rows so heights line up.
             Text(activeMeetingStatusText(for: meeting))
