@@ -803,6 +803,35 @@ final class FloatingIndicatorController: NSObject {
         let targetFrame = frameForState(state, config: config)
         defer { refreshCollapsedStrip() }
 
+        // First appearance: per direct feedback, this needs to read as
+        // "появление посередине и мягким" — soft, from the middle. The
+        // general animated block below (used for every render, including
+        // this first one) animates `panel.animator().setFrame(...)` from
+        // whatever geometry the panel currently has — and `createPanel`
+        // sizes a brand-new panel to the IDLE frame, so a first appearance
+        // into any other state (e.g. straight into `.recording`) was really
+        // an implicit resize/reposition from that idle geometry to the
+        // target one, which reads as growing/sliding rather than a soft,
+        // centered entrance. Pre-sizing the panel to its final geometry
+        // right here (no animation) makes that later `setFrame` a no-op, and
+        // a small scale "bloom" on `contentView`'s own layer — centered via
+        // `anchorPoint` — makes it visibly grow FROM ITS OWN CENTER instead,
+        // composited with the existing alpha fade for the "soft" half of
+        // the ask.
+        if isFirstAppearance {
+            contentView.layer?.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            panel.setFrame(targetFrame, display: false)
+            contentView.frame = NSRect(origin: .zero, size: targetFrame.size)
+            contentView.layer?.cornerRadius = targetFrame.height / 2
+            panel.alphaValue = 0
+            let bloom = CABasicAnimation(keyPath: "transform")
+            bloom.fromValue = CATransform3DMakeScale(0.82, 0.82, 1)
+            bloom.toValue = CATransform3DIdentity
+            bloom.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            bloom.duration = 0.32
+            contentView.layer?.add(bloom, forKey: "firstAppearanceBloom")
+        }
+
         // Any idle→idle redraw (hover on/off, refresh) must not animate the
         // window — a moving NSPanel visibly sags mid-animation. NOTE: setHovered
         // flips isHovered BEFORE calling setState, so previousHover == isHovered
@@ -827,12 +856,22 @@ final class FloatingIndicatorController: NSObject {
             return
         }
 
-        let duration = transitionDuration(
-            from: previousState,
-            to: state,
-            wasHovered: previousHover,
-            isHovered: isHovered
-        )
+        // `transitionDuration` is tuned for steady-state transitions between
+        // two already-visible pill shapes — for several states (notably
+        // `.preparing` while not hovered, the common "start dictation" case)
+        // it deliberately returns 0 so a routine restyle doesn't animate.
+        // A first appearance is a one-time entrance, not a restyle: it
+        // always gets the soft duration regardless, so the alpha fade
+        // matches the scale bloom set up above instead of snapping instantly
+        // to full opacity while the layer is still visibly scaling in.
+        let duration = isFirstAppearance
+            ? 0.32
+            : transitionDuration(
+                from: previousState,
+                to: state,
+                wasHovered: previousHover,
+                isHovered: isHovered
+            )
 
         morphGeneration += 1
         let generation = morphGeneration
