@@ -1,10 +1,13 @@
 import SwiftUI
 import MuesliCore
 
-/// Role-based tabs on the Models screen (task 8.2.1). Speech and Cleanup
-/// wrap the existing download UI (untouched — the download/state-tracking
-/// logic there already works); Text is the new registry-backed multi-model
-/// list; Catalog surfaces anything not yet downloaded/connected.
+/// The Models screen used to be four tabs keyed by this enum; per direct
+/// feedback ("часть будет не шибко-то удобно" — managing one connected
+/// model across two separate role tabs was busywork) it's now one
+/// continuous scrollable page (see `ModelsView.body`). This only survives
+/// as a set of `ScrollViewReader` anchor ids, so `HomeView.swift`'s
+/// existing "jump to Models → Cleanup" deep links still land in the right
+/// place — they scroll there now instead of switching a selected tab.
 enum ModelsTab: String, CaseIterable, Identifiable {
     case speech
     case text
@@ -12,41 +15,6 @@ enum ModelsTab: String, CaseIterable, Identifiable {
     case catalog
 
     var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .speech: return tr("Speech", "Распознавание")
-        case .text: return tr("Text", "Текстовые")
-        case .cleanup: return tr("Cleanup", "Очистка")
-        case .catalog: return tr("Catalog", "Каталог")
-        }
-    }
-
-    var sidebarIcon: String {
-        switch self {
-        case .speech: return "waveform"
-        case .text: return "text.bubble"
-        case .cleanup: return "wand.and.stars"
-        case .catalog: return "square.grid.2x2"
-        }
-    }
-
-    /// Round 3 had flattened this to one accent color everywhere, same as
-    /// the main Settings sidebar and the Templates row icons — round 5
-    /// reversed that for both of those ("верни как было"), but this tab
-    /// list was missed. Per direct feedback ("иконки сливаются" — the
-    /// uniform-color icons were hard to tell apart at a glance), back to a
-    /// distinct color per tab, same palette family as
-    /// `AppState.SettingsSection.iconColor`.
-    var sidebarColor: Color {
-        switch self {
-        case .speech: return Color(hex: 0x007AFF)    // blue
-        case .text: return Color(hex: 0xAF52DE)      // purple
-        case .cleanup: return Color(hex: 0xFF9500)   // orange
-        case .catalog: return Color(hex: 0x00C7BE)   // teal
-        }
-    }
-
 }
 
 struct ModelsView: View {
@@ -91,55 +59,51 @@ struct ModelsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
-            // No page title/subtitle here — same call as
-            // `MeetingTemplatesManagerView`'s `isEmbedded` case: the left
-            // Settings sidebar already shows "Models"/"Модели"
-            // (`SettingsSection.title`), and `SecondaryColumn` right below
-            // shows it again as its own header — a third "Модели" up here
-            // was a duplicated heading, not a page needing its own title
-            // (this view is only ever embedded in Settings, never
-            // presented standalone, so there's no case that still needs it).
-            //
-            // `maxHeight: .infinity` on `SecondaryColumn` alone wasn't
-            // enough — confirmed live, the sidebar still rendered short
-            // next to a taller content column. Flexible-frame propagation
-            // through this many nested VStack/HStack layers evidently
-            // wasn't resolving to a concrete height reliably. A
-            // `GeometryReader` here reports exactly how much vertical space
-            // this row was actually given by ITS parent (after the title
-            // block above takes its own natural height) and both children
-            // are pinned to that concrete number — no ambiguity left for
-            // either one to under- or over-report.
-            GeometryReader { proxy in
-                HStack(alignment: .top, spacing: MuesliTheme.spacing16) {
-                    SecondaryColumn(title: tr("Models", "Модели"), width: 240) {
-                        modelsSidebar
-                    }
+        // One continuous scrollable page instead of four tabs — per direct
+        // feedback: a connected cloud model already serves both text
+        // generation AND cleanup at once (`ConfiguredModel.roles`), so
+        // switching tabs to manage what's really ONE thing was busywork.
+        // `ModelsTab` stays around as a scroll anchor (`.id(_:)` below) so
+        // the existing "jump here" deep links from HomeView.swift still
+        // land in the right place — they just scroll now instead of
+        // switching a selected tab.
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: MuesliTheme.spacing32) {
+                    modelsSectionHeader(
+                        title: tr("Speech recognition", "Распознавание речи"),
+                        icon: "waveform",
+                        color: Color(hex: 0x007AFF)
+                    )
+                    speechTabContent
+                        .id(ModelsTab.speech)
 
-                    ScrollView {
-                        Group {
-                            switch appState.modelsTab {
-                            case .speech:
-                                speechTabContent
-                            case .text:
-                                textModelsTabContent
-                            case .cleanup:
-                                cleanupTabContent
-                            case .catalog:
-                                catalogTabContent
-                            }
-                        }
-                        .padding(MuesliTheme.spacing24)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .padding(.vertical, 8)
+                    modelsSectionHeader(
+                        title: tr("Text & cleanup", "Текстовые и очистка"),
+                        icon: "text.bubble",
+                        color: Color(hex: 0xAF52DE),
+                        subtitle: tr("One connected model can handle both — turn each on for whatever it should do.", "Одна подключённая модель может делать и то, и другое — включи то, для чего она нужна.")
+                    )
+                    textAndCleanupContent
+                        .id(ModelsTab.text)
+
+                    modelsSectionHeader(
+                        title: tr("Add more", "Добавить ещё"),
+                        icon: "square.grid.2x2",
+                        color: Color(hex: 0x00C7BE)
+                    )
+                    addMoreSectionContent
+                        .id(ModelsTab.catalog)
                 }
-                .frame(height: proxy.size.height)
+                .padding(MuesliTheme.spacing24)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, MuesliTheme.spacing32)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onAppear {
+                let anchor = appState.modelsTab == .cleanup ? ModelsTab.text : appState.modelsTab
+                DispatchQueue.main.async {
+                    scrollProxy.scrollTo(anchor, anchor: .top)
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .sheet(isPresented: $showAddModelSheet) {
@@ -211,31 +175,31 @@ struct ModelsView: View {
         }
     }
 
-    // MARK: - Role sidebar (task 8: was a capsule tab bar — roles weren't noticed at a glance)
+    // MARK: - Section header (one continuous page instead of tabs)
 
-    private var modelsSidebar: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            SecondaryColumnRow(
-                icon: "plus",
-                title: tr("Add Model", "Добавить модель"),
-                isSelected: false
-            ) {
-                showAddModelSheet = true
-            }
-            .help(tr("Add model…", "Добавить модель…"))
-
-            ForEach(ModelsTab.allCases) { tab in
-                SecondaryColumnRow(
-                    icon: tab.sidebarIcon,
-                    title: tab.title,
-                    isSelected: appState.modelsTab == tab,
-                    tileColor: tab.sidebarColor
-                ) {
-                    appState.modelsTab = tab
+    private func modelsSectionHeader(title: String, icon: String, color: Color, subtitle: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(color)
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
                 }
+                .frame(width: 26, height: 26)
+
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(MuesliTheme.textPrimary)
+            }
+            if let subtitle {
+                Text(subtitle)
+                    .font(MuesliTheme.caption())
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .padding(.leading, 36)
             }
         }
-        .padding(MuesliTheme.spacing8)
     }
 
     @ViewBuilder
@@ -264,13 +228,25 @@ struct ModelsView: View {
     }
 
     @ViewBuilder
-    private var catalogTabContent: some View {
-        if BackendOption.comingSoon.isEmpty {
-            Text(tr("Nothing new to download right now — check back later.", "Пока нечего скачивать — загляните позже."))
-                .font(MuesliTheme.callout())
-                .foregroundStyle(MuesliTheme.textTertiary)
-                .padding(.top, MuesliTheme.spacing8)
-        } else {
+    private var addMoreSectionContent: some View {
+        Button {
+            showAddModelSheet = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "plus.circle.fill")
+                Text(tr("Connect a cloud model", "Подключить облачную модель"))
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, MuesliTheme.spacing16)
+            .padding(.vertical, 10)
+            .background(MuesliTheme.accent)
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .padding(.bottom, MuesliTheme.spacing4)
+
+        if !BackendOption.comingSoon.isEmpty {
             VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
                 Text(tr("COMING SOON", "СКОРО"))
                     .font(.system(size: 11, weight: .semibold))
@@ -287,34 +263,50 @@ struct ModelsView: View {
         }
     }
 
-    // MARK: - Text models tab (the registry's real multi-model role)
+    // MARK: - Text & cleanup (merged — a connected cloud model serves both)
+
+    /// Union of both roles' connected models, deduplicated by id. A cloud
+    /// model's `roles` set already contains both `.textGeneration` and
+    /// `.cleanup` (see `ModelRegistry.swift`), so it naturally appears once
+    /// here with both capability chips instead of showing up as two
+    /// separate cards across two tabs.
+    private var combinedTextAndCleanupModels: [ConfiguredModel] {
+        var seen = Set<String>()
+        var merged: [ConfiguredModel] = []
+        for model in controller.allConfiguredModels(role: .textGeneration) + controller.allConfiguredModels(role: .cleanup) {
+            if seen.insert(model.id).inserted {
+                merged.append(model)
+            }
+        }
+        return merged
+    }
 
     @ViewBuilder
-    private var textModelsTabContent: some View {
+    private var textAndCleanupContent: some View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
-            let models = controller.allConfiguredModels(role: .textGeneration)
-            let defaultID = controller.defaultConfiguredModelID(role: .textGeneration)
+            let models = combinedTextAndCleanupModels
 
             if models.isEmpty {
                 emptyTextModelsCard
             } else {
                 VStack(spacing: MuesliTheme.spacing12) {
                     ForEach(models) { model in
-                        configuredModelCard(model, role: .textGeneration, isDefault: model.id == defaultID)
+                        combinedConfiguredModelCard(model)
                     }
                 }
             }
         }
 
         localSummarySection
+        postProcessorSection
     }
 
     private var emptyTextModelsCard: some View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-            Text(tr("No text model connected", "Нет подключённой текстовой модели"))
+            Text(tr("No cloud model connected", "Нет подключённой облачной модели"))
                 .font(MuesliTheme.headline())
                 .foregroundStyle(MuesliTheme.textPrimary)
-            Text(tr("Connect ChatGPT, an API key, or your own endpoint to generate meeting summaries and use the chat features.", "Подключите ChatGPT, API-ключ или свой эндпоинт, чтобы генерировать сводки встреч и пользоваться чатами."))
+            Text(tr("Connect ChatGPT, an API key, or your own endpoint to generate meeting summaries and clean up dictation.", "Подключите ChatGPT, API-ключ или свой эндпоинт, чтобы генерировать сводки встреч и очищать диктовку."))
                 .font(MuesliTheme.callout())
                 .foregroundStyle(MuesliTheme.textSecondary)
             Button(tr("Add model…", "Добавить модель…")) {
@@ -338,8 +330,16 @@ struct ModelsView: View {
         )
     }
 
-    private func configuredModelCard(_ model: ConfiguredModel, role: ModelRole, isDefault: Bool) -> some View {
-        VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+    /// One card, both capability chips — replaces the old per-role
+    /// `configuredModelCard`, which needed the SAME model shown on two
+    /// different tabs to manage what's really one connection. Each chip
+    /// only appears if `model.roles` actually supports that job (a
+    /// bundled cleanup-only GGUF never gets a "meeting summaries" chip).
+    private func combinedConfiguredModelCard(_ model: ConfiguredModel) -> some View {
+        let isDefaultText = model.id == controller.defaultConfiguredModelID(role: .textGeneration)
+        let isDefaultCleanup = model.id == controller.activeCleanupModelID()
+
+        return VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
             HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
                 Image(systemName: model.provider == .chatGPTOAuth ? "sparkles" : (model.provider.isLocal ? "cpu" : "icloud"))
                     .font(.system(size: 15, weight: .medium))
@@ -364,15 +364,7 @@ struct ModelsView: View {
 
                 Spacer()
 
-                if isDefault {
-                    Text(tr("Active", "Активна"))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(MuesliTheme.success)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(MuesliTheme.success.opacity(0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                } else if !model.isEnabled {
+                if !model.isEnabled {
                     Text(tr("Disabled", "Отключена"))
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(MuesliTheme.textTertiary)
@@ -384,16 +376,20 @@ struct ModelsView: View {
             }
 
             HStack(spacing: MuesliTheme.spacing8) {
-                if !isDefault, model.isEnabled {
-                    modelsTabActionButton(tr("Make default", "Сделать основной"), accent: true) {
-                        if role == .cleanup {
-                            controller.selectCleanupModel(id: model.id)
-                        } else {
-                            controller.setDefaultConfiguredModel(id: model.id, role: role)
-                        }
+                if model.roles.contains(.textGeneration) {
+                    roleChip(tr("Meeting summaries", "Сводки встреч"), isOn: isDefaultText) {
+                        controller.setDefaultConfiguredModel(id: model.id, role: .textGeneration)
                     }
                 }
-                if model.provider != .bundledLocal, model.provider != .localGGUF {
+                if model.roles.contains(.cleanup) {
+                    roleChip(tr("Dictation cleanup", "Очистка диктовки"), isOn: isDefaultCleanup) {
+                        controller.selectCleanupModel(id: model.id)
+                    }
+                }
+            }
+
+            if model.provider != .bundledLocal, model.provider != .localGGUF {
+                HStack(spacing: MuesliTheme.spacing8) {
                     modelsTabActionButton(model.isEnabled ? tr("Disable", "Отключить") : tr("Enable", "Включить")) {
                         controller.setConfiguredModelEnabled(id: model.id, enabled: !model.isEnabled)
                     }
@@ -417,9 +413,33 @@ struct ModelsView: View {
         .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
         .overlay(
             RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
-                .strokeBorder(isDefault ? MuesliTheme.accent.opacity(0.5) : MuesliTheme.surfaceBorder, lineWidth: isDefault ? 1.5 : 1)
+                .strokeBorder((isDefaultText || isDefaultCleanup) ? MuesliTheme.accent.opacity(0.5) : MuesliTheme.surfaceBorder, lineWidth: (isDefaultText || isDefaultCleanup) ? 1.5 : 1)
         )
         .opacity(model.isEnabled ? 1 : 0.6)
+    }
+
+    /// A capability toggle-chip: tapping an OFF chip makes this model the
+    /// active one for that job (the previously-active model's own chip
+    /// simply stops reading as ON, since both read from the same shared
+    /// default). Tapping an already-ON chip is a harmless no-op — there's
+    /// always exactly one active model per job, so there's no "off" state
+    /// to switch to.
+    private func roleChip(_ label: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 11.5, weight: .semibold))
+            }
+            .foregroundStyle(isOn ? MuesliTheme.accent : MuesliTheme.textSecondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(isOn ? MuesliTheme.accentSubtle : MuesliTheme.surfacePrimary)
+            .clipShape(Capsule())
+            .overlay(Capsule().strokeBorder(isOn ? MuesliTheme.accent.opacity(0.4) : MuesliTheme.surfaceBorder, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     private func modelsTabActionButton(_ title: String, accent: Bool = false, action: @escaping () -> Void) -> some View {
@@ -649,34 +669,6 @@ struct ModelsView: View {
                 Task { await controller.setNemotron35Language(language) }
             }
         )
-    }
-
-    /// Round 3: any cloud LLM connected on the Text tab is equally usable
-    /// for cleanup (`ConfiguredModel.roles`) — list those connected models
-    /// above the existing bundled on-device GGUF cards, sharing one screen
-    /// instead of forcing a second "add" flow just for cleanup.
-    @ViewBuilder
-    private var cleanupTabContent: some View {
-        let connectedModels = controller.allConfiguredModels(role: .cleanup)
-        let defaultID = controller.activeCleanupModelID()
-        if !connectedModels.isEmpty {
-            VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
-                VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
-                    Text(tr("CONNECTED MODELS", "ПОДКЛЮЧЁННЫЕ МОДЕЛИ"))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                        .textCase(.uppercase)
-                        .padding(.leading, 2)
-                }
-                VStack(spacing: MuesliTheme.spacing12) {
-                    ForEach(connectedModels) { model in
-                        configuredModelCard(model, role: .cleanup, isDefault: model.id == defaultID)
-                    }
-                }
-            }
-            .padding(.bottom, MuesliTheme.spacing8)
-        }
-        postProcessorSection
     }
 
     private var postProcessorSection: some View {
