@@ -42,26 +42,6 @@ struct MeetingsListPane: View {
         FolderTreePresentation(folders: appState.folders, collapsedFolderIDs: [])
     }
 
-    /// The single row the "ready" accent glow applies to — identified by
-    /// its (group, record) POSITION, not by `MeetingRecord.id`. Live
-    /// feedback showed two rows glowing at once; a crash-recovery record
-    /// ("Raw Transcript Recovered from live transcript checkpoints…") sat
-    /// among today's meetings, which is exactly the kind of edge case that
-    /// can leave two distinct rows sharing one `id` in the store — an
-    /// id-keyed comparison can't tell those rows apart (both read as a
-    /// match), but their POSITION in the already-sorted, already-grouped
-    /// list is always unique by construction. Deliberately just one slot,
-    /// not every completed meeting (see `MeetingListItemView`'s
-    /// `isFreshlyCompleted`).
-    private var freshestCompletedSlot: (group: Int, record: Int)? {
-        for (groupIndex, group) in groupedMeetings.enumerated() {
-            if let recordIndex = group.records.firstIndex(where: { $0.status == .completed }) {
-                return (groupIndex, recordIndex)
-            }
-        }
-        return nil
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             // Pinned header: search + folder tabs stay put, the list scrolls below.
@@ -346,8 +326,7 @@ struct MeetingsListPane: View {
 
     @ViewBuilder
     private var meetingRows: some View {
-        let freshestSlot = freshestCompletedSlot
-        ForEach(Array(groupedMeetings.enumerated()), id: \.element.header) { groupIndex, group in
+        ForEach(Array(groupedMeetings.enumerated()), id: \.element.header) { _, group in
             VStack(alignment: .leading, spacing: 2) {
                 Text(group.header)
                     .font(.system(size: 10, weight: .semibold))
@@ -358,7 +337,7 @@ struct MeetingsListPane: View {
                 VStack(alignment: .leading, spacing: 0) {
                     let lastID = group.records.last?.id
                     let liveID = controller.activeLiveMeetingRecord()?.id
-                    ForEach(Array(group.records.enumerated()), id: \.element.id) { recordIndex, meeting in
+                    ForEach(group.records) { meeting in
                         if meeting.id == liveID {
                             // The active meeting renders as its own row with
                             // the recording controls inline — no separate
@@ -371,7 +350,6 @@ struct MeetingsListPane: View {
                                 isSelected: appState.selectedMeetingID == meeting.id,
                                 folders: appState.folders,
                                 isCompact: true,
-                                isFreshlyCompleted: freshestSlot.map { $0 == (groupIndex, recordIndex) } ?? false,
                                 onSelect: { controller.showMeetingDocument(id: meeting.id) },
                                 onMove: { folderID in
                                     controller.moveMeeting(id: meeting.id, toFolder: folderID)

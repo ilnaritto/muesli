@@ -6,12 +6,6 @@ struct MeetingListItemView: View {
     let isSelected: Bool
     let folders: [MeetingFolder]
     let isCompact: Bool
-    /// Only the single most-recently-completed meeting gets the "ready"
-    /// accent glow (per direct feedback: "не должны быть сразу все встречи
-    /// фиолетовые" — every finished meeting glowing at once defeats the
-    /// point of a "this one just finished" signal). The caller computes
-    /// which record that is; this view just renders the flag.
-    var isFreshlyCompleted: Bool = false
     private let folderByID: [Int64: MeetingFolder]
     private let folderIDsWithChildren: Set<Int64>
     let onSelect: () -> Void
@@ -29,7 +23,6 @@ struct MeetingListItemView: View {
         isSelected: Bool,
         folders: [MeetingFolder],
         isCompact: Bool = false,
-        isFreshlyCompleted: Bool = false,
         onSelect: @escaping () -> Void,
         onMove: @escaping (Int64?) -> Void,
         onCreateFolderAndMove: ((String) -> Void)?,
@@ -39,7 +32,6 @@ struct MeetingListItemView: View {
         self.isSelected = isSelected
         self.folders = folders
         self.isCompact = isCompact
-        self.isFreshlyCompleted = isFreshlyCompleted
         self.folderByID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
         self.folderIDsWithChildren = Set(folders.compactMap(\.parentID))
         self.onSelect = onSelect
@@ -69,21 +61,15 @@ struct MeetingListItemView: View {
         .background {
             if isCompact {
                 // Inset vertically so the selection fill never touches the
-                // hairline separators between rows. Per direct feedback: the
-                // single most-recently-finished meeting gets a persistent
-                // accent glow (not just while selected) — the counterpart to
-                // the gray `liveMeetingRow` shown while a meeting is still
-                // recording, in `MeetingsListPane.swift`. Scoped to just
-                // that one record (`isFreshlyCompleted`), not every
-                // `.completed` row, so the list doesn't turn uniformly
-                // purple. Selection still wins when it applies (stronger
-                // fill), so the two don't visually compete.
+                // hairline separators between rows. Final spec, after a few
+                // rounds of iterating on this: a finished meeting glows
+                // accent ONLY once the user has actually clicked it —
+                // no automatic "freshest" glow, no glow for any other
+                // status while selected. Gray-while-recording lives
+                // separately in `liveMeetingRow` (`MeetingsListPane.swift`),
+                // unconditional on selection.
                 RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
-                    .fill(
-                        isSelected
-                            ? MuesliTheme.selectionFill
-                            : (isFreshlyCompleted ? MuesliTheme.accent.opacity(0.12) : Color.clear)
-                    )
+                    .fill(isSelected && record.status == .completed ? MuesliTheme.selectionFill : Color.clear)
                     .padding(.vertical, 3)
             } else {
                 RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge)
