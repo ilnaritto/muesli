@@ -316,14 +316,20 @@ struct SettingsView: View {
             // такими же по размеру где синие точки") — this side padding
             // was 32pt while the two cards' own top/bottom padding
             // (`SecondaryColumn`/`editorPane`, both `.padding(.vertical, 8)`)
-            // is 8pt, a visibly lopsided gap. Matched to the same 8pt.
+            // is 8pt, a visibly lopsided gap. Matched to the same 8pt —
+            // asymmetric because the outer `HStack(spacing: 5)` in `body`
+            // already contributes 5pt on the left (between this and
+            // PrimaryColumn), so only 3pt more is needed there to total
+            // 8pt; the right edge (window edge, nothing else contributing)
+            // gets the full 8pt directly.
             MeetingTemplatesManagerView(
                 appState: appState,
                 controller: controller,
                 onClose: {},
                 isEmbedded: true
             )
-            .padding(.horizontal, 8)
+            .padding(.leading, 3)
+            .padding(.trailing, 8)
         case .general, .sync, .dictation, .computerUse, .meetings, .appearance:
             ScrollView {
                 VStack(alignment: .leading, spacing: MuesliTheme.spacing24) {
