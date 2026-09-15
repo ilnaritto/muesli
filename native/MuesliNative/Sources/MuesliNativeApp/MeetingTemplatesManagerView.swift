@@ -44,7 +44,13 @@ struct MeetingTemplatesManagerView: View {
                 header
             }
 
-            HStack(alignment: .top, spacing: MuesliTheme.spacing16) {
+            // Per direct feedback comparing the embedded Settings page's
+            // gaps directly ("кажется всё ещё они шире") — this inter-panel
+            // gap was 16pt while every other gap on the page (side margins,
+            // each card's own top/bottom padding) is 8pt. Only narrowed for
+            // the embedded (Settings) presentation — the standalone sheet's
+            // own proportions are untouched.
+            HStack(alignment: .top, spacing: isEmbedded ? 8 : MuesliTheme.spacing16) {
                 SecondaryColumn(title: tr("Templates", "Шаблоны"), width: isEmbedded ? 240 : 260) {
                     sidebar
                 }
