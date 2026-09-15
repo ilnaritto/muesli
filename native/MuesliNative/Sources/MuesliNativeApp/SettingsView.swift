@@ -311,13 +311,19 @@ struct SettingsView: View {
             // vertical padding around the whole thing (unlike the other
             // sections' padding, which sits on scrollable content) would
             // shrink them short of the main Settings sidebar's height.
+            //
+            // Per direct feedback ("отступы где красные штучки должны быть
+            // такими же по размеру где синие точки") — this side padding
+            // was 32pt while the two cards' own top/bottom padding
+            // (`SecondaryColumn`/`editorPane`, both `.padding(.vertical, 8)`)
+            // is 8pt, a visibly lopsided gap. Matched to the same 8pt.
             MeetingTemplatesManagerView(
                 appState: appState,
                 controller: controller,
                 onClose: {},
                 isEmbedded: true
             )
-            .padding(.horizontal, MuesliTheme.spacing32)
+            .padding(.horizontal, 8)
         case .general, .sync, .dictation, .computerUse, .meetings, .appearance:
             ScrollView {
                 VStack(alignment: .leading, spacing: MuesliTheme.spacing24) {
