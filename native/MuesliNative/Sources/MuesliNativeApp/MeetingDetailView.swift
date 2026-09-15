@@ -1414,21 +1414,38 @@ struct MeetingDetailView: View {
             if isPreparingThisMeeting(meeting) {
                 meetingPreparationControlGroup(for: meeting)
             } else {
+                // Per report ("кнопки сверху иногда будто не работают" —
+                // click lands, nothing happens): these four were computed
+                // properties invoked TWICE each — once per `ViewThatFits`
+                // candidate — so every body re-render (which fires often
+                // here: the live transcript streams in continuously while
+                // recording) recreated four fresh Button view identities
+                // for BOTH candidates. `ViewThatFits` already has to
+                // measure both; giving it fresh identities on top of that
+                // is exactly the pattern Apple warns against for
+                // interactive content — a click landing mid-recreation can
+                // be dropped. Binding them once here keeps one stable
+                // identity across both candidates.
+                let status = statusChip(for: meeting)
+                let pauseResume = pauseResumeRecordingButton
+                let stop = stopRecordingButton
+                let discard = discardRecordingButton
+
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: MuesliTheme.spacing8) {
-                        statusChip(for: meeting)
-                        pauseResumeRecordingButton
-                        stopRecordingButton
-                        discardRecordingButton
+                        status
+                        pauseResume
+                        stop
+                        discard
                     }
                     .recordingControlsBackground()
 
                     VStack(alignment: .trailing, spacing: MuesliTheme.spacing8) {
-                        statusChip(for: meeting)
+                        status
                         HStack(spacing: MuesliTheme.spacing8) {
-                            pauseResumeRecordingButton
-                            stopRecordingButton
-                            discardRecordingButton
+                            pauseResume
+                            stop
+                            discard
                         }
                         .recordingControlsBackground()
                     }
