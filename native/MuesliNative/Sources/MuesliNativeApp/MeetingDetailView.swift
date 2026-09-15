@@ -157,6 +157,15 @@ struct MeetingDetailView: View {
                 }
                 .onChange(of: meeting.id) { _, _ in
                     syncLocalState(with: meeting)
+                    // The cached height belongs to the PREVIOUS meeting's
+                    // header. Switching to one with a taller header (e.g.
+                    // template chips wrapping to two lines) would otherwise
+                    // use the old, too-small clearance for a frame or two —
+                    // scroll content (tags row included) renders up under
+                    // the new floating header instead of below it ("теги
+                    // зависли сверху"). Clearing it falls back to the
+                    // static estimate until the new header is measured.
+                    floatingHeaderMeasuredHeight = nil
                 }
                 .onChange(of: meeting.status) { _, _ in
                     syncLocalState(with: meeting)
@@ -304,18 +313,27 @@ struct MeetingDetailView: View {
         isAIChatMode || (isMediaPanelOpen && hasPlayableMedia(meeting))
     }
 
-    /// Soft fade under the floating pills so text scrolling behind them
-    /// dims out instead of glowing through.
+    /// Backdrop under the floating pills so text scrolling behind them
+    /// dims out instead of glowing through ("просвечивает"). Was a plain
+    /// linear fade from 0.7 → 0 across the WHOLE clearance height, which
+    /// left it nearly fully transparent right where the icon row sits (the
+    /// bottom of that height) — exactly the area it needed to cover most.
+    /// Now solid through the header's actual content and only fades in the
+    /// small `+20` buffer past it, for a soft edge instead of a weak one.
     private func headerBackdropGradient(for meeting: MeetingRecord) -> some View {
-        LinearGradient(
+        let clearance = floatingHeaderClearance(for: meeting)
+        let totalHeight = clearance + 20
+        let solidFraction = totalHeight > 0 ? clearance / totalHeight : 1
+        return LinearGradient(
             stops: [
-                .init(color: MuesliTheme.backgroundDeep.opacity(0.7), location: 0),
+                .init(color: MuesliTheme.backgroundDeep, location: 0),
+                .init(color: MuesliTheme.backgroundDeep, location: solidFraction),
                 .init(color: MuesliTheme.backgroundDeep.opacity(0), location: 1)
             ],
             startPoint: .top,
             endPoint: .bottom
         )
-        .frame(height: floatingHeaderClearance(for: meeting) + 20)
+        .frame(height: totalHeight)
         .allowsHitTesting(false)
     }
 
