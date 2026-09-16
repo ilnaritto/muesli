@@ -987,6 +987,13 @@ struct HomeView: View {
     // (bigger title, description, action) takes the lead on the left, a
     // small demo clip sits at a fixed, much smaller size on the right
     // instead of spanning the whole card width.
+    // Per direct feedback ("сделай так чтоб было видно полную гифку, а то
+    // вся нужная анимация за пределами. кнопки справа, видео чуть ниже") —
+    // the clip used to sit in a small fixed 220×74 side column (~32% of its
+    // native 700×233 size), too small to show the actual animation without
+    // cropping/losing detail. Header (icon/title/trailing controls stay on
+    // the right) and description now form a plain top block; the clip moves
+    // below, spanning the card's full width so it renders near-native size.
     @ViewBuilder
     private func heroCardBody<Trailing: View>(
         assetName: String,
@@ -997,40 +1004,40 @@ struct HomeView: View {
         action: @escaping () -> Void,
         @ViewBuilder trailing: () -> Trailing
     ) -> some View {
-        HStack(alignment: .top, spacing: 18) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 9) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(MuesliTheme.textPrimary.opacity(0.07))
-                        Image(systemName: icon)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(MuesliTheme.textPrimary.opacity(0.82))
-                    }
-                    .frame(width: 28, height: 28)
-
-                    Text(title)
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(MuesliTheme.textPrimary)
-                        .lineLimit(1)
-
-                    Spacer(minLength: 0)
-
-                    trailing()
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 9) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(MuesliTheme.textPrimary.opacity(0.07))
+                    Image(systemName: icon)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(MuesliTheme.textPrimary.opacity(0.82))
                 }
+                .frame(width: 28, height: 28)
 
-                Text(description)
-                    .font(.system(size: 12.5, weight: .regular))
-                    .foregroundStyle(MuesliTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text(title)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(MuesliTheme.textPrimary)
+                    .lineLimit(1)
 
-                Spacer(minLength: 4)
+                Spacer(minLength: 0)
 
-                SettingsLinkButton(label: actionLabel, action: action)
+                // Per direct feedback: the preview clip moves back inline,
+                // between the title and the permission badge, now that
+                // `AnimatedGifView`'s sizing bug (content-hugging fighting
+                // the SwiftUI frame) is fixed and it actually respects a
+                // small row-height box.
+                featureHeroMedia(assetName)
+
+                trailing()
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
 
-            featureHeroMedia(assetName, width: 220, height: 74)
+            Text(description)
+                .font(.system(size: 12.5, weight: .regular))
+                .foregroundStyle(MuesliTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            SettingsLinkButton(label: actionLabel, action: action)
         }
     }
 
@@ -1587,33 +1594,35 @@ struct HomeView: View {
     /// 1" version. Assets live in `Contents/Resources/features-tour/`
     /// (staged there by `scripts/build_native_app.sh`, which `dev-test.sh`
     /// already runs through — nothing extra needed to see these locally).
-    // Per direct feedback ("слишком большое видео и некрасиво выглядит",
-    // then "сделать примерно в половину того что есть, расположить
-    // справа") — a bare fixed height didn't match these clips' real shape
-    // (700×233, a wide ~3:1 strip), which let NSImageView's aspect-fit
-    // letterbox it inside a much wider box. `.aspectRatio(fill)` + `.frame`
-    // + `.clipped()` sizes/crops it exactly to the given box — no dead
-    // space, no distortion — and now takes an explicit target size instead
-    // of hardcoding one, since `heroCardBody` needs a small fixed-size
-    // thumbnail, not a full-width banner.
-    private static let heroMediaAspectRatio: CGFloat = 700.0 / 233.0
+    // These clips are natively 700×233. Checking actual frames (not just
+    // frame 0 — the demo content moves around over the ~60-80 frame loop:
+    // the pill sits near the top early on, a callout/button appears lower
+    // mid-clip) shows the ACTIVE content stays within roughly this
+    // horizontal/vertical band across the whole animation, while wide dead
+    // margins on both left and right (not just below) are constant. Per
+    // direct feedback ("зумить ближе на плашку, кроп по-другому" — crop
+    // the DEAD MARGINS out, not just shrink the whole frame) this crops
+    // that fixed source rect and scales IT to fill the target box, instead
+    // of scaling the full 700×233 frame down (which left the pill tiny
+    // with lots of black padding on every side).
+    private static let heroMediaSourceCrop = CGRect(x: 140, y: 0, width: 420, height: 190)
+    // Sized to sit inline in the header row, between the title and the
+    // permission badge, matching the crop rect's own ~2.2:1 shape.
+    private static let heroMediaWidth: CGFloat = 160
 
-    private func featureHeroMedia(_ assetName: String, width: CGFloat, height: CGFloat) -> some View {
-        Group {
+    private func featureHeroMedia(_ assetName: String) -> some View {
+        let crop = Self.heroMediaSourceCrop
+        let scale = Self.heroMediaWidth / crop.width
+        let targetHeight = crop.height * scale
+        return Group {
             if let url = Bundle.main.url(forResource: assetName, withExtension: "gif", subdirectory: "features-tour") {
-                // Per direct feedback ("видос не влазит в кадр, обрезается
-                // со всех сторон") — `.fill` cropped it to cover the box
-                // edge-to-edge; `.fit` scales the WHOLE clip down to fit
-                // inside instead, so nothing gets cut off (a sliver of
-                // letterbox on the shorter axis is fine — the background
-                // fill below blends it into the card instead of showing a
-                // hard color seam).
                 AnimatedGifView(url: url)
-                    .aspectRatio(Self.heroMediaAspectRatio, contentMode: .fit)
-                    .frame(width: width, height: height)
+                    .frame(width: 700 * scale, height: 233 * scale)
+                    .offset(x: -crop.minX * scale, y: -crop.minY * scale)
             }
         }
-        .frame(width: width, height: height)
+        .frame(width: Self.heroMediaWidth, height: targetHeight, alignment: .topLeading)
+        .clipped()
         .background(MuesliTheme.backgroundBase)
         .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
         .overlay(
@@ -2113,6 +2122,18 @@ struct AnimatedGifView: NSViewRepresentable {
         view.image = NSImage(contentsOf: url)
         view.imageScaling = .scaleProportionallyUpOrDown
         view.animates = true
+        // NSImageView reports its IMAGE's native size (700×233 here) as its
+        // own intrinsicContentSize once an image is set. AppKit's Auto
+        // Layout bridge under SwiftUI's NSViewRepresentable honors that
+        // over the size SwiftUI's own `.frame()` tries to impose unless
+        // hugging/compression-resistance are explicitly relaxed — without
+        // this the view renders at its native ~700×233 size regardless of
+        // any SwiftUI frame wrapped around it (per direct feedback: "ролик
+        // намного больше размером чем та плашка").
+        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        view.setContentHuggingPriority(.defaultLow, for: .vertical)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         // Per direct feedback ("шумная зернистая картинка вместо гладкого
         // видео") — these clips are shown MUCH smaller here (~220×74) than
         // their native size (700×233, a ~32% scale-down). Without an

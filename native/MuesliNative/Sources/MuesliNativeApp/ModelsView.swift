@@ -516,19 +516,24 @@ struct ModelsView: View {
                 .background(Circle().fill(MuesliTheme.accentSubtle))
 
             VStack(alignment: .leading, spacing: 6) {
+                // Per direct feedback: role chips sit next to the name now;
+                // Local/Cloud dropped to its own line under the name with
+                // the model ID (it's metadata, not part of the title).
                 HStack(spacing: 8) {
                     Text(model.displayName)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(MuesliTheme.textPrimary)
                         .lineLimit(1)
-                    Text(model.provider.isLocal ? tr("Local", "Локальная") : tr("Cloud", "Облачная"))
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                        .lineLimit(1)
-                    Text(model.modelID.isEmpty ? model.provider.title : model.modelID)
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textSecondary)
-                        .lineLimit(1)
+                    if model.roles.contains(.textGeneration) {
+                        roleChip(tr("Summary", "Сводка"), isOn: isDefaultText) {
+                            controller.setDefaultConfiguredModel(id: model.id, role: .textGeneration)
+                        }
+                    }
+                    if model.roles.contains(.cleanup) {
+                        roleChip(tr("Post-processing", "Подобработка"), isOn: isDefaultCleanup) {
+                            controller.selectCleanupModel(id: model.id)
+                        }
+                    }
                     if !model.isEnabled {
                         Text(tr("Disabled", "Отключена"))
                             .font(.system(size: 11, weight: .medium))
@@ -541,17 +546,15 @@ struct ModelsView: View {
                     }
                 }
 
-                HStack(spacing: MuesliTheme.spacing8) {
-                    if model.roles.contains(.textGeneration) {
-                        roleChip(tr("Meeting summaries", "Сводки встреч"), isOn: isDefaultText) {
-                            controller.setDefaultConfiguredModel(id: model.id, role: .textGeneration)
-                        }
-                    }
-                    if model.roles.contains(.cleanup) {
-                        roleChip(tr("Dictation cleanup", "Очистка диктовки"), isOn: isDefaultCleanup) {
-                            controller.selectCleanupModel(id: model.id)
-                        }
-                    }
+                HStack(spacing: 8) {
+                    Text(model.provider.isLocal ? tr("Local", "Локальная") : tr("Cloud", "Облачная"))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                        .lineLimit(1)
+                    Text(model.modelID.isEmpty ? model.provider.title : model.modelID)
+                        .font(MuesliTheme.caption())
+                        .foregroundStyle(MuesliTheme.textSecondary)
+                        .lineLimit(1)
                 }
             }
 
@@ -561,18 +564,9 @@ struct ModelsView: View {
                 modelsTabActionButton(model.isEnabled ? tr("Disable", "Отключить") : tr("Enable", "Включить")) {
                     controller.setConfiguredModelEnabled(id: model.id, enabled: !model.isEnabled)
                 }
-                Button {
+                modelDeleteButton {
                     controller.removeConfiguredModel(id: model.id)
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 12, weight: .medium))
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(MuesliTheme.textSecondary)
-                .padding(.horizontal, MuesliTheme.spacing12)
-                .padding(.vertical, 4)
-                .background(MuesliTheme.surfacePrimary)
-                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
             }
         }
         .padding(MuesliTheme.spacing16)
@@ -591,20 +585,20 @@ struct ModelsView: View {
     /// default). Tapping an already-ON chip is a harmless no-op — there's
     /// always exactly one active model per job, so there's no "off" state
     /// to switch to.
+    /// Same "on = bright fill, off = gray outline" language as `modelActionCluster`'s
+    /// Active pill, so a glance at the row shows what this model is used
+    /// for — short labels (per direct feedback: "Распознавание, Подобработка,
+    /// Сводка" instead of the full phrases) keep the row from overflowing.
     private func roleChip(_ label: String, isOn: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 11, weight: .semibold))
-                Text(label)
-                    .font(.system(size: 11.5, weight: .semibold))
-            }
-            .foregroundStyle(isOn ? MuesliTheme.accent : MuesliTheme.textSecondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(isOn ? MuesliTheme.accentSubtle : MuesliTheme.surfacePrimary)
-            .clipShape(Capsule())
-            .overlay(Capsule().strokeBorder(isOn ? MuesliTheme.accent.opacity(0.4) : MuesliTheme.surfaceBorder, lineWidth: 1))
+            Text(label)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isOn ? .white : MuesliTheme.textSecondary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(isOn ? MuesliTheme.accent : Color.clear)
+                .clipShape(Capsule())
+                .overlay(Capsule().strokeBorder(isOn ? Color.clear : MuesliTheme.surfaceBorder, lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
@@ -618,6 +612,88 @@ struct ModelsView: View {
             .padding(.vertical, 4)
             .background(accent ? MuesliTheme.accentSubtle : MuesliTheme.surfacePrimary)
             .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+    }
+
+    /// Trailing controls for a download-able model card: Active pill / Set
+    /// Active button / Download button, with the Delete button folded into
+    /// the SAME row (matched height) instead of a separate button row below.
+    /// Per direct feedback: these used to live below the name+description as
+    /// their own row; now they sit inline, trailing, next to the name — see
+    /// `ViewThatFits` call sites (`familyModelCard`, `speechModelCard`,
+    /// `postProcModelCard`, `localSummaryModelCard`) that fall back to
+    /// stacking this cluster under the name only when the row is too narrow.
+    @ViewBuilder
+    private func modelActionCluster(
+        isActive: Bool,
+        isDownloaded: Bool,
+        isDownloading: Bool,
+        setActiveLabel: String = tr("Set Active", "Сделать активной"),
+        onSetActive: @escaping () -> Void,
+        onDownload: @escaping () -> Void,
+        onDelete: (() -> Void)?,
+        onCancel: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: MuesliTheme.spacing8) {
+            if isDownloading {
+                Button(tr("Cancel", "Отмена"), action: onCancel)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .padding(.horizontal, MuesliTheme.spacing12)
+                    .padding(.vertical, 5)
+                    .background(MuesliTheme.surfacePrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+            } else if isActive {
+                // Bright theme-accent fill per direct feedback ("активна"
+                // used to be a pale green pill — barely read as a status,
+                // let alone the row's primary color).
+                Text(tr("Active", "Активна"))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, MuesliTheme.spacing12)
+                    .padding(.vertical, 5)
+                    .background(MuesliTheme.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                if let onDelete {
+                    modelDeleteButton(action: onDelete)
+                }
+            } else if isDownloaded {
+                Button(setActiveLabel, action: onSetActive)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(MuesliTheme.accent)
+                    .padding(.horizontal, MuesliTheme.spacing12)
+                    .padding(.vertical, 5)
+                    .background(MuesliTheme.accentSubtle)
+                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                if let onDelete {
+                    modelDeleteButton(action: onDelete)
+                }
+            } else {
+                Button(tr("Download", "Скачать"), action: onDownload)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(MuesliTheme.accent)
+                    .padding(.horizontal, MuesliTheme.spacing12)
+                    .padding(.vertical, 5)
+                    .background(MuesliTheme.accentSubtle)
+                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+            }
+        }
+        .fixedSize()
+    }
+
+    private func modelDeleteButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "trash")
+                .font(.system(size: 12, weight: .medium))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(MuesliTheme.textSecondary)
+        .padding(.horizontal, MuesliTheme.spacing12)
+        .padding(.vertical, 5)
+        .background(MuesliTheme.surfacePrimary)
+        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
     }
 
     // MARK: - Local summarization model (on-device meeting notes)
@@ -653,45 +729,54 @@ struct ModelsView: View {
         let isActive = isDownloaded
             && appState.config.meetingSummaryBackend.lowercased() == MeetingSummaryBackendOption.localGguf.backend
 
+        // The fit test only weighs the name row against `controls` — the
+        // (often long) description never competes for that space, so it
+        // can't force controls to fall back to their own row just because
+        // the description text is long (per direct feedback: controls
+        // should sit next to the NAME, description always sits below both).
+        let nameRow = HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
+            brandLogo("qwen-logo")
+            HStack(spacing: MuesliTheme.spacing8) {
+                Text(option.label)
+                    .font(MuesliTheme.headline())
+                    .foregroundStyle(MuesliTheme.textPrimary)
+
+                Text(option.sizeLabel)
+                    .font(MuesliTheme.caption())
+                    .foregroundStyle(MuesliTheme.textTertiary)
+            }
+        }
+        let controls = modelActionCluster(
+            isActive: isActive,
+            isDownloaded: isDownloaded,
+            isDownloading: isDownloading,
+            setActiveLabel: tr("Use for summaries", "Использовать для заметок"),
+            onSetActive: { controller.selectMeetingSummaryBackend(.localGguf) },
+            onDownload: { startSummaryDownload(option) },
+            onDelete: isDownloaded ? { summaryModelToDelete = option } : nil,
+            onCancel: { cancelSummaryDownload(option) }
+        )
+
         return VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
-            HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
-                brandLogo("qwen-logo")
-                VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
-                    HStack(spacing: MuesliTheme.spacing8) {
-                        Text(option.label)
-                            .font(MuesliTheme.headline())
-                            .foregroundStyle(MuesliTheme.textPrimary)
-
-                        Text(option.sizeLabel)
-                            .font(MuesliTheme.caption())
-                            .foregroundStyle(MuesliTheme.textTertiary)
-                    }
-
-                    Text(option.description)
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textSecondary)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
+                    nameRow
+                    Spacer(minLength: MuesliTheme.spacing12)
+                    controls
                 }
-
-                Spacer()
-
-                if isActive {
-                    Text(tr("Active", "Активна"))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(MuesliTheme.success)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(MuesliTheme.success.opacity(0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                } else if isDownloaded {
-                    Text(tr("Downloaded", "Скачано"))
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(MuesliTheme.surfacePrimary)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+                    nameRow
+                    HStack {
+                        Spacer()
+                        controls
+                    }
                 }
             }
+
+            Text(option.description)
+                .font(MuesliTheme.caption())
+                .foregroundStyle(MuesliTheme.textSecondary)
+                .padding(.leading, 38)
 
             if isDownloading {
                 VStack(alignment: .leading, spacing: 4) {
@@ -700,58 +785,6 @@ struct ModelsView: View {
                     Text(tr("\(Int(progress * 100))% downloading...", "Скачивание… \(Int(progress * 100))%"))
                         .font(.system(size: 11))
                         .foregroundStyle(MuesliTheme.textTertiary)
-                }
-            }
-
-            HStack(spacing: MuesliTheme.spacing8) {
-                if isDownloading {
-                    Button(tr("Cancel", "Отмена")) {
-                        cancelSummaryDownload(option)
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(MuesliTheme.textSecondary)
-                    .padding(.horizontal, MuesliTheme.spacing12)
-                    .padding(.vertical, 4)
-                    .background(MuesliTheme.surfacePrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-                } else if isDownloaded {
-                    if !isActive {
-                        Button(tr("Use for summaries", "Использовать для заметок")) {
-                            controller.selectMeetingSummaryBackend(.localGguf)
-                        }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(MuesliTheme.accent)
-                        .padding(.horizontal, MuesliTheme.spacing12)
-                        .padding(.vertical, 4)
-                        .background(MuesliTheme.accentSubtle)
-                        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-                    }
-
-                    Button {
-                        summaryModelToDelete = option
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(MuesliTheme.textSecondary)
-                    .padding(.horizontal, MuesliTheme.spacing12)
-                    .padding(.vertical, 4)
-                    .background(MuesliTheme.surfacePrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-                } else {
-                    Button(tr("Download", "Скачать")) {
-                        startSummaryDownload(option)
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(MuesliTheme.accent)
-                    .padding(.horizontal, MuesliTheme.spacing12)
-                    .padding(.vertical, 4)
-                    .background(MuesliTheme.accentSubtle)
-                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
                 }
             }
         }
@@ -863,45 +896,48 @@ struct ModelsView: View {
         let isDownloading = downloadingPostProcModels.contains(option.id)
         let progress = downloadProgressPostProc[option.id] ?? 0
 
+        let nameRow = HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
+            brandLogo("qwen-logo")
+            HStack(spacing: MuesliTheme.spacing8) {
+                Text(option.label)
+                    .font(MuesliTheme.headline())
+                    .foregroundStyle(MuesliTheme.textPrimary)
+
+                Text(option.sizeLabel)
+                    .font(MuesliTheme.caption())
+                    .foregroundStyle(MuesliTheme.textTertiary)
+            }
+        }
+        let controls = modelActionCluster(
+            isActive: isActive,
+            isDownloaded: isDownloaded,
+            isDownloading: isDownloading,
+            onSetActive: { controller.selectCleanupModel(id: MuesliController.bundledCleanupID(option)) },
+            onDownload: { startPostProcDownload(option) },
+            onDelete: isDownloaded ? { postProcModelToDelete = option } : nil,
+            onCancel: { cancelPostProcDownload(option) }
+        )
+
         return VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
-            HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
-                brandLogo("qwen-logo")
-                VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
-                    HStack(spacing: MuesliTheme.spacing8) {
-                        Text(option.label)
-                            .font(MuesliTheme.headline())
-                            .foregroundStyle(MuesliTheme.textPrimary)
-
-                        Text(option.sizeLabel)
-                            .font(MuesliTheme.caption())
-                            .foregroundStyle(MuesliTheme.textTertiary)
-                    }
-
-                    Text(option.description)
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textSecondary)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
+                    nameRow
+                    Spacer(minLength: MuesliTheme.spacing12)
+                    controls
                 }
-
-                Spacer()
-
-                if isActive {
-                    Text(tr("Active", "Активна"))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(MuesliTheme.success)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(MuesliTheme.success.opacity(0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                } else if isDownloaded {
-                    Text(tr("Downloaded", "Скачано"))
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(MuesliTheme.surfacePrimary)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+                    nameRow
+                    HStack {
+                        Spacer()
+                        controls
+                    }
                 }
             }
+
+            Text(option.description)
+                .font(MuesliTheme.caption())
+                .foregroundStyle(MuesliTheme.textSecondary)
+                .padding(.leading, 38)
 
             if isDownloading {
                 VStack(alignment: .leading, spacing: 4) {
@@ -910,58 +946,6 @@ struct ModelsView: View {
                     Text(tr("\(Int(progress * 100))% downloading...", "Скачивание… \(Int(progress * 100))%"))
                         .font(.system(size: 11))
                         .foregroundStyle(MuesliTheme.textTertiary)
-                }
-            }
-
-            HStack(spacing: MuesliTheme.spacing8) {
-                if isDownloading {
-                    Button(tr("Cancel", "Отмена")) {
-                        cancelPostProcDownload(option)
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(MuesliTheme.textSecondary)
-                    .padding(.horizontal, MuesliTheme.spacing12)
-                    .padding(.vertical, 4)
-                    .background(MuesliTheme.surfacePrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-                } else if isDownloaded {
-                    if !isActive {
-                        Button(tr("Set Active", "Сделать активной")) {
-                            controller.selectCleanupModel(id: MuesliController.bundledCleanupID(option))
-                        }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(MuesliTheme.accent)
-                        .padding(.horizontal, MuesliTheme.spacing12)
-                        .padding(.vertical, 4)
-                        .background(MuesliTheme.accentSubtle)
-                        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-                    }
-
-                    Button {
-                        postProcModelToDelete = option
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(MuesliTheme.textSecondary)
-                    .padding(.horizontal, MuesliTheme.spacing12)
-                    .padding(.vertical, 4)
-                    .background(MuesliTheme.surfacePrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-                } else {
-                    Button(tr("Download", "Скачать")) {
-                        startPostProcDownload(option)
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(MuesliTheme.accent)
-                    .padding(.horizontal, MuesliTheme.spacing12)
-                    .padding(.vertical, 4)
-                    .background(MuesliTheme.accentSubtle)
-                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
                 }
             }
         }
@@ -1094,25 +1078,17 @@ struct ModelsView: View {
         let isDownloading = downloadingModels.contains(selectedOption.model)
         let progress = downloadProgress[selectedOption.model] ?? 0
 
-        return VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
-            HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
-                brandLogo(logo)
-                VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
-                    Text(title)
-                        .font(MuesliTheme.headline())
-                        .foregroundStyle(MuesliTheme.textPrimary)
-                    Text(selectedOption.description)
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textSecondary)
-                }
-                Spacer()
-                familyStatusBadge(isActive: isActive, isDownloaded: isDownloaded)
-            }
-
-            HStack(alignment: .center, spacing: MuesliTheme.spacing12) {
-                Text(tr("Variant", "Вариант"))
-                    .font(MuesliTheme.caption())
-                    .foregroundStyle(MuesliTheme.textTertiary)
+        // Variant picker + size sit inline next to the title (per direct
+        // feedback: "вариант модели и размер должен быть справа от
+        // заголовка"). The description never competes with `controls` for
+        // the fit test below — it always renders on its own row — so a long
+        // description can't force controls to fall back just by being long.
+        let nameRow = HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
+            brandLogo(logo)
+            HStack(spacing: MuesliTheme.spacing8) {
+                Text(title)
+                    .font(MuesliTheme.headline())
+                    .foregroundStyle(MuesliTheme.textPrimary)
                 Picker("", selection: selection) {
                     ForEach(options, id: \.model) { option in
                         Text(option.label).tag(option.model)
@@ -1120,12 +1096,42 @@ struct ModelsView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
-                .frame(maxWidth: 180, alignment: .leading)
+                .fixedSize()
                 Text(selectedOption.sizeLabel)
                     .font(MuesliTheme.caption())
                     .foregroundStyle(MuesliTheme.textTertiary)
-                Spacer()
             }
+        }
+        let controls = modelActionCluster(
+            isActive: isActive,
+            isDownloaded: isDownloaded,
+            isDownloading: isDownloading,
+            onSetActive: { controller.selectBackend(selectedOption) },
+            onDownload: { startDownload(selectedOption) },
+            onDelete: isDownloaded ? { modelToDelete = selectedOption } : nil,
+            onCancel: { cancelDownload(selectedOption) }
+        )
+
+        return VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
+                    nameRow
+                    Spacer(minLength: MuesliTheme.spacing12)
+                    controls
+                }
+                VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+                    nameRow
+                    HStack {
+                        Spacer()
+                        controls
+                    }
+                }
+            }
+
+            Text(selectedOption.description)
+                .font(MuesliTheme.caption())
+                .foregroundStyle(MuesliTheme.textSecondary)
+                .padding(.leading, 38)
 
             if isDownloading {
                 VStack(alignment: .leading, spacing: 4) {
@@ -1136,8 +1142,6 @@ struct ModelsView: View {
                         .foregroundStyle(MuesliTheme.textTertiary)
                 }
             }
-
-            actionButtons(for: selectedOption, isActive: isActive, isDownloaded: isDownloaded, isDownloading: isDownloading)
         }
         .padding(MuesliTheme.spacing16)
         .background(MuesliTheme.backgroundRaised)
@@ -1146,27 +1150,6 @@ struct ModelsView: View {
             RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
                 .strokeBorder(isActive ? MuesliTheme.accent.opacity(0.5) : MuesliTheme.surfaceBorder, lineWidth: isActive ? 1.5 : 1)
         )
-    }
-
-    @ViewBuilder
-    private func familyStatusBadge(isActive: Bool, isDownloaded: Bool) -> some View {
-        if isActive {
-            Text(tr("Active", "Активна"))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(MuesliTheme.success)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(MuesliTheme.success.opacity(0.15))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-        } else if isDownloaded {
-            Text(tr("Downloaded", "Скачано"))
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(MuesliTheme.textTertiary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(MuesliTheme.surfacePrimary)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-        }
     }
 
     @ViewBuilder
@@ -1213,61 +1196,6 @@ struct ModelsView: View {
         }
     }
 
-    @ViewBuilder
-    private func actionButtons(for option: BackendOption, isActive: Bool, isDownloaded: Bool, isDownloading: Bool) -> some View {
-        HStack(spacing: MuesliTheme.spacing8) {
-            if isDownloading {
-                Button(tr("Cancel", "Отмена")) {
-                    cancelDownload(option)
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(MuesliTheme.textSecondary)
-                .padding(.horizontal, MuesliTheme.spacing12)
-                .padding(.vertical, 4)
-                .background(MuesliTheme.surfacePrimary)
-                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-            } else if isDownloaded {
-                if !isActive {
-                    Button(tr("Set Active", "Сделать активной")) {
-                        controller.selectBackend(option)
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(MuesliTheme.accent)
-                    .padding(.horizontal, MuesliTheme.spacing12)
-                    .padding(.vertical, 4)
-                    .background(MuesliTheme.accentSubtle)
-                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-                }
-
-                Button {
-                    modelToDelete = option
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(MuesliTheme.textSecondary)
-                .padding(.horizontal, MuesliTheme.spacing12)
-                .padding(.vertical, 4)
-                .background(MuesliTheme.surfacePrimary)
-                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-            } else {
-                Button(tr("Download", "Скачать")) {
-                    startDownload(option)
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(MuesliTheme.accent)
-                .padding(.horizontal, MuesliTheme.spacing12)
-                .padding(.vertical, 4)
-                .background(MuesliTheme.accentSubtle)
-                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-            }
-        }
-    }
-
     // Same card chrome as `familyModelCard`/`postProcModelCard`.
     private func speechModelCard(option: BackendOption, logo: String? = nil) -> some View {
         let isActive = appState.selectedBackend == option
@@ -1275,83 +1203,95 @@ struct ModelsView: View {
         let isDownloading = downloadingModels.contains(option.model)
         let progress = downloadProgress[option.model] ?? 0
 
-        return VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
-            HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
-                brandLogo(logo)
-                VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
-                    HStack(spacing: 6) {
-                        Text(option.label)
-                            .font(MuesliTheme.headline())
-                            .foregroundStyle(MuesliTheme.textPrimary)
-
-                        if option.recommended {
-                            Text(tr("Recommended", "Рекомендуемая"))
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(MuesliTheme.accent)
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                        }
-
-                        Text(option.sizeLabel)
-                            .font(MuesliTheme.caption())
-                            .foregroundStyle(MuesliTheme.textTertiary)
+        // Same treatment as `familyModelCard`'s variant picker (per direct
+        // feedback) — the language picker sits inline next to the title
+        // instead of its own row below the description.
+        let languagePicker = Group {
+            if option.backend == BackendOption.cohereTranscribe.backend {
+                Picker("", selection: cohereLanguageSelection) {
+                    ForEach(CohereTranscribeLanguage.allCases, id: \.self) { language in
+                        Text(language.label).tag(language)
                     }
-                    Text(option.description)
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textSecondary)
                 }
-                Spacer()
-                familyStatusBadge(isActive: isActive, isDownloaded: isDownloaded)
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+            } else if option.backend == BackendOption.indicASR.backend {
+                Picker("", selection: indicASRLanguageSelection) {
+                    ForEach(IndicASRLanguage.allCases, id: \.self) { language in
+                        Text(language.label).tag(language)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+            } else if option.backend == BackendOption.nemotron35Multilingual.backend {
+                Picker("", selection: nemotron35LanguageSelection) {
+                    ForEach(Nemotron35Language.allCases, id: \.self) { language in
+                        Text(language.label).tag(language)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+            }
+        }
+        let nameRow = HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
+            brandLogo(logo)
+            HStack(spacing: 6) {
+                Text(option.label)
+                    .font(MuesliTheme.headline())
+                    .foregroundStyle(MuesliTheme.textPrimary)
+
+                if option.recommended {
+                    Text(tr("Recommended", "Рекомендуемая"))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(MuesliTheme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+
+                languagePicker
+
+                Text(option.sizeLabel)
+                    .font(MuesliTheme.caption())
+                    .foregroundStyle(MuesliTheme.textTertiary)
+            }
+        }
+        let controls = modelActionCluster(
+            isActive: isActive,
+            isDownloaded: isDownloaded,
+            isDownloading: isDownloading,
+            onSetActive: { controller.selectBackend(option) },
+            onDownload: { startDownload(option) },
+            onDelete: isDownloaded ? { modelToDelete = option } : nil,
+            onCancel: { cancelDownload(option) }
+        )
+
+        return VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
+                    nameRow
+                    Spacer(minLength: MuesliTheme.spacing12)
+                    controls
+                }
+                VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+                    nameRow
+                    HStack {
+                        Spacer()
+                        controls
+                    }
+                }
             }
 
-            if option.backend == BackendOption.cohereTranscribe.backend {
-                HStack(alignment: .center, spacing: MuesliTheme.spacing12) {
-                    Text(tr("Language", "Язык"))
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                    Picker("", selection: cohereLanguageSelection) {
-                        ForEach(CohereTranscribeLanguage.allCases, id: \.self) { language in
-                            Text(language.label).tag(language)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: 180, alignment: .leading)
-                    Spacer()
-                }
-            } else if option.backend == BackendOption.indicASR.backend {
-                HStack(alignment: .center, spacing: MuesliTheme.spacing12) {
-                    Text(tr("Language", "Язык"))
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                    Picker("", selection: indicASRLanguageSelection) {
-                        ForEach(IndicASRLanguage.allCases, id: \.self) { language in
-                            Text(language.label).tag(language)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: 180, alignment: .leading)
-                    Spacer()
-                }
-            } else if option.backend == BackendOption.nemotron35Multilingual.backend {
-                HStack(alignment: .center, spacing: MuesliTheme.spacing12) {
-                    Text(tr("Language", "Язык"))
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                    Picker("", selection: nemotron35LanguageSelection) {
-                        ForEach(Nemotron35Language.allCases, id: \.self) { language in
-                            Text(language.label).tag(language)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: 180, alignment: .leading)
-                    Spacer()
-                }
+            Text(option.description)
+                .font(MuesliTheme.caption())
+                .foregroundStyle(MuesliTheme.textSecondary)
+                .padding(.leading, 38)
 
+            if option.backend == BackendOption.nemotron35Multilingual.backend {
                 if isDownloaded, nemotron35UpdateAvailable, !isDownloading {
                     HStack(spacing: MuesliTheme.spacing8) {
                         Image(systemName: "arrow.triangle.2.circlepath")
@@ -1377,8 +1317,6 @@ struct ModelsView: View {
                         .foregroundStyle(MuesliTheme.textTertiary)
                 }
             }
-
-            actionButtons(for: option, isActive: isActive, isDownloaded: isDownloaded, isDownloading: isDownloading)
         }
         .padding(MuesliTheme.spacing16)
         .background(MuesliTheme.backgroundRaised)

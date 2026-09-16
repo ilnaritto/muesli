@@ -2156,16 +2156,22 @@ final class FloatingIndicatorController: NSObject {
         guard let screen = NSScreen.main?.visibleFrame else {
             return NSRect(x: 0, y: 0, width: 64, height: 28)
         }
+        // Matches IndicatorLauncherView.rowWidth: 3 circles normally, 4 when
+        // Computer Use is opted into the pill (Settings → Computer Use →
+        // "Show in floating pill"). The panel used to stay fixed at the
+        // 3-icon width even with 4 shown, so the 4th circle rendered outside
+        // the pill's own background ("вылазит за плашку").
+        let hoveredLauncherWidth: CGFloat = config.computerUseVisibleInPill ? 170 : 128
         let size: NSSize
         switch state {
         case .idle:
-            size = isHovered ? NSSize(width: 128, height: 74) : NSSize(width: 43, height: 7)
+            size = isHovered ? NSSize(width: hoveredLauncherWidth, height: 74) : NSSize(width: 43, height: 7)
         // Collapsed recording is the exact idle-strip footprint with only the
         // per-mode dot groups inside; hovering expands to the stateful
         // launcher (wider when the cancel ✕ is shown).
         case .preparing, .recording:
             size = isHovered
-                ? NSSize(width: 128, height: 74)
+                ? NSSize(width: hoveredLauncherWidth, height: 74)
                 : NSSize(width: 43, height: 7)
         case .transcribing:
             if let transcript = computerUseTranscriptText {
