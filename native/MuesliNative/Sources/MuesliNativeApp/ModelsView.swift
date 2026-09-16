@@ -22,10 +22,17 @@ struct ModelsView: View {
     /// is new: everything already downloaded/connected in one place, so
     /// switching what's active doesn't require knowing which catalog tab it
     /// lives in.
-    private enum Category: Hashable {
+    // Per direct feedback ("постобработка это по сути отдельная вкладка
+    // должна быть, там свои модели" + explicit order "Мои модели,
+    // Распознавание речи, Постобработка, Текстовые модели" — the real
+    // pipeline order: recognize speech, THEN clean it up, and text/summary
+    // models are a separate concern from either) — post-processing split
+    // out of the old merged "Текстовые и очистка" tab into its own.
+    private enum Category: CaseIterable, Hashable {
         case myModels
         case speech
-        case textCleanup
+        case postProcessing
+        case text
     }
 
     let appState: AppState
@@ -96,9 +103,10 @@ struct ModelsView: View {
                 .padding(.vertical, 8)
 
                 // Connecting a cloud model only matters for "Мои модели"/
-                // "Текстовые и очистка" — irrelevant on the speech catalog,
-                // which downloads instead of connecting.
-                if selectedCategory != .speech {
+                // "Текстовые модели" — irrelevant on the speech catalog
+                // (downloads instead of connecting) and on post-processing
+                // (its models are bundled downloads too, not connections).
+                if selectedCategory == .myModels || selectedCategory == .text {
                     connectCloudModelButton
                         .padding(.top, 20)
                         .padding(.trailing, 20)
@@ -181,21 +189,30 @@ struct ModelsView: View {
 
     // MARK: - Sidebar (categories)
 
+    // Per direct feedback ("иконка мои модели лучше фиолетовой сделать") —
+    // purple for My models (was gold); post-processing gets its own color
+    // now that it's a real tab, not a section inside Text.
     private static let categoryColors: [Category: Color] = [
-        .myModels: Color(hex: 0xFFD60A),
+        .myModels: Color(hex: 0xAF52DE),
         .speech: Color(hex: 0x007AFF),
-        .textCleanup: Color(hex: 0xAF52DE)
+        .postProcessing: Color(hex: 0xFF9500),
+        .text: Color(hex: 0x00C7BE)
     ]
 
     private func syncSelectedCategory(from tab: ModelsTab) {
         switch tab {
         case .speech:
             selectedCategory = .speech
-        case .text, .cleanup:
-            selectedCategory = .textCleanup
+        case .cleanup:
+            selectedCategory = .postProcessing
+        case .text:
+            selectedCategory = .text
         }
     }
 
+    // Per direct feedback (explicit order: "Мои модели, Распознавание
+    // речи, Постобработка, Текстовые модели" — recognize speech, THEN
+    // clean it up; text/summary models are their own separate thing).
     @ViewBuilder
     private var sidebar: some View {
         ScrollView {
@@ -219,12 +236,21 @@ struct ModelsView: View {
                 }
 
                 SecondaryColumnRow(
-                    icon: "text.bubble",
-                    title: tr("Text & cleanup", "Текстовые и очистка"),
-                    isSelected: selectedCategory == .textCleanup,
-                    tileColor: Self.categoryColors[.textCleanup]!
+                    icon: "wand.and.stars",
+                    title: tr("Post-processing", "Постобработка"),
+                    isSelected: selectedCategory == .postProcessing,
+                    tileColor: Self.categoryColors[.postProcessing]!
                 ) {
-                    selectedCategory = .textCleanup
+                    selectedCategory = .postProcessing
+                }
+
+                SecondaryColumnRow(
+                    icon: "text.bubble",
+                    title: tr("Text models", "Текстовые модели"),
+                    isSelected: selectedCategory == .text,
+                    tileColor: Self.categoryColors[.text]!
+                ) {
+                    selectedCategory = .text
                 }
             }
             .padding(MuesliTheme.spacing8)
@@ -246,8 +272,10 @@ struct ModelsView: View {
                 myModelsContent
             case .speech:
                 speechTabContent
-            case .textCleanup:
-                textAndCleanupContent
+            case .postProcessing:
+                postProcessorContent
+            case .text:
+                textModelsContent
             }
         }
     }
@@ -281,13 +309,23 @@ struct ModelsView: View {
     private var paneHeaderInfo: (title: String, subtitle: String?, icon: String) {
         switch selectedCategory {
         case .myModels:
-            return (tr("My models", "Мои модели"), nil, "star.fill")
+            return (
+                tr("My models", "Мои модели"),
+                tr("Only models you've actually installed or connected — local (e.g. Ollama) or your own cloud connections (e.g. ChatGPT).", "Только модели, которые ты сам установил или подключил — локальные (например, Ollama) или свои облачные подключения (например, ChatGPT)."),
+                "star.fill"
+            )
         case .speech:
             return (tr("Speech recognition", "Распознавание речи"), nil, "waveform")
-        case .textCleanup:
+        case .postProcessing:
             return (
-                tr("Text & cleanup", "Текстовые и очистка"),
-                tr("One connected model can handle both — turn each on for whatever it should do.", "Одна подключённая модель может делать и то, и другое — включи то, для чего она нужна."),
+                tr("Post-processing", "Постобработка"),
+                tr("Cleans up the transcript right after speech recognition — before any summarization.", "Очищает транскрипт сразу после распознавания речи — до любой суммаризации."),
+                "wand.and.stars"
+            )
+        case .text:
+            return (
+                tr("Text models", "Текстовые модели"),
+                tr("Generate meeting summaries. Connect one below.", "Генерируют сводки встреч. Подключи модель ниже."),
                 "text.bubble"
             )
         }
@@ -346,69 +384,27 @@ struct ModelsView: View {
             .padding(.leading, 2)
     }
 
-    // MARK: - My models (per direct feedback: "точно должна быть вкладка
-    // мои модели, которые появляются в нужных вкладках и на них можно
-    // переключиться") — everything already downloaded/connected, grouped
-    // the same way the catalog tabs group it, reusing the exact same rows
-    // (so "Сделать активной"/role chips here are the same switch action as
-    // on the catalog tabs — just gathered in one place).
+    // MARK: - My models (per direct feedback: "внутри мои модели должно
+    // быть только установленные модели пользователем — то есть там
+    // только либо локальные пользователя типа оламы, либо подключенные
+    // пользователем, типа чат гпт") — narrowed from an everything-
+    // downloaded aggregator down to exactly the user's own registry
+    // entries (`ConfiguredModel`s: Ollama/LM Studio/custom endpoints,
+    // ChatGPT, a local GGUF connection). Bundled catalog downloads
+    // (speech engines, the bundled post-processor/summary GGUFs) are NOT
+    // "installed by the user" in that sense — they stay on their own
+    // catalog tabs, not here.
     @ViewBuilder
     private var myModelsContent: some View {
-        let downloadedSpeechOptions = BackendOption.all.filter { downloadedModels.contains($0.model) }
         let llmModels = combinedTextAndCleanupModels
-        let downloadedSummaryOptions = LocalSummaryModelOption.all.filter { downloadedSummaryModels.contains($0.id) }
-        let downloadedPostProcOptions = PostProcessorOption.all.filter { downloadedPostProcModels.contains($0.id) }
-        let isEmpty = downloadedSpeechOptions.isEmpty && llmModels.isEmpty
-            && downloadedSummaryOptions.isEmpty && downloadedPostProcOptions.isEmpty
 
-        if isEmpty {
+        if llmModels.isEmpty {
             emptyMyModelsCard
         } else {
-            VStack(alignment: .leading, spacing: MuesliTheme.spacing20) {
-                if !downloadedSpeechOptions.isEmpty {
-                    VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-                        subsectionHeader(tr("Speech recognition", "Распознавание речи"))
-                        tableContainer {
-                            ForEach(Array(downloadedSpeechOptions.enumerated()), id: \.element.model) { index, option in
-                                if index > 0 { tableRowDivider }
-                                modelTableRow(option: option, logo: logoForBackend(option))
-                            }
-                        }
-                    }
-                }
-
-                if !llmModels.isEmpty {
-                    VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-                        subsectionHeader(tr("Text & cleanup", "Текстовые и очистка"))
-                        tableContainer {
-                            ForEach(Array(llmModels.enumerated()), id: \.element.id) { index, model in
-                                if index > 0 { tableRowDivider }
-                                combinedConfiguredModelRow(model)
-                            }
-                        }
-                    }
-                }
-
-                if !downloadedSummaryOptions.isEmpty {
-                    VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-                        subsectionHeader(tr("Local summarization", "Локальная суммаризация"))
-                        VStack(spacing: MuesliTheme.spacing12) {
-                            ForEach(downloadedSummaryOptions) { option in
-                                localSummaryModelCard(option)
-                            }
-                        }
-                    }
-                }
-
-                if !downloadedPostProcOptions.isEmpty {
-                    VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-                        subsectionHeader(tr("Post-processing", "Постобработка"))
-                        VStack(spacing: MuesliTheme.spacing12) {
-                            ForEach(downloadedPostProcOptions) { option in
-                                postProcModelCard(option)
-                            }
-                        }
-                    }
+            tableContainer {
+                ForEach(Array(llmModels.enumerated()), id: \.element.id) { index, model in
+                    if index > 0 { tableRowDivider }
+                    combinedConfiguredModelRow(model)
                 }
             }
         }
@@ -416,10 +412,10 @@ struct ModelsView: View {
 
     private var emptyMyModelsCard: some View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
-            Text(tr("No models yet", "Пока нет ни одной модели"))
+            Text(tr("No models installed yet", "Пока нет ни одной установленной модели"))
                 .font(MuesliTheme.headline())
                 .foregroundStyle(MuesliTheme.textPrimary)
-            Text(tr("Download a speech model or connect a cloud model — it'll show up here, with a quick way to switch to it.", "Скачайте речевую модель или подключите облачную — она появится здесь, и её можно будет быстро сделать активной."))
+            Text(tr("Connect a local model (e.g. Ollama) or a cloud one (e.g. ChatGPT) — it'll show up here.", "Подключите локальную модель (например, Ollama) или облачную (например, ChatGPT) — она появится здесь."))
                 .font(MuesliTheme.callout())
                 .foregroundStyle(MuesliTheme.textSecondary)
         }
@@ -482,8 +478,13 @@ struct ModelsView: View {
         return merged
     }
 
+    // Per direct feedback ("пост обработка это по сути отдельная вкладка
+    // должна быть, там свои модели") — this used to be "Текстовые и
+    // очистка" with `postProcessorSection` tacked on at the bottom;
+    // cleanup now lives on its own tab (`postProcessorContent` below), so
+    // this is purely text/summary models.
     @ViewBuilder
-    private var textAndCleanupContent: some View {
+    private var textModelsContent: some View {
         // The prominent "connect a cloud model" action now lives in the
         // pinned top-right overlay (`connectCloudModelButton` in `body`) —
         // no in-line copy of it here anymore.
@@ -503,6 +504,10 @@ struct ModelsView: View {
         }
 
         localSummarySection
+    }
+
+    @ViewBuilder
+    private var postProcessorContent: some View {
         postProcessorSection
     }
 
