@@ -2113,6 +2113,16 @@ struct AnimatedGifView: NSViewRepresentable {
         view.image = NSImage(contentsOf: url)
         view.imageScaling = .scaleProportionallyUpOrDown
         view.animates = true
+        // Per direct feedback ("шумная зернистая картинка вместо гладкого
+        // видео") — these clips are shown MUCH smaller here (~220×74) than
+        // their native size (700×233, a ~32% scale-down). Without an
+        // explicit smooth minification filter, AppKit can point-sample
+        // each animated frame instead of properly downsampling it, turning
+        // the GIF's own natural compression dither into visible static at
+        // this size. Trilinear filtering forces smooth interpolation.
+        view.wantsLayer = true
+        view.layer?.minificationFilter = .trilinear
+        view.layer?.magnificationFilter = .trilinear
         return view
     }
 
