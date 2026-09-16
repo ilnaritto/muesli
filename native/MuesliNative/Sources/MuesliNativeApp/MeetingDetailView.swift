@@ -26,6 +26,14 @@ struct MeetingDetailView: View {
     let onBack: (() -> Void)?
     let backLabel: String
     @State private var isSummarizing = false
+    // Per direct feedback ("во время создании саммари должна быть
+    // возможность переключиться на другие вкладки саммари") — which
+    // template a generation is actually FOR, so the full-screen spinner and
+    // the header's "Summarizing..." only show while looking at THAT tab.
+    // Switching to any other tab (cached: instant restore; uncached: starts
+    // its own generation) no longer gets blocked or hidden behind a
+    // generically-shared `isSummarizing` flag.
+    @State private var generatingTemplateID: String?
     @State private var isRetranscribing = false
     @State private var isEditingNotes = false
     @State private var isEditingTranscript = false
@@ -653,7 +661,10 @@ struct MeetingDetailView: View {
                 switchToTemplate(id: id, for: meeting)
             }
         }
-        .disabled(isEditingNotes || isEditingTranscript || isSummarizing)
+        // No longer gated on `isSummarizing` — a summary generating for
+        // ONE template must not block switching to another (cached: instant
+        // restore; uncached: starts its own generation instead).
+        .disabled(isEditingNotes || isEditingTranscript)
         .contextMenu {
             let isAuto = id == MeetingTemplates.autoID
             Button(tr("Edit…", "Редактировать…")) {
@@ -911,9 +922,14 @@ struct MeetingDetailView: View {
         }
     }
 
-    private func summaryCompletion(for meeting: MeetingRecord) -> (Result<Void, Error>) -> Void {
+    /// `templateID` is which generation this completion belongs to — if a
+    /// newer generation (a different tab) has since started, an out-of-order
+    /// arrival of this older one must not clear `generatingTemplateID` out
+    /// from under it.
+    private func summaryCompletion(for meeting: MeetingRecord, templateID: String) -> (Result<Void, Error>) -> Void {
         { [meeting] result in
             isSummarizing = false
+            if generatingTemplateID == templateID { generatingTemplateID = nil }
             switch result {
             case .success:
                 if let updated = controller.meeting(id: meeting.id) {
@@ -930,7 +946,8 @@ struct MeetingDetailView: View {
 
     private func runResummarize(for meeting: MeetingRecord) {
         isSummarizing = true
-        controller.resummarize(meeting: meeting, completion: summaryCompletion(for: meeting))
+        generatingTemplateID = pendingTemplateID
+        controller.resummarize(meeting: meeting, completion: summaryCompletion(for: meeting, templateID: pendingTemplateID))
     }
 
     /// Switching tabs restores an already generated summary from the store;
@@ -954,7 +971,8 @@ struct MeetingDetailView: View {
     private func selectAndApplyTemplate(id: String, for meeting: MeetingRecord) {
         pendingTemplateID = id
         isSummarizing = true
-        controller.applyMeetingTemplate(id: id, to: meeting, completion: summaryCompletion(for: meeting))
+        generatingTemplateID = id
+        controller.applyMeetingTemplate(id: id, to: meeting, completion: summaryCompletion(for: meeting, templateID: id))
     }
 
     /// Full-page state shown while a summary is being generated.
@@ -1056,7 +1074,12 @@ struct MeetingDetailView: View {
                 }
 
                 ZStack(alignment: .topLeading) {
-                    if isSummarizing {
+                    // Only the tab actually being generated shows the
+                    // spinner — switching to a different (cached, or simply
+                    // not-yet-requested) tab while this one is still working
+                    // must show ITS content, not a spinner for a template
+                    // that isn't even open anymore.
+                    if isSummarizing, pendingTemplateID == generatingTemplateID {
                         summaryGenerationPlaceholder(for: meeting)
                             .opacity(documentMode == .notes ? 1 : 0)
                             .allowsHitTesting(false)
@@ -1140,7 +1163,10 @@ struct MeetingDetailView: View {
 
     @ViewBuilder
     private func summaryAction(for meeting: MeetingRecord) -> some View {
-        if isSummarizing {
+        // Same per-tab check as the content placeholder — this header
+        // button reflects only the currently-viewed tab's own state, not
+        // whatever else might be generating in the background.
+        if isSummarizing, pendingTemplateID == generatingTemplateID {
             HStack(spacing: 6) {
                 ProgressView()
                     .controlSize(.small)
@@ -1152,20 +1178,8 @@ struct MeetingDetailView: View {
         } else {
             iconButton("sparkles", label: primarySummaryActionLabel(for: meeting)) {
                 isSummarizing = true
-                let completion: (Result<Void, Error>) -> Void = { [meeting] result in
-                    isSummarizing = false
-                    switch result {
-                    case .success:
-                        if let updated = controller.meeting(id: meeting.id) {
-                            syncLocalState(with: updated)
-                        }
-                    case .failure(let error):
-                        syncPendingTemplateSelectionIfNeeded(
-                            for: controller.meeting(id: meeting.id) ?? meeting
-                        )
-                        summaryErrorMessage = error.localizedDescription
-                    }
-                }
+                generatingTemplateID = pendingTemplateID
+                let completion = summaryCompletion(for: meeting, templateID: pendingTemplateID)
                 if hasPendingTemplateChange(for: meeting) {
                     controller.applyMeetingTemplate(id: pendingTemplateID, to: meeting, completion: completion)
                 } else {
@@ -2120,8 +2134,11 @@ struct MeetingDetailView: View {
         transcriptResummaryPromptMeetingID = nil
         guard let updatedMeeting = controller.meeting(id: meetingID) else { return }
         isSummarizing = true
+        generatingTemplateID = pendingTemplateID
+        let templateID = pendingTemplateID
         controller.resummarize(meeting: updatedMeeting) { [meetingID] result in
             isSummarizing = false
+            if generatingTemplateID == templateID { generatingTemplateID = nil }
             switch result {
             case .success:
                 if let refreshed = controller.meeting(id: meetingID) {
