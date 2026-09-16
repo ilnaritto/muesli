@@ -70,6 +70,22 @@ struct DashboardRootView: View {
                 onDismiss: { controller.dismissDiagnosticIncidentPrompt() }
             )
         }
+        // Lives here, not on the tab that triggered it — `setPostProcessorEnabled`
+        // switches `selectedTab` to Settings synchronously, which would
+        // unmount an alert scoped to the originating view before it ever
+        // presented (confirmed live: no dialog was seen, just the jump to
+        // Settings). `DashboardRootView` outlives the tab switch.
+        .alert(
+            tr("Cleanup model needed", "Нужна модель очистки"),
+            isPresented: Binding(
+                get: { appState.postProcessorRedirectReason != nil },
+                set: { if !$0 { appState.postProcessorRedirectReason = nil } }
+            )
+        ) {
+            Button(tr("OK", "ОК"), role: .cancel) { appState.postProcessorRedirectReason = nil }
+        } message: {
+            Text(appState.postProcessorRedirectReason ?? "")
+        }
     }
 
     @ViewBuilder

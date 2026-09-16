@@ -7,11 +7,6 @@ private enum MeetingDocumentMode: Hashable {
     case transcript
 }
 
-private enum RecordingContentMode: Hashable {
-    case notes
-    case live
-}
-
 private enum ManualNotesSaveStatus {
     case saved
     case saving
@@ -24,25 +19,6 @@ private enum ManualNotesSaveStatus {
     }
 }
 
-// Wrapper views that isolate observation of liveMeetingTranscript.
-// Without these, MeetingDetailView.body would observe the property and
-// re-evaluate on every chunk (every ~5s), re-rendering the entire detail view.
-// Each wrapper is the sole observer — MeetingDetailView passes appState by
-// reference and never reads liveMeetingTranscript in its own body.
-private struct LiveTranscriptSection: View {
-    let appState: AppState
-    let transcriptPrefix: String
-
-    var body: some View {
-        LiveTranscriptView(
-            transcript: MeetingResumePolicy.combinedResumeTranscript(
-                prior: transcriptPrefix,
-                new: appState.liveMeetingTranscript
-            )
-        )
-    }
-}
-
 struct MeetingDetailView: View {
     let meeting: MeetingRecord?
     let controller: MuesliController
@@ -50,6 +26,14 @@ struct MeetingDetailView: View {
     let onBack: (() -> Void)?
     let backLabel: String
     @State private var isSummarizing = false
+    // Per direct feedback ("во время создании саммари должна быть
+    // возможность переключиться на другие вкладки саммари") — which
+    // template a generation is actually FOR, so the full-screen spinner and
+    // the header's "Summarizing..." only show while looking at THAT tab.
+    // Switching to any other tab (cached: instant restore; uncached: starts
+    // its own generation) no longer gets blocked or hidden behind a
+    // generically-shared `isSummarizing` flag.
+    @State private var generatingTemplateID: String?
     @State private var isRetranscribing = false
     @State private var isEditingNotes = false
     @State private var isEditingTranscript = false
@@ -64,7 +48,6 @@ struct MeetingDetailView: View {
     @State private var documentMode: MeetingDocumentMode
     @State private var showTranscriptSearch = false
     @State private var isAIChatMode = false
-    @State private var recordingMode: RecordingContentMode = .notes
     @State private var titleSaveTask: DispatchWorkItem?
     @State private var notesSaveTask: DispatchWorkItem?
     @State private var transcriptSaveTask: DispatchWorkItem?
@@ -182,6 +165,15 @@ struct MeetingDetailView: View {
                 }
                 .onChange(of: meeting.id) { _, _ in
                     syncLocalState(with: meeting)
+                    // The cached height belongs to the PREVIOUS meeting's
+                    // header. Switching to one with a taller header (e.g.
+                    // template chips wrapping to two lines) would otherwise
+                    // use the old, too-small clearance for a frame or two —
+                    // scroll content (tags row included) renders up under
+                    // the new floating header instead of below it ("теги
+                    // зависли сверху"). Clearing it falls back to the
+                    // static estimate until the new header is measured.
+                    floatingHeaderMeasuredHeight = nil
                 }
                 .onChange(of: meeting.status) { _, _ in
                     syncLocalState(with: meeting)
@@ -259,10 +251,6 @@ struct MeetingDetailView: View {
 
             headerRow(meeting, appliedTemplate: appliedTemplate)
 
-            if meeting.status == .recording {
-                contentTabsCard(meeting)
-            }
-
             if let savedRecordingPath = meeting.savedRecordingPath,
                FileManager.default.fileExists(atPath: savedRecordingPath) {
                 MeetingRecordingPlayerView(recordingPath: savedRecordingPath)
@@ -333,18 +321,27 @@ struct MeetingDetailView: View {
         isAIChatMode || (isMediaPanelOpen && hasPlayableMedia(meeting))
     }
 
-    /// Soft fade under the floating pills so text scrolling behind them
-    /// dims out instead of glowing through.
+    /// Backdrop under the floating pills so text scrolling behind them
+    /// dims out instead of glowing through ("просвечивает"). Was a plain
+    /// linear fade from 0.7 → 0 across the WHOLE clearance height, which
+    /// left it nearly fully transparent right where the icon row sits (the
+    /// bottom of that height) — exactly the area it needed to cover most.
+    /// Now solid through the header's actual content and only fades in the
+    /// small `+20` buffer past it, for a soft edge instead of a weak one.
     private func headerBackdropGradient(for meeting: MeetingRecord) -> some View {
-        LinearGradient(
+        let clearance = floatingHeaderClearance(for: meeting)
+        let totalHeight = clearance + 20
+        let solidFraction = totalHeight > 0 ? clearance / totalHeight : 1
+        return LinearGradient(
             stops: [
-                .init(color: MuesliTheme.backgroundDeep.opacity(0.7), location: 0),
+                .init(color: MuesliTheme.backgroundDeep, location: 0),
+                .init(color: MuesliTheme.backgroundDeep, location: solidFraction),
                 .init(color: MuesliTheme.backgroundDeep.opacity(0), location: 1)
             ],
             startPoint: .top,
             endPoint: .bottom
         )
-        .frame(height: floatingHeaderClearance(for: meeting) + 20)
+        .frame(height: totalHeight)
         .allowsHitTesting(false)
     }
 
@@ -664,7 +661,10 @@ struct MeetingDetailView: View {
                 switchToTemplate(id: id, for: meeting)
             }
         }
-        .disabled(isEditingNotes || isEditingTranscript || isSummarizing)
+        // No longer gated on `isSummarizing` — a summary generating for
+        // ONE template must not block switching to another (cached: instant
+        // restore; uncached: starts its own generation instead).
+        .disabled(isEditingNotes || isEditingTranscript)
         .contextMenu {
             let isAuto = id == MeetingTemplates.autoID
             Button(tr("Edit…", "Редактировать…")) {
@@ -883,54 +883,6 @@ struct MeetingDetailView: View {
         .help(tr("More actions", "Другие действия"))
     }
 
-    @ViewBuilder
-    private func contentTabsCard(_ meeting: MeetingRecord) -> some View {
-        HStack(alignment: .center, spacing: MuesliTheme.spacing16) {
-            if showsManualNotesEditor(for: meeting) {
-                contentTab(tr("Notes", "Заметки"), isSelected: recordingMode == .notes) {
-                    recordingMode = .notes
-                }
-                contentTab(tr("Live", "Онлайн"), isSelected: recordingMode == .live) {
-                    recordingMode = .live
-                }
-            } else {
-                contentTab(tr("Summary", "Сводка"), isSelected: documentMode == .notes) {
-                    documentMode = .notes
-                }
-                .disabled(isEditingNotes || isEditingTranscript)
-                contentTab(tr("Transcript", "Транскрипт"), isSelected: documentMode == .transcript) {
-                    documentMode = .transcript
-                }
-                .disabled(isEditingNotes || isEditingTranscript)
-            }
-
-            Spacer(minLength: 0)
-
-            if isSummarizing {
-                HStack(spacing: 6) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(tr("Summarizing...", "Создание сводки..."))
-                        .font(.system(size: 11))
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                }
-                .padding(.bottom, 8)
-            } else if isRetranscribing {
-                HStack(spacing: 6) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(tr("Re-transcribing...", "Повторная транскрипция..."))
-                        .font(.system(size: 11))
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                }
-                .padding(.bottom, 8)
-            }
-        }
-        .padding(.horizontal, MuesliTheme.spacing16)
-        .frame(height: 40)
-        .background(Capsule().fill(MuesliTheme.backgroundBase))
-        .overlay(Capsule().strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1))
-    }
 
     private func contentTab(_ title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
         CapsuleTab(title: title, isSelected: isSelected, action: action)
@@ -970,9 +922,14 @@ struct MeetingDetailView: View {
         }
     }
 
-    private func summaryCompletion(for meeting: MeetingRecord) -> (Result<Void, Error>) -> Void {
+    /// `templateID` is which generation this completion belongs to — if a
+    /// newer generation (a different tab) has since started, an out-of-order
+    /// arrival of this older one must not clear `generatingTemplateID` out
+    /// from under it.
+    private func summaryCompletion(for meeting: MeetingRecord, templateID: String) -> (Result<Void, Error>) -> Void {
         { [meeting] result in
             isSummarizing = false
+            if generatingTemplateID == templateID { generatingTemplateID = nil }
             switch result {
             case .success:
                 if let updated = controller.meeting(id: meeting.id) {
@@ -989,7 +946,8 @@ struct MeetingDetailView: View {
 
     private func runResummarize(for meeting: MeetingRecord) {
         isSummarizing = true
-        controller.resummarize(meeting: meeting, completion: summaryCompletion(for: meeting))
+        generatingTemplateID = pendingTemplateID
+        controller.resummarize(meeting: meeting, completion: summaryCompletion(for: meeting, templateID: pendingTemplateID))
     }
 
     /// Switching tabs restores an already generated summary from the store;
@@ -1013,7 +971,8 @@ struct MeetingDetailView: View {
     private func selectAndApplyTemplate(id: String, for meeting: MeetingRecord) {
         pendingTemplateID = id
         isSummarizing = true
-        controller.applyMeetingTemplate(id: id, to: meeting, completion: summaryCompletion(for: meeting))
+        generatingTemplateID = id
+        controller.applyMeetingTemplate(id: id, to: meeting, completion: summaryCompletion(for: meeting, templateID: id))
     }
 
     /// Full-page state shown while a summary is being generated.
@@ -1040,61 +999,45 @@ struct MeetingDetailView: View {
     private func content(for meeting: MeetingRecord) -> some View {
         if showsManualNotesEditor(for: meeting) {
             if meeting.status == .recording {
-                let isManualNotesEditable = canEditManualNotes(for: meeting)
+                // Task 12: "Notes"/"Live" tabs merged into one screen — the
+                // live feed is always visible, with a note composer pinned
+                // below it. A prior segment's saved notes (resuming a
+                // finished meeting) still show above, read-only, for context.
                 let persistedNotes = Self.notesContent(for: meeting)
                 let hasPersistedNotes = !meeting.formattedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     || !meeting.rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ZStack {
-                    VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
-                        if hasPersistedNotes {
-                            MeetingNotesView(markdown: persistedNotes)
-                                .frame(maxWidth: 980, maxHeight: .infinity, alignment: .topLeading)
-                                .background(MuesliTheme.backgroundBase)
-                                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
-                                        .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
-                                )
-                        }
-
-                        VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
-                            manualNotesToolbar(for: meeting)
-                                .disabled(!isManualNotesEditable)
-                            MarkdownRichTextEditor(
-                                text: $editableManualNotes,
-                                command: $manualEditorCommand,
-                                shouldFocus: isManualNotesEditable,
-                                isEditable: isManualNotesEditable,
-                                onTextChange: { notes in
-                                    guard isManualNotesEditable else { return }
-                                    saveManualNotes(meetingID: meeting.id, notes: notes)
-                                }
-                            )
+                VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
+                    if hasPersistedNotes {
+                        MeetingNotesView(markdown: persistedNotes)
+                            .frame(maxWidth: 980, maxHeight: 200, alignment: .topLeading)
                             .background(MuesliTheme.backgroundBase)
                             .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
                             .overlay(
                                 RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
                                     .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
                             )
-                            .frame(maxHeight: hasPersistedNotes ? 260 : .infinity)
-                        }
-                        .frame(maxWidth: 980, maxHeight: hasPersistedNotes ? nil : .infinity, alignment: .topLeading)
                     }
-                    .padding(.horizontal, 40)
-                    .padding(.top, 12)
-                    .padding(.bottom, 24)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .opacity(recordingMode == .notes ? 1 : 0)
-                    .allowsHitTesting(recordingMode == .notes)
-                    .accessibilityHidden(recordingMode != .notes)
 
-                    LiveTranscriptSection(appState: appState, transcriptPrefix: meeting.rawTranscript)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .opacity(recordingMode == .live ? 1 : 0)
-                        .allowsHitTesting(recordingMode == .live)
-                        .accessibilityHidden(recordingMode != .live)
-
+                    LiveMeetingFeedView(
+                        appState: appState,
+                        transcriptPrefix: meeting.rawTranscript,
+                        manualNotes: $editableManualNotes,
+                        onNotesChanged: { notes in
+                            saveManualNotes(meetingID: meeting.id, notes: notes)
+                        }
+                    )
+                    .frame(maxWidth: 980, maxHeight: .infinity)
+                    .background(MuesliTheme.backgroundBase)
+                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                            .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                    )
                 }
+                .padding(.horizontal, 40)
+                .padding(.top, 12)
+                .padding(.bottom, 24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else {
                 let isManualNotesEditable = canEditManualNotes(for: meeting)
                 VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
@@ -1131,7 +1074,12 @@ struct MeetingDetailView: View {
                 }
 
                 ZStack(alignment: .topLeading) {
-                    if isSummarizing {
+                    // Only the tab actually being generated shows the
+                    // spinner — switching to a different (cached, or simply
+                    // not-yet-requested) tab while this one is still working
+                    // must show ITS content, not a spinner for a template
+                    // that isn't even open anymore.
+                    if isSummarizing, pendingTemplateID == generatingTemplateID {
                         summaryGenerationPlaceholder(for: meeting)
                             .opacity(documentMode == .notes ? 1 : 0)
                             .allowsHitTesting(false)
@@ -1165,16 +1113,6 @@ struct MeetingDetailView: View {
         .tint(MuesliTheme.accent)
         .frame(width: 220)
         .disabled(isEditingNotes || isEditingTranscript)
-    }
-
-    private var recordingModePicker: some View {
-        Picker("", selection: $recordingMode) {
-            Text(tr("Notes", "Заметки")).tag(RecordingContentMode.notes)
-            Text(tr("Live", "Онлайн")).tag(RecordingContentMode.live)
-        }
-        .pickerStyle(.segmented)
-        .tint(MuesliTheme.accent)
-        .frame(width: 180)
     }
 
     private func showsManualNotesEditor(for meeting: MeetingRecord) -> Bool {
@@ -1225,7 +1163,10 @@ struct MeetingDetailView: View {
 
     @ViewBuilder
     private func summaryAction(for meeting: MeetingRecord) -> some View {
-        if isSummarizing {
+        // Same per-tab check as the content placeholder — this header
+        // button reflects only the currently-viewed tab's own state, not
+        // whatever else might be generating in the background.
+        if isSummarizing, pendingTemplateID == generatingTemplateID {
             HStack(spacing: 6) {
                 ProgressView()
                     .controlSize(.small)
@@ -1237,20 +1178,8 @@ struct MeetingDetailView: View {
         } else {
             iconButton("sparkles", label: primarySummaryActionLabel(for: meeting)) {
                 isSummarizing = true
-                let completion: (Result<Void, Error>) -> Void = { [meeting] result in
-                    isSummarizing = false
-                    switch result {
-                    case .success:
-                        if let updated = controller.meeting(id: meeting.id) {
-                            syncLocalState(with: updated)
-                        }
-                    case .failure(let error):
-                        syncPendingTemplateSelectionIfNeeded(
-                            for: controller.meeting(id: meeting.id) ?? meeting
-                        )
-                        summaryErrorMessage = error.localizedDescription
-                    }
-                }
+                generatingTemplateID = pendingTemplateID
+                let completion = summaryCompletion(for: meeting, templateID: pendingTemplateID)
                 if hasPendingTemplateChange(for: meeting) {
                     controller.applyMeetingTemplate(id: pendingTemplateID, to: meeting, completion: completion)
                 } else {
@@ -1499,21 +1428,38 @@ struct MeetingDetailView: View {
             if isPreparingThisMeeting(meeting) {
                 meetingPreparationControlGroup(for: meeting)
             } else {
+                // Per report ("кнопки сверху иногда будто не работают" —
+                // click lands, nothing happens): these four were computed
+                // properties invoked TWICE each — once per `ViewThatFits`
+                // candidate — so every body re-render (which fires often
+                // here: the live transcript streams in continuously while
+                // recording) recreated four fresh Button view identities
+                // for BOTH candidates. `ViewThatFits` already has to
+                // measure both; giving it fresh identities on top of that
+                // is exactly the pattern Apple warns against for
+                // interactive content — a click landing mid-recreation can
+                // be dropped. Binding them once here keeps one stable
+                // identity across both candidates.
+                let status = statusChip(for: meeting)
+                let pauseResume = pauseResumeRecordingButton
+                let stop = stopRecordingButton
+                let discard = discardRecordingButton
+
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: MuesliTheme.spacing8) {
-                        statusChip(for: meeting)
-                        pauseResumeRecordingButton
-                        stopRecordingButton
-                        discardRecordingButton
+                        status
+                        pauseResume
+                        stop
+                        discard
                     }
                     .recordingControlsBackground()
 
                     VStack(alignment: .trailing, spacing: MuesliTheme.spacing8) {
-                        statusChip(for: meeting)
+                        status
                         HStack(spacing: MuesliTheme.spacing8) {
-                            pauseResumeRecordingButton
-                            stopRecordingButton
-                            discardRecordingButton
+                            pauseResume
+                            stop
+                            discard
                         }
                         .recordingControlsBackground()
                     }
@@ -1785,6 +1731,9 @@ struct MeetingDetailView: View {
         .help(tr("Resume recording", "Возобновить запись"))
     }
 
+    /// Task 10: red now lives only in the recording indicator dot
+    /// (statusChip) — the Stop button itself matches the rest of the page's
+    /// plain chips instead of a solid red fill.
     private var stopRecordingButton: some View {
         Button {
             if let meeting {
@@ -1798,11 +1747,15 @@ struct MeetingDetailView: View {
                 Text(tr("Stop", "Стоп"))
                     .font(.system(size: 12, weight: .semibold))
             }
-            .foregroundStyle(.white)
+            .foregroundStyle(MuesliTheme.textPrimary)
             .padding(.horizontal, MuesliTheme.spacing12)
             .padding(.vertical, 7)
-            .background(MuesliTheme.recording)
+            .background(MuesliTheme.surfacePrimary)
             .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+            .overlay(
+                RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                    .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
         .disabled(!appState.isMeetingRecording)
@@ -2181,8 +2134,11 @@ struct MeetingDetailView: View {
         transcriptResummaryPromptMeetingID = nil
         guard let updatedMeeting = controller.meeting(id: meetingID) else { return }
         isSummarizing = true
+        generatingTemplateID = pendingTemplateID
+        let templateID = pendingTemplateID
         controller.resummarize(meeting: updatedMeeting) { [meetingID] result in
             isSummarizing = false
+            if generatingTemplateID == templateID { generatingTemplateID = nil }
             switch result {
             case .success:
                 if let refreshed = controller.meeting(id: meetingID) {
@@ -2280,6 +2236,9 @@ struct MeetingDetailView: View {
 }
 
 private extension View {
+    /// Round 3 feedback: the bare padding (no background) read as an
+    /// unexplained gap around the chip row — restored a subtle matching
+    /// background + border so the group reads as one control cluster.
     func recordingControlsBackground() -> some View {
         padding(5)
             .background(MuesliTheme.backgroundRaised)
@@ -2540,56 +2499,95 @@ private struct MeetingTranscriptView: View {
     }
 }
 
+/// Task 11: transcript reads as a stream of messages (avatar, name + time,
+/// plain text) rather than a "dialogue window" of left/right bubbles — the
+/// same row view backs both the finished-meeting transcript
+/// (`MeetingTranscriptView` below) and the live feed while recording
+/// (`LiveTranscriptView.liveBubble`).
 struct TranscriptChatBubble: View {
     let message: TranscriptChatMessage
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: MuesliTheme.spacing8) {
-            if message.isUser {
-                Spacer(minLength: 80)
-            }
+        TranscriptSpeakerRow(
+            speaker: message.speaker,
+            timestamp: message.timestamp,
+            lines: [message.text],
+            isUser: message.isUser
+        )
+    }
+}
 
-            VStack(alignment: .leading, spacing: 4) {
-                if let metadata = metadata {
-                    Text(metadata)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                        .textSelection(.enabled)
-                }
-                Text(message.text)
-                    .font(.system(size: 14))
-                    .foregroundStyle(MuesliTheme.textPrimary)
-                    .lineSpacing(2)
-                    .textSelection(.enabled)
-            }
-            .padding(.horizontal, MuesliTheme.spacing12)
-            .padding(.vertical, 8)
-            .background(message.isUser ? MuesliTheme.accent.opacity(0.18) : MuesliTheme.surfacePrimary)
-            .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
-            .overlay(
-                RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
-                    .strokeBorder(message.isUser ? MuesliTheme.accent.opacity(0.25) : MuesliTheme.surfaceBorder, lineWidth: 1)
-            )
-            .frame(maxWidth: 680, alignment: message.isUser ? .trailing : .leading)
+/// Shared chat-stream row: avatar circle (accent for "You", a stable color
+/// per other speaker) + name/time header + plain text lines underneath, no
+/// bubble fill or border. `speaker` is nil-safe — an unlabeled line still
+/// renders with a neutral avatar and no name row.
+struct TranscriptSpeakerRow: View {
+    let speaker: String?
+    let timestamp: String?
+    let lines: [String]
+    let isUser: Bool
 
-            if !message.isUser {
-                Spacer(minLength: 80)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: message.isUser ? .trailing : .leading)
+    private var displayName: String? { speaker }
+
+    private var avatarColor: Color {
+        if isUser { return MuesliTheme.accent }
+        guard let speaker else { return MuesliTheme.textTertiary }
+        return Self.stableColor(for: speaker)
     }
 
-    private var metadata: String? {
-        switch (message.speaker, message.timestamp) {
-        case let (speaker?, timestamp?):
-            return "\(speaker) \(timestamp)"
-        case let (speaker?, nil):
-            return speaker
-        case let (nil, timestamp?):
-            return timestamp
-        case (nil, nil):
-            return nil
+    private var avatarInitial: String {
+        guard let name = displayName, let first = name.trimmingCharacters(in: .whitespaces).first else {
+            return "?"
         }
+        return String(first).uppercased()
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Circle()
+                .fill(avatarColor)
+                .frame(width: 26, height: 26)
+                .overlay(
+                    Text(avatarInitial)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white)
+                )
+
+            VStack(alignment: .leading, spacing: 3) {
+                if displayName != nil || timestamp != nil {
+                    HStack(spacing: 6) {
+                        if let displayName {
+                            Text(displayName)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(MuesliTheme.textPrimary)
+                        }
+                        if let timestamp {
+                            Text(timestamp)
+                                .font(.system(size: 11))
+                                .foregroundStyle(MuesliTheme.textTertiary)
+                        }
+                    }
+                    .textSelection(.enabled)
+                }
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    Text(line)
+                        .font(.system(size: 14))
+                        .foregroundStyle(MuesliTheme.textPrimary)
+                        .lineSpacing(2)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Deterministic (not Swift's per-process-randomized String.hashValue)
+    /// so the same speaker label keeps the same color for the whole meeting.
+    private static func stableColor(for speaker: String) -> Color {
+        let sum = speaker.utf8.reduce(0) { $0 + Int($1) }
+        return SummaryPalette.seriesColor(at: sum)
     }
 }
 

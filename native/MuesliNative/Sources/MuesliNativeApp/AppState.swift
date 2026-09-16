@@ -14,17 +14,24 @@ enum DashboardTab: String, CaseIterable {
     case about
 }
 
+// Per direct feedback ("в меню настроек поменять порядок: Общие,
+// Диктовка, Встречи, Шаблоны, Модели, Словарь, Компьютер, Оформление,
+// Горячие клавиши") — case declaration order drives the visible sidebar
+// order (`CaseIterable`'s synthesized `allCases` is declaration order).
+// `sync`/`about` aren't shown in the sidebar list at all
+// (`sectionListPane` filters both out), so their position doesn't matter;
+// kept at the end.
 enum SettingsSection: String, CaseIterable, Identifiable {
     case general
-    case sync
     case dictation
-    case computerUse
     case meetings
     case templates
-    case appearance
-    case dictionary
     case models
+    case dictionary
+    case computerUse
+    case appearance
     case shortcuts
+    case sync
     case about
 
     var id: String { rawValue }
@@ -32,15 +39,15 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .general: return tr("General", "Общие")
-        case .sync: return tr("Sync", "Синхронизация")
         case .dictation: return tr("Dictation", "Диктовка")
-        case .computerUse: return tr("Computer Use", "Компьютер")
         case .meetings: return tr("Meetings", "Встречи")
         case .templates: return tr("Templates", "Шаблоны")
-        case .appearance: return tr("Appearance", "Оформление")
-        case .dictionary: return tr("Dictionary", "Словарь")
         case .models: return tr("Models", "Модели")
+        case .dictionary: return tr("Dictionary", "Словарь")
+        case .computerUse: return tr("Computer Use", "Компьютер")
+        case .appearance: return tr("Appearance", "Оформление")
         case .shortcuts: return tr("Shortcuts", "Горячие клавиши")
+        case .sync: return tr("Sync", "Синхронизация")
         case .about: return tr("About", "О программе")
         }
     }
@@ -48,32 +55,35 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .general: return "gearshape.fill"
-        case .sync: return "arrow.triangle.2.circlepath.icloud.fill"
         case .dictation: return "mic.fill"
-        case .computerUse: return "desktopcomputer"
         case .meetings: return "person.2.fill"
         case .templates: return "square.text.square.fill"
-        case .appearance: return "paintbrush.fill"
-        case .dictionary: return "character.book.closed.fill"
         case .models: return "square.and.arrow.down.fill"
+        case .dictionary: return "character.book.closed.fill"
+        case .computerUse: return "desktopcomputer"
+        case .appearance: return "paintbrush.fill"
         case .shortcuts: return "keyboard.fill"
+        case .sync: return "arrow.triangle.2.circlepath.icloud.fill"
         case .about: return "info.circle.fill"
         }
     }
 
-    /// Telegram-style distinct icon tile color per section.
+    /// Telegram-style distinct icon tile color per section — round 3
+    /// briefly flattened this to one accent color everywhere, round 5
+    /// restored it: a single flat color made sections harder to tell apart
+    /// at a glance in the sidebar list.
     var iconColor: Color {
         switch self {
         case .general: return Color(hex: 0x8E8E93)      // gray
-        case .sync: return Color(hex: 0x34AADC)         // cyan
         case .dictation: return Color(hex: 0xFF3B30)    // red
-        case .computerUse: return Color(hex: 0x5856D6)  // indigo
         case .meetings: return Color(hex: 0x34C759)     // green
         case .templates: return Color(hex: 0xAF52DE)    // purple
-        case .appearance: return Color(hex: 0xFF9500)   // orange
-        case .dictionary: return Color(hex: 0x00C7BE)   // teal
         case .models: return Color(hex: 0x007AFF)       // blue
+        case .dictionary: return Color(hex: 0x00C7BE)   // teal
+        case .computerUse: return Color(hex: 0x5856D6)  // indigo
+        case .appearance: return Color(hex: 0xFF9500)   // orange
         case .shortcuts: return Color(hex: 0xFF2D55)    // pink
+        case .sync: return Color(hex: 0x34AADC)         // cyan
         case .about: return Color(hex: 0x8E8E93)        // gray
         }
     }
@@ -213,6 +223,19 @@ final class AppState {
     var iCloudLastSyncedAt: Date?
     var contributionMilestonePrompt: ContributionMilestonePrompt?
     var pendingDiagnosticIncident: DiagnosticIncident?
+    /// Set when `setPostProcessorEnabled` refuses to turn cleanup on (no
+    /// model downloaded) and redirects to Models — that redirect swaps
+    /// `selectedTab` synchronously, so an alert scoped to the view the
+    /// toggle lives on (e.g. HomeView) never gets a chance to present
+    /// before its host view is replaced. Lives on `AppState` and is shown
+    /// from `DashboardRootView`, which doesn't unmount across tab
+    /// switches, so the explanation survives the redirect.
+    var postProcessorRedirectReason: String?
+    /// Set together with navigating to `.dictionary` from the Функции
+    /// page's "Add a word" button — `DictionaryView` consumes it on
+    /// appear to open straight into its add-word form instead of just
+    /// landing on the plain list.
+    var dictionaryShouldStartAdding = false
     var modelPreparationTitle: String?
     var modelPreparationDetail: String?
     var modelPreparationProgress: Double?
@@ -235,6 +258,10 @@ final class AppState {
     // Navigation
     var selectedTab: DashboardTab = .home
     var settingsSection: SettingsSection = .general
+    /// Lets other screens (e.g. the Функции page's "Connect an AI model"
+    /// card) deep-link to a specific Models tab — was local `@State` inside
+    /// `ModelsView`, unreachable from outside it.
+    var modelsTab: ModelsTab = .speech
 
     // Computed
     var selectedMeeting: MeetingRecord? {

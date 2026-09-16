@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import MuesliCore
 
@@ -19,10 +20,20 @@ struct FeatureAction: Identifiable {
     let action: () -> Void
 }
 
-/// A showcase tile on the Home → Features page: a gently animated illustration,
-/// a title + subtitle, and one or two action buttons that deep-link into the
-/// relevant setting. Styled like the meeting-page cards (backgroundBase,
-/// rounded, hairline border). `compact` renders the smaller 3-per-row variant.
+/// A functional on/off control on a feature card — per live feedback, this
+/// must actually DO the thing (request the permission, open the connect
+/// sheet) right here, not just report status and send the user to Settings.
+struct FeatureToggle {
+    let isOn: Bool
+    let action: () -> Void
+}
+
+/// Small icon+title+subtitle utility tile with an optional functional
+/// toggle in the corner for features with a real on/off state (permission
+/// granted, config boolean). Used for the 2×2 grid of small feature tiles
+/// in the mosaic board — the six flagship cards on the same page are their
+/// own bespoke views (see `HomeView.swift`'s card primitives) since each
+/// shows a different kind of live app data, not a generic subtitle.
 struct FeatureCard: View {
     let accent: Color
     let icon: String
@@ -30,13 +41,36 @@ struct FeatureCard: View {
     let subtitle: String
     let actions: [FeatureAction]
     var compact: Bool = false
+    var toggle: FeatureToggle? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 8 : 12) {
-            illustration
+        cardBody
+    }
+
+    private var cardBody: some View {
+        VStack(alignment: .leading, spacing: compact ? 10 : 14) {
+            HStack(alignment: .top, spacing: 10) {
+                FeatureIcon(
+                    icon: icon,
+                    accent: accent,
+                    tileSize: compact ? 40 : 44,
+                    iconSize: compact ? 18 : 20,
+                    corner: compact ? 10 : 12
+                )
+                Spacer(minLength: 0)
+                if let toggle {
+                    // A real toggle — tapping it fires the request/connect
+                    // action directly, right here, not a status readout.
+                    Toggle("", isOn: Binding(get: { toggle.isOn }, set: { _ in toggle.action() }))
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .tint(MuesliTheme.accent)
+                        .labelsHidden()
+                }
+            }
 
             Text(title)
-                .font(.system(size: compact ? 14 : 17, weight: .semibold))
+                .font(.system(size: compact ? 14 : 16, weight: .semibold))
                 .foregroundStyle(MuesliTheme.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -44,12 +78,19 @@ struct FeatureCard: View {
                 .font(.system(size: compact ? 12 : 13, weight: .regular))
                 .foregroundStyle(MuesliTheme.textSecondary)
                 .lineSpacing(2)
-                .lineLimit(compact ? 3 : 4)
+                .lineLimit(compact ? 2 : 3)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Spacer(minLength: 0)
 
+            // Always rendered as an explicit, visible button — this card
+            // used to fold a single action into an invisible whole-card
+            // tap target with no visible affordance at all, which is why
+            // a relabeled action ("Добавить слово") never actually showed
+            // up on screen (confirmed live: "не вижу кнопки"). A toggle,
+            // if present, lives in its own row above and never nests
+            // inside this button.
             if !actions.isEmpty {
                 HStack(spacing: 8) {
                     ForEach(actions) { action in
@@ -59,22 +100,28 @@ struct FeatureCard: View {
                 }
             }
         }
-        .padding(MuesliTheme.spacing16)
-        .frame(maxWidth: .infinity, minHeight: compact ? 150 : 230, maxHeight: .infinity, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL).fill(MuesliTheme.backgroundBase))
-        .overlay(
+        .padding(MuesliTheme.spacing20)
+        .frame(maxWidth: .infinity, minHeight: compact ? 110 : 150, maxHeight: .infinity, alignment: .topLeading)
+        .background(
             RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
-                .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                .fill(MuesliTheme.cellFill)
         )
-    }
-
-    private var illustration: some View {
-        FeatureIcon(
-            icon: icon,
-            accent: accent,
-            tileSize: compact ? 40 : 48,
-            iconSize: compact ? 18 : 22,
-            corner: compact ? 10 : 12
+        // Nothing else in this view clips — when a parent gives the card
+        // less room than its content needs (e.g. a narrow windowed-mode
+        // column), unclipped content doesn't shrink or truncate, it spills
+        // past the rounded-rect border and overlaps the next card in the
+        // row. This caps it: worst case content is cut off inside its own
+        // card, it never bleeds into a neighbor.
+        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerXL))
+        .overlay(
+            // A soft accent outline when the toggle is on — a card being
+            // active should read at a glance, not only from the small
+            // switch in the corner.
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerXL)
+                .strokeBorder(
+                    toggle?.isOn == true ? MuesliTheme.accent.opacity(0.5) : MuesliTheme.surfaceBorder,
+                    lineWidth: toggle?.isOn == true ? 1.5 : 1
+                )
         )
     }
 
@@ -90,8 +137,6 @@ struct FeatureCard: View {
                     .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
             }
-            // Uniform neutral chip: soft, low-key buttons across the whole
-            // Features page (no loud accent fills).
             .foregroundStyle(MuesliTheme.textSecondary)
             .padding(.horizontal, 12)
             .frame(height: 30)
@@ -107,27 +152,18 @@ struct FeatureCard: View {
 private struct FeatureIcon: View {
     let icon: String
     let accent: Color
-    /// nil → no tile, just the glyph (used inside the large gradient panel).
-    let tileSize: CGFloat?
+    let tileSize: CGFloat
     let iconSize: CGFloat
     let corner: CGFloat
 
     var body: some View {
-        Group {
-            if let tileSize {
-                ZStack {
-                    RoundedRectangle(cornerRadius: corner, style: .continuous)
-                        .fill(accent)
-                    Image(systemName: icon)
-                        .font(.system(size: iconSize, weight: .semibold))
-                        .foregroundStyle(.white)
-                }
-                .frame(width: tileSize, height: tileSize)
-            } else {
-                Image(systemName: icon)
-                    .font(.system(size: iconSize, weight: .semibold))
-                    .foregroundStyle(accent)
-            }
+        ZStack {
+            RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .fill(accent)
+            Image(systemName: icon)
+                .font(.system(size: iconSize, weight: .semibold))
+                .foregroundStyle(.white)
         }
+        .frame(width: tileSize, height: tileSize)
     }
 }

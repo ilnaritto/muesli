@@ -88,6 +88,20 @@ actor WhisperKitTranscriber {
     }
 
     /// Transcribe a 16kHz mono WAV file.
+    ///
+    /// WhisperKit computes `noSpeechProb`/`avgLogprob`/`compressionRatio` per
+    /// segment — its own documented signal for "this segment is silence I
+    /// decoded into plausible-sounding filler," the standard cause of
+    /// classic Whisper hallucinations ("Mm-hmm.", repeated filler words,
+    /// stray text in the wrong language). This used to join every segment's
+    /// `.text` unconditionally, discarding those signals entirely. The
+    /// thresholds below match WhisperKit's own `DecodingOptions` defaults
+    /// (`noSpeechThreshold: 0.6`, `logProbThreshold: -1.0`,
+    /// `compressionRatioThreshold: 2.4`) — WhisperKit already uses them
+    /// internally to trigger a decode retry at a higher temperature, but a
+    /// segment that still fails after retrying isn't dropped by the library
+    /// itself, so this is the last line of defense before showing it to
+    /// the user.
     func transcribe(wavURL: URL) async throws -> (text: String, processingTime: Double) {
         guard let whisperKit else { throw TranscriberError.notLoaded }
 
@@ -95,8 +109,17 @@ actor WhisperKitTranscriber {
         let results = try await whisperKit.transcribe(audioPath: wavURL.path)
         let elapsed = CFAbsoluteTimeGetCurrent() - start
 
-        let text = results.map(\.text).joined(separator: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = results.map { result -> String in
+            guard !result.segments.isEmpty else { return result.text }
+            let kept = result.segments.filter { segment in
+                let likelyNoSpeech = segment.noSpeechProb > 0.6 && segment.avgLogprob < -1.0
+                let likelyRepetitive = segment.compressionRatio > 2.4
+                return !likelyNoSpeech && !likelyRepetitive
+            }
+            return kept.map(\.text).joined(separator: " ")
+        }
+        .joined(separator: " ")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
         return (text: text, processingTime: elapsed)
     }
 

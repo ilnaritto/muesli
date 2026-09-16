@@ -147,13 +147,18 @@ final class DictationAudioSessionManager: @unchecked Sendable {
 
     var onEvent: ((DictationAudioSessionEvent) -> Void)?
 
+    /// When true, dictation must not repin the microphone (see
+    /// `makeRouteSnapshot`) — see that comment for why.
+    private let isMeetingRecordingProvider: () -> Bool
+
     init(
         recorder: DictationAudioRecording,
         duckingController: AudioDuckingManaging,
         mediaPlaybackController: MediaPlaybackManaging = MediaPlaybackController(),
         routingController: DictationAudioRouting,
         queue: DispatchQueue = DispatchQueue(label: "com.muesli.dictation-audio-session-manager"),
-        eventQueue: DispatchQueue = .main
+        eventQueue: DispatchQueue = .main,
+        isMeetingRecordingProvider: @escaping () -> Bool = { false }
     ) {
         self.recorder = recorder
         self.duckingController = duckingController
@@ -161,6 +166,7 @@ final class DictationAudioSessionManager: @unchecked Sendable {
         self.routingController = routingController
         self.queue = queue
         self.eventQueue = eventQueue
+        self.isMeetingRecordingProvider = isMeetingRecordingProvider
         self.routeSnapshot = RouteSnapshot(
             routeKind: routingController.currentOutputRouteKindForDebug(),
             preferredInputDeviceID: routingController.cachedPreferredInputDeviceIDForDictation(),
@@ -508,9 +514,24 @@ final class DictationAudioSessionManager: @unchecked Sendable {
     }
 
     private func makeRouteSnapshot(refreshInput: Bool = false) -> RouteSnapshot {
-        let preferredInputDeviceID = refreshInput
-            ? routingController.preferredInputDeviceIDForDictation()
-            : routingController.cachedPreferredInputDeviceIDForDictation()
+        // P0 fix: pinning dictation to a specific input device flips the
+        // *global*, machine-wide kAudioHardwarePropertyDefaultInputDevice
+        // (see MicrophoneRecorder's DefaultInputOverride) — a side effect
+        // any other process's already-running capture is exposed to too.
+        // A meeting's own mic recorder is mid-capture on whatever the
+        // current default already is; having dictation swap that global
+        // default out from under it (and back again on stop) is exactly the
+        // glitch behind "dictation didn't capture" while a meeting is
+        // recording — a short push-to-talk dictation can start and finish
+        // entirely inside that device-reconfiguration window. Skip the
+        // repin while a meeting is recording so dictation just taps
+        // whatever device is already active, instead of fighting the
+        // meeting recorder over the global default.
+        let preferredInputDeviceID = isMeetingRecordingProvider() ? nil : (
+            refreshInput
+                ? routingController.preferredInputDeviceIDForDictation()
+                : routingController.cachedPreferredInputDeviceIDForDictation()
+        )
         return RouteSnapshot(
             routeKind: routingController.currentOutputRouteKindForDebug(),
             preferredInputDeviceID: preferredInputDeviceID,

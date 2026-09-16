@@ -96,6 +96,52 @@ struct ConfiguredModel: Codable, Identifiable, Equatable, Sendable {
     }
 }
 
+extension ConfiguredModel {
+    /// Round 3 feedback: adding a model shouldn't force the user to declare
+    /// a single "purpose" up front — a cloud LLM is equally usable for
+    /// meeting-summary text generation and for dictation cleanup, so it
+    /// should just show up on both tabs. Only the stored `role` (set once,
+    /// at add-time, from the tab the user was on) still hard-scopes the
+    /// handful of genuinely single-purpose local providers: a bundled ASR
+    /// model obviously can't generate text, and the bundled cleanup GGUFs
+    /// are a separate, privacy-motivated download from the bundled
+    /// summarization GGUF. Every cloud/server LLM provider, by contrast,
+    /// speaks the same "chat completion" capability regardless of which
+    /// tab it was added from.
+    var roles: Set<ModelRole> {
+        switch provider {
+        case .chatGPTOAuth, .openAICompatible, .anthropicCompatible, .ollama, .lmStudio:
+            return [.textGeneration, .cleanup]
+        case .bundledLocal, .localGGUF:
+            return [role]
+        }
+    }
+
+    /// Maps this model's provider (plus, for OpenAI-compatible endpoints,
+    /// its URL) to the shared LLM backend identifier used by both meeting
+    /// summarization and transcript cleanup. `nil` for local/bundled
+    /// providers, which don't go through either hosted client.
+    var llmBackendOption: LLMBackendOption? {
+        switch provider {
+        case .chatGPTOAuth: return .chatGPT
+        case .ollama: return .ollama
+        case .lmStudio: return .lmStudio
+        case .anthropicCompatible: return .customLLM
+        case .openAICompatible:
+            let host = URL(string: endpointURL)?.host?.lowercased() ?? ""
+            if endpointURL.isEmpty || host.contains("api.openai.com") {
+                return .openAI
+            } else if host.contains("openrouter.ai") {
+                return .openRouter
+            } else {
+                return .customLLM
+            }
+        case .bundledLocal, .localGGUF:
+            return nil
+        }
+    }
+}
+
 extension AppConfig {
     /// A transient, in-memory-only copy of this config where the legacy
     /// summary-backend fields (still read by `MeetingSummaryClient` /
@@ -114,12 +160,12 @@ extension AppConfig {
     func resolvedForTextGeneration(modelID overrideModelID: String? = nil) -> AppConfig {
         var effective = self
         guard let id = overrideModelID ?? defaultModelIDs[ModelRole.textGeneration.rawValue],
-              let model = configuredModels.first(where: { $0.id == id && $0.role == .textGeneration && $0.isEnabled }) else {
+              let model = configuredModels.first(where: { $0.id == id && $0.roles.contains(.textGeneration) && $0.isEnabled }) else {
             return effective
         }
         let secret = ModelSecretsStore.read(ref: model.keychainRef) ?? ""
-        switch model.provider {
-        case .chatGPTOAuth:
+        switch model.llmBackendOption {
+        case .chatGPT:
             effective.meetingSummaryBackend = MeetingSummaryBackendOption.chatGPT.backend
             if !model.modelID.isEmpty { effective.chatGPTModel = model.modelID }
         case .ollama:
@@ -130,31 +176,70 @@ extension AppConfig {
             effective.meetingSummaryBackend = MeetingSummaryBackendOption.lmStudio.backend
             if !model.endpointURL.isEmpty { effective.lmStudioURL = model.endpointURL }
             effective.lmStudioModel = model.modelID
-        case .bundledLocal, .localGGUF:
-            effective.meetingSummaryBackend = MeetingSummaryBackendOption.localGguf.backend
-        case .anthropicCompatible:
+        case .openAI:
+            effective.meetingSummaryBackend = MeetingSummaryBackendOption.openAI.backend
+            effective.openAIAPIKey = secret
+            effective.openAIModel = model.modelID
+        case .openRouter:
+            effective.meetingSummaryBackend = MeetingSummaryBackendOption.openRouter.backend
+            effective.openRouterAPIKey = secret
+            effective.openRouterModel = model.modelID
+        case .customLLM:
             effective.meetingSummaryBackend = MeetingSummaryBackendOption.customLLM.backend
             effective.customLLMURL = model.endpointURL
             effective.customLLMAPIKey = secret
             effective.customLLMModel = model.modelID
-            effective.customLLMFormat = CustomLLMFormat.anthropic.rawValue
-        case .openAICompatible:
-            let host = URL(string: model.endpointURL)?.host?.lowercased() ?? ""
-            if model.endpointURL.isEmpty || host.contains("api.openai.com") {
-                effective.meetingSummaryBackend = MeetingSummaryBackendOption.openAI.backend
-                effective.openAIAPIKey = secret
-                effective.openAIModel = model.modelID
-            } else if host.contains("openrouter.ai") {
-                effective.meetingSummaryBackend = MeetingSummaryBackendOption.openRouter.backend
-                effective.openRouterAPIKey = secret
-                effective.openRouterModel = model.modelID
-            } else {
-                effective.meetingSummaryBackend = MeetingSummaryBackendOption.customLLM.backend
-                effective.customLLMURL = model.endpointURL
-                effective.customLLMAPIKey = secret
-                effective.customLLMModel = model.modelID
-                effective.customLLMFormat = CustomLLMFormat.openAI.rawValue
-            }
+            effective.customLLMFormat = (model.provider == .anthropicCompatible ? CustomLLMFormat.anthropic : CustomLLMFormat.openAI).rawValue
+        case nil:
+            effective.meetingSummaryBackend = MeetingSummaryBackendOption.localGguf.backend
+        default:
+            break
+        }
+        return effective
+    }
+
+    /// Mirrors `resolvedForTextGeneration` for the transcript-cleanup path —
+    /// same registry entry can now serve both, but cleanup reads its own
+    /// set of `postProcessor*Model` fields (not `openAIModel`/`ollamaModel`
+    /// etc.), which `resolvedForTextGeneration` doesn't touch, so the two
+    /// selections stay independent even when they point at the same model.
+    func resolvedForCleanup(modelID overrideModelID: String? = nil) -> AppConfig {
+        var effective = self
+        guard let id = overrideModelID ?? defaultModelIDs[ModelRole.cleanup.rawValue],
+              let model = configuredModels.first(where: { $0.id == id && $0.roles.contains(.cleanup) && $0.isEnabled }) else {
+            return effective
+        }
+        let secret = ModelSecretsStore.read(ref: model.keychainRef) ?? ""
+        switch model.llmBackendOption {
+        case .chatGPT:
+            effective.postProcessorBackend = TranscriptCleanupBackendOption.hosted(.chatGPT).backend
+            if !model.modelID.isEmpty { effective.postProcessorChatGPTModel = model.modelID }
+        case .ollama:
+            effective.postProcessorBackend = TranscriptCleanupBackendOption.hosted(.ollama).backend
+            if !model.endpointURL.isEmpty { effective.ollamaURL = model.endpointURL }
+            effective.postProcessorOllamaModel = model.modelID
+        case .lmStudio:
+            effective.postProcessorBackend = TranscriptCleanupBackendOption.hosted(.lmStudio).backend
+            if !model.endpointURL.isEmpty { effective.lmStudioURL = model.endpointURL }
+            effective.postProcessorLMStudioModel = model.modelID
+        case .openAI:
+            effective.postProcessorBackend = TranscriptCleanupBackendOption.hosted(.openAI).backend
+            effective.openAIAPIKey = secret
+            effective.postProcessorOpenAIModel = model.modelID
+        case .openRouter:
+            effective.postProcessorBackend = TranscriptCleanupBackendOption.hosted(.openRouter).backend
+            effective.openRouterAPIKey = secret
+            effective.postProcessorOpenRouterModel = model.modelID
+        case .customLLM:
+            effective.postProcessorBackend = TranscriptCleanupBackendOption.hosted(.customLLM).backend
+            effective.customLLMURL = model.endpointURL
+            effective.customLLMAPIKey = secret
+            effective.postProcessorCustomLLMModel = model.modelID
+            effective.customLLMFormat = (model.provider == .anthropicCompatible ? CustomLLMFormat.anthropic : CustomLLMFormat.openAI).rawValue
+        case nil:
+            effective.postProcessorBackend = TranscriptCleanupBackendOption.local.backend
+        default:
+            break
         }
         return effective
     }
