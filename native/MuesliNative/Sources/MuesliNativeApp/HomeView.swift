@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import Charts
 import CoreImage.CIFilterBuiltins
+import EventKit
 import SwiftUI
 import TelemetryDeck
 import MuesliCore
@@ -58,6 +59,12 @@ struct HomeView: View {
     @State private var showClearInsightsHistoryConfirmation = false
     @State private var permissionStatus = FeaturePermissionStatus()
     @State private var showConnectModelSheet = false
+    // Per direct feedback ("все разрешения и настройки теперь крутятся
+    // вокруг базовых функций") — permission tiles moved from the separate
+    // `FeaturePermissionsBoard` into each function's own group; the
+    // Calendar tile's request action needs its own store, same as that
+    // board used to own.
+    @State private var eventStore = EKEventStore()
 
     var body: some View {
         HStack(spacing: 5) {
@@ -928,22 +935,22 @@ struct HomeView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    // One cohesive group — the main board and the
-                    // permissions section used to be two separate pieces
-                    // with a gap between them (round 8 feedback: "снизу
-                    // разрешения надо тоже как то пихнуть в баннер"); now
-                    // one continuous flow of cards. No shared outer
-                    // background/border — per follow-up feedback, only the
-                    // individual cards should have their own fill/border,
-                    // not an extra dark panel wrapping all of them.
+                    // Per direct feedback ("большие блоки и ниже маленькие
+                    // под ними, чтобы показать сопричастность" — "все
+                    // разрешения и настройки теперь крутятся вокруг
+                    // базовых функций, а не просто размазаны в конце") —
+                    // one group per basic function (Диктовка/Встречи/
+                    // Компьютер): a big hero block with a demo GIF, then
+                    // every model/permission/setting that function actually
+                    // depends on as small tiles right below it. Replaces
+                    // the old flat mosaic + separate bottom permissions
+                    // board — permission tiles now live inside whichever
+                    // group they belong to (duplicated across groups where
+                    // relevant, which is fine per that same feedback).
                     FeatureBanner {
-                        mainFeaturesBoard(width: boardWidth)
-
-                        FeaturePermissionsBoard(
-                            useCoreAudioTap: appState.config.useCoreAudioTap,
-                            status: permissionStatus,
-                            width: boardWidth
-                        )
+                        dictationGroup(width: boardWidth)
+                        meetingsGroup(width: boardWidth)
+                        computerGroup(width: boardWidth)
                     }
                     .onAppear {
                         permissionStatus.useCoreAudioTap = appState.config.useCoreAudioTap
@@ -976,6 +983,10 @@ struct HomeView: View {
     // control for "go configure this," never nested inside anything else.
     private var dictationHeroCard: some View {
         FeatureCellContainer(isHero: true) {
+            // Per direct feedback ("добавить гифки которые были на
+            // Диктовка") — the real demo clip, brought back for this one
+            // flagship card instead of every card like before.
+            featureHeroMedia("dictation")
             FeatureCellHeader(icon: "mic.fill", title: tr("Voice dictation", "Диктовка голосом"), titleSize: 15) {
                 PermissionBadge(granted: permissionStatus.dictationGranted) {
                     if permissionStatus.dictationGranted {
@@ -986,12 +997,6 @@ struct HomeView: View {
                     }
                 }
             }
-            HStack {
-                Spacer(minLength: 0)
-                HotkeyGlyph(symbol: "⌥", badgeIcon: "mic.fill")
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, 4)
             Text(tr("Hold Right Option and speak — the text lands right at your cursor.", "Зажми Right Option и говори — текст сам встаёт у курсора."))
                 .font(.system(size: 12, weight: .regular))
                 .foregroundStyle(MuesliTheme.textSecondary)
@@ -1005,6 +1010,7 @@ struct HomeView: View {
 
     private var meetingsHeroCard: some View {
         FeatureCellContainer(isHero: true) {
+            featureHeroMedia("meetings")
             FeatureCellHeader(icon: "person.2.fill", title: tr("Meetings, summarized", "Встречи в готовых заметках"), titleSize: 15) {
                 PermissionBadge(granted: permissionStatus.meetingsGranted) {
                     if permissionStatus.meetingsGranted {
@@ -1023,6 +1029,37 @@ struct HomeView: View {
                 .foregroundStyle(MuesliTheme.textSecondary)
             SettingsLinkButton(label: tr("Meeting settings", "Настройки встреч")) {
                 openSettings(.meetings)
+            }
+        }
+    }
+
+    // Third flagship group ("Компьютер") — didn't exist as a hero before,
+    // only as `voiceCommandsCard`'s small toggle tile (now folded into this
+    // hero's own toggle, so the same config key isn't controlled from two
+    // places on the same page). Uses `voice-commands.gif` as its demo clip
+    // — no dedicated "computer" asset exists yet (checked the bundled
+    // `features-tour` set), and this IS the computer-use/voice-commands
+    // feature, so it's a genuine match, not a placeholder.
+    private var computerHeroCard: some View {
+        FeatureCellContainer(isHero: true) {
+            featureHeroMedia("voice-commands")
+            FeatureCellHeader(icon: "cursorarrow.rays", title: tr("Computer use", "Управление компьютером"), titleSize: 15) {
+                Toggle("", isOn: Binding(
+                    get: { appState.config.enableComputerUsePlanner },
+                    set: { newValue in
+                        controller.updateConfig { $0.enableComputerUsePlanner = newValue }
+                    }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .tint(MuesliTheme.accent)
+                .labelsHidden()
+            }
+            Text(tr("Tell your Mac what to do, hands-free — voice commands drive clicks, typing, and navigation.", "Скажи Маку, что делать — руки не нужны. Голосовые команды управляют кликами, вводом текста и навигацией."))
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(MuesliTheme.textSecondary)
+            SettingsLinkButton(label: tr("Set up", "Настроить")) {
+                openSettings(.computerUse)
             }
         }
     }
@@ -1202,19 +1239,6 @@ struct HomeView: View {
     // cards — exactly the "некрасиво расширено" feedback this fixes.
     private static let boardSpacing: CGFloat = 14
 
-    /// Vertical mosaic, approved on the design canvas ("Вариант 1"): two
-    /// full-width hero rows for the two flagship features (dictation,
-    /// meetings — the only two with a real on/off permission), then two
-    /// medium-card pairs (connect-a-model + on-device models; templates +
-    /// meeting-chat), then Insights promoted to its own full-width row
-    /// (the one card left without a natural pair, and the next most-used
-    /// feature after the two heroes), and finally the four icon+toggle
-    /// utility cards as a 2×2 grid instead of one cramped four-across row.
-    /// Widths are computed EXPLICITLY from `width` (not left to automatic
-    /// HStack negotiation) — not SwiftUI's `Grid`/`.gridCellColumns`
-    /// (confirmed buggy for inconsistent per-row spans in an earlier pass
-    /// on this same board).
-    ///
     /// `width` is passed in from `functionsContent`'s outer
     /// `GeometryReader`, NOT measured locally in here — an earlier version
     /// had its own width probe living inside this same view tree, and its
@@ -1225,46 +1249,310 @@ struct HomeView: View {
     /// the probe/consumption logic kept failing identically because the
     /// INPUT itself was circular. Taking `width` as a plain parameter from
     /// outside this view's own subtree removes that loop structurally.
-    ///
-    /// A true proportional "zoom out" (shrinking fonts/icons too, via
-    /// `.scaleEffect`) was attempted per explicit feedback and abandoned —
-    /// `.scaleEffect` composed unreliably with the rest of this layout.
-    /// Columns resize directly from `width` instead: text/icons stay their
-    /// natural size, but nothing can overflow, since every card's width is
-    /// computed to literally sum to the available space.
-    @ViewBuilder
-    private func mainFeaturesBoard(width: CGFloat) -> some View {
-        let half = (width - Self.boardSpacing) / 2
 
-        VStack(spacing: Self.boardSpacing) {
+    // MARK: - Function groups (big block + small blocks below it)
+
+    /// Per direct feedback: "Диктовка — Модели-Звук в текст (локальные
+    /// модели), Микрофон, Универсальный доступ, Горячие клавиши, Мини бар".
+    /// Smart cleanup (dictation transcript cleanup) folded in too — it's a
+    /// dictation setting that had nowhere else obvious to live once the
+    /// flat 2×2 utility grid went away.
+    @ViewBuilder
+    private func dictationGroup(width: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: Self.boardSpacing) {
             dictationHeroCard
                 .frame(width: width)
 
+            subItemGrid(width: width, items: [
+                AnyView(onDeviceModelsCard),
+                microphoneSubItem,
+                accessibilitySubItem,
+                inputMonitoringSubItem,
+                hotkeysSubItem,
+                miniBarSubItem,
+                AnyView(smartCleanupCard)
+            ])
+        }
+    }
+
+    /// Per direct feedback: "Встречи — Модели-Звук в текст, Саммаризация,
+    /// Чат с встречей, Шаблоны заметок, Инсайты, Универсальный доступ,
+    /// Горячие клавиши, Мини бар, Словарь, Прочие настройки." Screen
+    /// Recording/Calendar (needed for meeting capture/upcoming meetings)
+    /// and screen-video recording folded in alongside — real settings this
+    /// function depends on, same spirit as the rest of the list.
+    @ViewBuilder
+    private func meetingsGroup(width: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: Self.boardSpacing) {
             meetingsHeroCard
                 .frame(width: width)
 
-            HStack(alignment: .top, spacing: Self.boardSpacing) {
-                connectModelCard.frame(width: half)
-                onDeviceModelsCard.frame(width: half)
-            }
+            subItemGrid(width: width, items: [
+                AnyView(onDeviceModelsCard),
+                AnyView(connectModelCard),
+                AnyView(meetingChatCard),
+                AnyView(templatesCard),
+                AnyView(insightsCard),
+                accessibilitySubItem,
+                screenRecordingSubItem,
+                calendarSubItem,
+                hotkeysSubItem,
+                miniBarSubItem,
+                AnyView(dictionaryCard),
+                AnyView(screenVideoCard),
+                otherMeetingSettingsSubItem
+            ])
+        }
+    }
 
-            HStack(alignment: .top, spacing: Self.boardSpacing) {
-                templatesCard.frame(width: half)
-                meetingChatCard.frame(width: half)
-            }
-
-            insightsCard
+    /// Per direct feedback: "Компьютер (гифка с принципом работы) —
+    /// Настройка." Automation is the one macOS permission this feature
+    /// actually touches (informational — macOS asks the first time it's
+    /// used, not from here), so it rides along as the group's other tile.
+    @ViewBuilder
+    private func computerGroup(width: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: Self.boardSpacing) {
+            computerHeroCard
                 .frame(width: width)
 
-            HStack(alignment: .top, spacing: Self.boardSpacing) {
-                smartCleanupCard.frame(width: half)
-                voiceCommandsCard.frame(width: half)
-            }
+            subItemGrid(width: width, items: [
+                configureSubItem,
+                automationSubItem
+            ])
+        }
+    }
 
-            HStack(alignment: .top, spacing: Self.boardSpacing) {
-                screenVideoCard.frame(width: half)
-                dictionaryCard.frame(width: half)
+    /// Chunks a flat tile list into mosaic rows: pairs of two, with a
+    /// trailing odd tile full-width — same grouping `FeaturePermissionsBoard`
+    /// used to do for its own item list, generalized here so every group's
+    /// sub-item grid reads the same way.
+    private func subItemRows(_ items: [AnyView]) -> [[AnyView]] {
+        var result: [[AnyView]] = []
+        var rest = items
+        while !rest.isEmpty {
+            if rest.count == 1 {
+                result.append([rest.removeFirst()])
+            } else {
+                result.append([rest.removeFirst(), rest.removeFirst()])
             }
+        }
+        return result
+    }
+
+    @ViewBuilder
+    private func subItemGrid(width: CGFloat, items: [AnyView]) -> some View {
+        let half = (width - Self.boardSpacing) / 2
+        VStack(spacing: Self.boardSpacing) {
+            ForEach(Array(subItemRows(items).enumerated()), id: \.offset) { _, row in
+                if row.count == 2 {
+                    HStack(alignment: .top, spacing: Self.boardSpacing) {
+                        row[0].frame(width: half)
+                        row[1].frame(width: half)
+                    }
+                } else {
+                    row[0].frame(width: width)
+                }
+            }
+        }
+    }
+
+    // MARK: - Sub-item tiles (permissions, nav links)
+
+    /// Whole-tile tap target for pure navigation — the trailing chevron is
+    /// decorative, never its own control, so wrapping the whole cell in one
+    /// `Button` is safe (unlike a badge/toggle trailing — see
+    /// `permissionSubItem`/`informationalSubItem`, which learned that
+    /// lesson the hard way earlier on this same page: a nested interactive
+    /// control inside an outer Button silently ate its taps).
+    private func navSubItem(icon: String, title: String, subtitle: String, action: @escaping () -> Void) -> AnyView {
+        AnyView(
+            Button(action: action) {
+                FeatureCellContainer {
+                    FeatureCellHeader(icon: icon, title: title) {
+                        FeatureCellChevron()
+                    }
+                    Text(subtitle)
+                        .font(.system(size: 11.5, weight: .regular))
+                        .foregroundStyle(MuesliTheme.textSecondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .buttonStyle(.plain)
+        )
+    }
+
+    /// A real macOS permission with a system prompt — same card language
+    /// and one-button rule as the old `FeaturePermissionsBoard.permissionCard`
+    /// (no whole-cell Button; the badge is the only tappable element).
+    private func permissionSubItem(icon: String, title: String, subtitle: String, granted: Bool, pane: String, request: @escaping () -> Void) -> AnyView {
+        AnyView(
+            FeatureCellContainer {
+                FeatureCellHeader(icon: icon, title: title) {
+                    PermissionBadge(
+                        granted: granted,
+                        action: granted ? { openPrivacyPane(pane) } : { request(); openPrivacyPane(pane) }
+                    )
+                }
+                Text(subtitle)
+                    .font(.system(size: 11.5, weight: .regular))
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        )
+    }
+
+    /// No system prompt exists for this one — granted automatically by
+    /// macOS the first time it's actually used, or not needed at all.
+    private func informationalSubItem(icon: String, title: String, subtitle: String, note: String, pane: String) -> AnyView {
+        AnyView(
+            FeatureCellContainer {
+                FeatureCellHeader(icon: icon, title: title) {
+                    StatusPill(text: note) { openPrivacyPane(pane) }
+                }
+                Text(subtitle)
+                    .font(.system(size: 11.5, weight: .regular))
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        )
+    }
+
+    private var microphoneSubItem: AnyView {
+        permissionSubItem(
+            icon: "mic.fill",
+            title: tr("Microphone", "Микрофон"),
+            subtitle: tr("Needed for dictation and meeting recording.", "Нужен для диктовки и записи встреч."),
+            granted: permissionStatus.microphone,
+            pane: "Privacy_Microphone"
+        ) {
+            AVCaptureDevice.requestAccess(for: .audio) { _ in }
+        }
+    }
+
+    private var accessibilitySubItem: AnyView {
+        permissionSubItem(
+            icon: "cursorarrow.rays",
+            title: tr("Accessibility", "Универсальный доступ"),
+            subtitle: tr("Needed to paste dictated text where you're typing.", "Нужен, чтобы вставлять продиктованный текст куда ты печатаешь."),
+            granted: permissionStatus.accessibility,
+            pane: "Privacy_Accessibility"
+        ) {
+            let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+            AXIsProcessTrustedWithOptions(opts)
+        }
+    }
+
+    private var inputMonitoringSubItem: AnyView {
+        permissionSubItem(
+            icon: "keyboard.fill",
+            title: tr("Input Monitoring", "Мониторинг ввода"),
+            subtitle: tr("Needed for the hold-to-talk dictation hotkey.", "Нужен для горячей клавиши диктовки."),
+            granted: permissionStatus.inputMonitoring,
+            pane: "Privacy_ListenEvent"
+        ) {
+            if !CGRequestListenEventAccess() { openPrivacyPane("Privacy_ListenEvent") }
+        }
+    }
+
+    private var screenRecordingSubItem: AnyView {
+        permissionSubItem(
+            icon: "display",
+            title: tr("Screen Recording", "Запись экрана"),
+            subtitle: tr("Needed to capture what others say in a meeting.", "Нужен, чтобы записывать то, что говорят другие на встрече."),
+            granted: permissionStatus.screenRecording,
+            pane: "Privacy_ScreenCapture"
+        ) {
+            CGRequestScreenCaptureAccess()
+        }
+    }
+
+    private var calendarSubItem: AnyView {
+        permissionSubItem(
+            icon: "calendar",
+            title: tr("Calendar", "Календарь"),
+            subtitle: tr("Optional — shows upcoming meetings and their join links.", "Опционально — показывает ближайшие встречи и ссылки на подключение."),
+            granted: permissionStatus.calendar,
+            pane: "Privacy_Calendars"
+        ) {
+            eventStore.requestFullAccessToEvents { _, _ in }
+        }
+    }
+
+    private var automationSubItem: AnyView {
+        informationalSubItem(
+            icon: "gearshape.2.fill",
+            title: tr("Automation", "Автоматизация"),
+            subtitle: tr("For computer-use browser actions. macOS asks the first time it's actually used — not here.", "Для действий с браузером в режиме управления компьютером. macOS спросит сама при первом использовании — не здесь."),
+            note: tr("Granted on first use", "Выдаётся при первом использовании"),
+            pane: "Privacy_Automation"
+        )
+    }
+
+    private var hotkeysSubItem: AnyView {
+        navSubItem(
+            icon: "keyboard.fill",
+            title: tr("Hotkeys", "Горячие клавиши"),
+            subtitle: tr("Change the hold-to-talk key.", "Измени клавишу для удержания.")
+        ) {
+            openSettings(.shortcuts)
+        }
+    }
+
+    /// No dedicated "mini bar" demo clip exists in the bundled asset set
+    /// yet (checked `features-tour` — only the 10 already used elsewhere),
+    /// so this is nav-only for now, same as any other settings link.
+    private var miniBarSubItem: AnyView {
+        navSubItem(
+            icon: "rectangle.compress.vertical",
+            title: tr("Mini bar", "Мини-бар"),
+            subtitle: tr("The floating pill while you dictate or meet.", "Плавающая пилюля во время диктовки и встреч.")
+        ) {
+            openSettings(.appearance)
+        }
+    }
+
+    private var otherMeetingSettingsSubItem: AnyView {
+        navSubItem(
+            icon: "slider.horizontal.3",
+            title: tr("Other settings", "Прочие настройки"),
+            subtitle: tr("Recording, auto-save, and more.", "Запись, автосохранение и другое.")
+        ) {
+            openSettings(.meetings)
+        }
+    }
+
+    private var configureSubItem: AnyView {
+        navSubItem(
+            icon: "gearshape",
+            title: tr("Configure", "Настройка"),
+            subtitle: tr("Choose what voice commands can control.", "Выбери, чем можно управлять голосом.")
+        ) {
+            openSettings(.computerUse)
+        }
+    }
+
+    // MARK: - Hero demo media (GIF)
+
+    /// Top-of-hero demo clip. Brought back per direct feedback ("добавить
+    /// гифки которые были на Диктовка/Встречи/Компьютер") — only on these
+    /// three flagship blocks now, not on every card like the pre-"Вариант
+    /// 1" version. Assets live in `Contents/Resources/features-tour/`
+    /// (staged there by `scripts/build_native_app.sh`, which `dev-test.sh`
+    /// already runs through — nothing extra needed to see these locally).
+    @ViewBuilder
+    private func featureHeroMedia(_ assetName: String) -> some View {
+        if let url = Bundle.main.url(forResource: assetName, withExtension: "gif", subdirectory: "features-tour") {
+            AnimatedGifView(url: url)
+                .frame(height: 170)
+                .frame(maxWidth: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge))
+                .overlay(
+                    RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge)
+                        .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                )
         }
     }
 
@@ -1344,24 +1632,6 @@ struct HomeView: View {
                 if let reason = controller.setPostProcessorEnabled(!appState.config.enablePostProcessor) {
                     appState.postProcessorRedirectReason = reason
                 }
-            }
-        )
-    }
-
-    private var voiceCommandsCard: FeatureCard {
-        FeatureCard(
-            accent: MuesliTheme.accent,
-            icon: "cursorarrow.rays",
-            title: tr("Voice commands", "Голосовые команды"),
-            subtitle: tr("Tell your Mac what to do, hands-free.", "Управляй Mac голосом, без рук."),
-            actions: [
-                FeatureAction(label: tr("Set up", "Настроить"), isPrimary: true) {
-                    openSettings(.computerUse)
-                }
-            ],
-            compact: true,
-            toggle: FeatureToggle(isOn: appState.config.enableComputerUsePlanner) {
-                controller.updateConfig { $0.enableComputerUsePlanner = !$0.enableComputerUsePlanner }
             }
         )
     }
@@ -1765,6 +2035,24 @@ struct PermissionBadge: View {
 }
 
 /// A static (non-tappable) status pill — the informational-only
+/// GIF playback bridge: SwiftUI's `Image` never animates a GIF's frames —
+/// only `NSImageView.animates` does. Always-animating (a handful of big
+/// hero demos now, not dozens of hover-triggered small cards like the
+/// pre-"Вариант 1" version this is adapted from).
+struct AnimatedGifView: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> NSImageView {
+        let view = NSImageView()
+        view.image = NSImage(contentsOf: url)
+        view.imageScaling = .scaleProportionallyUpOrDown
+        view.animates = true
+        return view
+    }
+
+    func updateNSView(_ nsView: NSImageView, context: Context) {}
+}
+
 /// permission items (Camera, Automation) have no request action, so they
 /// get a plain label in the same visual slot `PermissionBadge` occupies
 /// for grantable ones, instead of a button.
