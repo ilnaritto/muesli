@@ -299,7 +299,12 @@ struct SettingsView: View {
         case .dictionary:
             DictionaryView(appState: appState, controller: controller)
         case .models:
+            // Same side-margin treatment as `.templates` just below — this
+            // page is now the same two-pane `SecondaryColumn` + content-pane
+            // shape, so it gets the same 8pt gaps for consistency.
             ModelsView(appState: appState, controller: controller)
+                .padding(.leading, 3)
+                .padding(.trailing, 8)
         case .shortcuts:
             ShortcutsView(appState: appState, controller: controller)
         case .about:

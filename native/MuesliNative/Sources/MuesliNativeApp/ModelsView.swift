@@ -1,13 +1,10 @@
 import SwiftUI
 import MuesliCore
 
-/// The Models screen used to be four tabs keyed by this enum; per direct
-/// feedback ("часть будет не шибко-то удобно" — managing one connected
-/// model across two separate role tabs was busywork) it's now one
-/// continuous scrollable page (see `ModelsView.body`). This only survives
-/// as a set of `ScrollViewReader` anchor ids, so `HomeView.swift`'s
-/// existing "jump to Models → Cleanup" deep links still land in the right
-/// place — they scroll there now instead of switching a selected tab.
+/// Deep-link target used by `HomeView.swift` ("jump to Models → Cleanup"
+/// etc. via `AppState.modelsTab`). Kept as its own type — external callers
+/// only ever reference `.speech`/`.cleanup` — and mapped onto
+/// `ModelsView.Category` on appear/change.
 enum ModelsTab: String, CaseIterable, Identifiable {
     case speech
     case text
@@ -17,9 +14,24 @@ enum ModelsTab: String, CaseIterable, Identifiable {
 }
 
 struct ModelsView: View {
+    /// Per direct feedback ("нужно сделать аналогично странице шаблоны —
+    /// слева менюшка с типами моделей, справа список; и точно должна быть
+    /// вкладка мои модели") — back to a two-pane picker (`SecondaryColumn`
+    /// sidebar + content pane), mirroring `MeetingTemplatesManagerView`,
+    /// instead of one long scroll with colored section dividers. `.myModels`
+    /// is new: everything already downloaded/connected in one place, so
+    /// switching what's active doesn't require knowing which catalog tab it
+    /// lives in.
+    private enum Category: Hashable {
+        case myModels
+        case speech
+        case textCleanup
+    }
+
     let appState: AppState
     let controller: MuesliController
 
+    @State private var selectedCategory: Category = .myModels
     @State private var showAddModelSheet = false
     @State private var nemotron35UpdateAvailable = false
     @State private var downloadingModels: Set<String> = []
@@ -58,76 +70,55 @@ struct ModelsView: View {
     }
 
     var body: some View {
-        // One continuous scrollable page instead of four tabs — per direct
-        // feedback: a connected cloud model already serves both text
-        // generation AND cleanup at once (`ConfiguredModel.roles`), so
-        // switching tabs to manage what's really ONE thing was busywork.
-        // `ModelsTab` stays around as a scroll anchor (`.id(_:)` below) so
-        // the existing "jump here" deep links from HomeView.swift still
-        // land in the right place — they just scroll now instead of
-        // switching a selected tab.
-        //
-        // Per direct feedback ("визуально цветом отделим что к чему
-        // относится") each section is wrapped in a tinted `sectionGroup`
-        // matching its header's accent color, and ("кнопку добавить
-        // облачную модель закрепить при скролле") the connect-cloud-model
-        // action lives in a fixed top-right overlay instead of scrolling
-        // away with the page.
-        ZStack(alignment: .topTrailing) {
-            ScrollViewReader { scrollProxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: MuesliTheme.spacing24) {
-                        Text(tr("Models", "Модели"))
-                            .font(MuesliTheme.pageTitle())
-                            .foregroundStyle(MuesliTheme.textPrimary)
-
-                        sectionGroup(color: Color(hex: 0x007AFF)) {
-                            modelsSectionHeader(
-                                title: tr("Speech recognition", "Распознавание речи"),
-                                icon: "waveform",
-                                color: Color(hex: 0x007AFF)
-                            )
-                            speechTabContent
-                        }
-                        .id(ModelsTab.speech)
-
-                        sectionGroup(color: Color(hex: 0xAF52DE)) {
-                            modelsSectionHeader(
-                                title: tr("Text & cleanup", "Текстовые и очистка"),
-                                icon: "text.bubble",
-                                color: Color(hex: 0xAF52DE),
-                                subtitle: tr("One connected model can handle both — turn each on for whatever it should do.", "Одна подключённая модель может делать и то, и другое — включи то, для чего она нужна.")
-                            )
-                            textAndCleanupContent
-                        }
-                        .id(ModelsTab.text)
-                    }
-                    .padding(MuesliTheme.spacing24)
-                    .padding(.top, MuesliTheme.spacing24)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .onAppear {
-                    let anchor = appState.modelsTab == .cleanup ? ModelsTab.text : appState.modelsTab
-                    DispatchQueue.main.async {
-                        scrollProxy.scrollTo(anchor, anchor: .top)
-                    }
-                }
+        // Per direct feedback ("сделать аналогично странице шаблоны — слева
+        // менюшка с типами моделей, справа список; точно должна быть
+        // вкладка мои модели") — a `SecondaryColumn` picker (same scaffold
+        // as `MeetingTemplatesManagerView`'s sidebar) plus a content pane,
+        // instead of one long scroll page.
+        HStack(alignment: .top, spacing: 8) {
+            SecondaryColumn(title: tr("Models", "Модели"), width: 220) {
+                sidebar
             }
 
-            connectCloudModelButton
-                .padding(.top, MuesliTheme.spacing20)
-                .padding(.trailing, MuesliTheme.spacing24)
+            ZStack(alignment: .topTrailing) {
+                ScrollView {
+                    categoryContent
+                        .padding(MuesliTheme.spacing16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .background(MuesliTheme.backgroundBase)
+                .clipShape(RoundedRectangle(cornerRadius: SecondaryColumn<EmptyView>.cardCornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: SecondaryColumn<EmptyView>.cardCornerRadius, style: .continuous)
+                        .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                )
+                .padding(.vertical, 8)
+
+                // Connecting a cloud model only matters for "Мои модели"/
+                // "Текстовые и очистка" — irrelevant on the speech catalog,
+                // which downloads instead of connecting.
+                if selectedCategory != .speech {
+                    connectCloudModelButton
+                        .padding(.top, 20)
+                        .padding(.trailing, 20)
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .sheet(isPresented: $showAddModelSheet) {
             AddModelSheet(controller: controller)
         }
         .onAppear {
+            syncSelectedCategory(from: appState.modelsTab)
             checkDownloadedModels()
             checkDownloadedPostProcModels()
             checkDownloadedSummaryModels()
             syncSelectionsFromActiveBackend()
             checkNemotron35Update()
+        }
+        .onChange(of: appState.modelsTab) { _, tab in
+            syncSelectedCategory(from: tab)
         }
         .onChange(of: appState.selectedBackend.model) { _, _ in
             syncSelectionsFromActiveBackend()
@@ -188,11 +179,72 @@ struct ModelsView: View {
         }
     }
 
-    // MARK: - Section header (one continuous page instead of tabs)
+    // MARK: - Sidebar (categories)
 
-    /// Pinned top-right action — stays in place while the page scrolls
-    /// (see the `ZStack(alignment: .topTrailing)` in `body`), so it's
-    /// always reachable regardless of which section is in view.
+    private static let categoryColors: [Category: Color] = [
+        .myModels: Color(hex: 0xFFD60A),
+        .speech: Color(hex: 0x007AFF),
+        .textCleanup: Color(hex: 0xAF52DE)
+    ]
+
+    private func syncSelectedCategory(from tab: ModelsTab) {
+        switch tab {
+        case .speech:
+            selectedCategory = .speech
+        case .text, .cleanup:
+            selectedCategory = .textCleanup
+        }
+    }
+
+    @ViewBuilder
+    private var sidebar: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                SecondaryColumnRow(
+                    icon: "star.fill",
+                    title: tr("My models", "Мои модели"),
+                    isSelected: selectedCategory == .myModels,
+                    tileColor: Self.categoryColors[.myModels]!
+                ) {
+                    selectedCategory = .myModels
+                }
+
+                SecondaryColumnRow(
+                    icon: "waveform",
+                    title: tr("Speech recognition", "Распознавание речи"),
+                    isSelected: selectedCategory == .speech,
+                    tileColor: Self.categoryColors[.speech]!
+                ) {
+                    selectedCategory = .speech
+                }
+
+                SecondaryColumnRow(
+                    icon: "text.bubble",
+                    title: tr("Text & cleanup", "Текстовые и очистка"),
+                    isSelected: selectedCategory == .textCleanup,
+                    tileColor: Self.categoryColors[.textCleanup]!
+                ) {
+                    selectedCategory = .textCleanup
+                }
+            }
+            .padding(MuesliTheme.spacing8)
+        }
+    }
+
+    @ViewBuilder
+    private var categoryContent: some View {
+        switch selectedCategory {
+        case .myModels:
+            myModelsContent
+        case .speech:
+            speechTabContent
+        case .textCleanup:
+            textAndCleanupContent
+        }
+    }
+
+    /// Pinned top-right action — stays in place while the pane scrolls, so
+    /// it's always reachable.
     private var connectCloudModelButton: some View {
         Button {
             showAddModelSheet = true
@@ -210,24 +262,6 @@ struct ModelsView: View {
             .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
         }
         .buttonStyle(.plain)
-    }
-
-    /// Separates one page section from the next with a thin accent rule in
-    /// its header's color, instead of a full boxed background — a boxed
-    /// tint around cards that already have their own borders (and an
-    /// accent-glow border on the active one) read as clutter, nested boxes
-    /// inside boxes ("колхозно"). A simple color-coded rule is enough to
-    /// tell sections apart without competing with the cards themselves.
-    private func sectionGroup<Content: View>(
-        color: Color,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        // Per direct feedback ("линия цветная слева лишняя") — the section
-        // header's own colored icon already tells sections apart; a second
-        // colored accent rule next to it was redundant.
-        VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
-            content()
-        }
     }
 
     // MARK: - Table container (Variant A, approved: one bordered box per
@@ -254,34 +288,98 @@ struct ModelsView: View {
             .frame(height: 1)
     }
 
-    private func modelsSectionHeader(
-        title: String,
-        icon: String,
-        color: Color,
-        subtitle: String? = nil
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 8) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(color)
-                    Image(systemName: icon)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.white)
-                }
-                .frame(width: 21, height: 21)
+    private func subsectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(MuesliTheme.textTertiary)
+            .textCase(.uppercase)
+            .padding(.leading, 2)
+    }
 
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(MuesliTheme.textPrimary)
-            }
-            if let subtitle {
-                Text(subtitle)
-                    .font(MuesliTheme.caption())
-                    .foregroundStyle(MuesliTheme.textSecondary)
-                    .padding(.leading, 29)
+    // MARK: - My models (per direct feedback: "точно должна быть вкладка
+    // мои модели, которые появляются в нужных вкладках и на них можно
+    // переключиться") — everything already downloaded/connected, grouped
+    // the same way the catalog tabs group it, reusing the exact same rows
+    // (so "Сделать активной"/role chips here are the same switch action as
+    // on the catalog tabs — just gathered in one place).
+    @ViewBuilder
+    private var myModelsContent: some View {
+        let downloadedSpeechOptions = BackendOption.all.filter { downloadedModels.contains($0.model) }
+        let llmModels = combinedTextAndCleanupModels
+        let downloadedSummaryOptions = LocalSummaryModelOption.all.filter { downloadedSummaryModels.contains($0.id) }
+        let downloadedPostProcOptions = PostProcessorOption.all.filter { downloadedPostProcModels.contains($0.id) }
+        let isEmpty = downloadedSpeechOptions.isEmpty && llmModels.isEmpty
+            && downloadedSummaryOptions.isEmpty && downloadedPostProcOptions.isEmpty
+
+        if isEmpty {
+            emptyMyModelsCard
+        } else {
+            VStack(alignment: .leading, spacing: MuesliTheme.spacing20) {
+                if !downloadedSpeechOptions.isEmpty {
+                    VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+                        subsectionHeader(tr("Speech recognition", "Распознавание речи"))
+                        tableContainer {
+                            ForEach(Array(downloadedSpeechOptions.enumerated()), id: \.element.model) { index, option in
+                                if index > 0 { tableRowDivider }
+                                modelTableRow(option: option, logo: logoForBackend(option))
+                            }
+                        }
+                    }
+                }
+
+                if !llmModels.isEmpty {
+                    VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+                        subsectionHeader(tr("Text & cleanup", "Текстовые и очистка"))
+                        tableContainer {
+                            ForEach(Array(llmModels.enumerated()), id: \.element.id) { index, model in
+                                if index > 0 { tableRowDivider }
+                                combinedConfiguredModelRow(model)
+                            }
+                        }
+                    }
+                }
+
+                if !downloadedSummaryOptions.isEmpty {
+                    VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+                        subsectionHeader(tr("Local summarization", "Локальная суммаризация"))
+                        VStack(spacing: MuesliTheme.spacing12) {
+                            ForEach(downloadedSummaryOptions) { option in
+                                localSummaryModelCard(option)
+                            }
+                        }
+                    }
+                }
+
+                if !downloadedPostProcOptions.isEmpty {
+                    VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+                        subsectionHeader(tr("Post-processing", "Постобработка"))
+                        VStack(spacing: MuesliTheme.spacing12) {
+                            ForEach(downloadedPostProcOptions) { option in
+                                postProcModelCard(option)
+                            }
+                        }
+                    }
+                }
             }
         }
+    }
+
+    private var emptyMyModelsCard: some View {
+        VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+            Text(tr("No models yet", "Пока нет ни одной модели"))
+                .font(MuesliTheme.headline())
+                .foregroundStyle(MuesliTheme.textPrimary)
+            Text(tr("Download a speech model or connect a cloud model — it'll show up here, with a quick way to switch to it.", "Скачайте речевую модель или подключите облачную — она появится здесь, и её можно будет быстро сделать активной."))
+                .font(MuesliTheme.callout())
+                .foregroundStyle(MuesliTheme.textSecondary)
+        }
+        .padding(MuesliTheme.spacing16)
+        .background(MuesliTheme.backgroundRaised)
+        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
+        .overlay(
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
+                .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+        )
     }
 
     // Approved layout ("вариант а таблица"): one bordered table box for the
