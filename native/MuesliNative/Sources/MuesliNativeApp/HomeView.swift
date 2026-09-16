@@ -981,13 +981,69 @@ struct HomeView: View {
     // (confirmed live), so "Выдать доступ" did nothing. The badge is now
     // the card's only Button; `SettingsLinkButton` is a separate, sibling
     // control for "go configure this," never nested inside anything else.
+    // Per direct feedback ("видео сделать примерно в половину того что
+    // есть, расположить справа в карточке, слева больше акцент на
+    // название") — side-by-side instead of media-on-top: the text column
+    // (bigger title, description, action) takes the lead on the left, a
+    // small demo clip sits at a fixed, much smaller size on the right
+    // instead of spanning the whole card width.
+    @ViewBuilder
+    private func heroCardBody<Trailing: View>(
+        assetName: String,
+        icon: String,
+        title: String,
+        description: String,
+        actionLabel: String,
+        action: @escaping () -> Void,
+        @ViewBuilder trailing: () -> Trailing
+    ) -> some View {
+        HStack(alignment: .top, spacing: 18) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 9) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(MuesliTheme.textPrimary.opacity(0.07))
+                        Image(systemName: icon)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(MuesliTheme.textPrimary.opacity(0.82))
+                    }
+                    .frame(width: 28, height: 28)
+
+                    Text(title)
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(MuesliTheme.textPrimary)
+                        .lineLimit(1)
+
+                    Spacer(minLength: 0)
+
+                    trailing()
+                }
+
+                Text(description)
+                    .font(.system(size: 12.5, weight: .regular))
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer(minLength: 4)
+
+                SettingsLinkButton(label: actionLabel, action: action)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            featureHeroMedia(assetName, width: 220, height: 74)
+        }
+    }
+
     private var dictationHeroCard: some View {
         FeatureCellContainer(isHero: true) {
-            // Per direct feedback ("добавить гифки которые были на
-            // Диктовка") — the real demo clip, brought back for this one
-            // flagship card instead of every card like before.
-            featureHeroMedia("dictation")
-            FeatureCellHeader(icon: "mic.fill", title: tr("Voice dictation", "Диктовка голосом"), titleSize: 15) {
+            heroCardBody(
+                assetName: "dictation",
+                icon: "mic.fill",
+                title: tr("Voice dictation", "Диктовка голосом"),
+                description: tr("Hold Right Option and speak — the text lands right at your cursor.", "Зажми Right Option и говори — текст сам встаёт у курсора."),
+                actionLabel: tr("Set up dictation", "Настроить диктовку"),
+                action: { openSettings(.dictation) }
+            ) {
                 PermissionBadge(granted: permissionStatus.dictationGranted) {
                     if permissionStatus.dictationGranted {
                         openPrivacyPane(dictationMissingPane())
@@ -997,21 +1053,19 @@ struct HomeView: View {
                     }
                 }
             }
-            Text(tr("Hold Right Option and speak — the text lands right at your cursor.", "Зажми Right Option и говори — текст сам встаёт у курсора."))
-                .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(MuesliTheme.textSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
-            SettingsLinkButton(label: tr("Set up dictation", "Настроить диктовку")) {
-                openSettings(.dictation)
-            }
         }
     }
 
     private var meetingsHeroCard: some View {
         FeatureCellContainer(isHero: true) {
-            featureHeroMedia("meetings")
-            FeatureCellHeader(icon: "person.2.fill", title: tr("Meetings, summarized", "Встречи в готовых заметках"), titleSize: 15) {
+            heroCardBody(
+                assetName: "meetings",
+                icon: "person.2.fill",
+                title: tr("Meetings, summarized", "Встречи в готовых заметках"),
+                description: tr("Microphone and screen audio. You just talk — the note builds itself, in your template.", "Микрофон и звук с экрана. Ты просто разговариваешь — заметка соберётся сама, по шаблону."),
+                actionLabel: tr("Meeting settings", "Настройки встреч"),
+                action: { openSettings(.meetings) }
+            ) {
                 PermissionBadge(granted: permissionStatus.meetingsGranted) {
                     if permissionStatus.meetingsGranted {
                         openPrivacyPane(meetingsMissingPane())
@@ -1020,15 +1074,6 @@ struct HomeView: View {
                         openPrivacyPane(meetingsMissingPane())
                     }
                 }
-            }
-            Text(tr("A meeting → a ready recap", "Встреча → готовая сводка"))
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(MuesliTheme.textPrimary)
-            Text(tr("Microphone and screen audio. You just talk — the note builds itself, in your template.", "Микрофон и звук с экрана. Ты просто разговариваешь — заметка соберётся сама, по шаблону."))
-                .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(MuesliTheme.textSecondary)
-            SettingsLinkButton(label: tr("Meeting settings", "Настройки встреч")) {
-                openSettings(.meetings)
             }
         }
     }
@@ -1042,8 +1087,14 @@ struct HomeView: View {
     // feature, so it's a genuine match, not a placeholder.
     private var computerHeroCard: some View {
         FeatureCellContainer(isHero: true) {
-            featureHeroMedia("voice-commands")
-            FeatureCellHeader(icon: "cursorarrow.rays", title: tr("Computer use", "Управление компьютером"), titleSize: 15) {
+            heroCardBody(
+                assetName: "voice-commands",
+                icon: "cursorarrow.rays",
+                title: tr("Computer use", "Управление компьютером"),
+                description: tr("Tell your Mac what to do, hands-free — voice commands drive clicks, typing, and navigation.", "Скажи Маку, что делать — руки не нужны. Голосовые команды управляют кликами, вводом текста и навигацией."),
+                actionLabel: tr("Set up", "Настроить"),
+                action: { openSettings(.computerUse) }
+            ) {
                 Toggle("", isOn: Binding(
                     get: { appState.config.enableComputerUsePlanner },
                     set: { newValue in
@@ -1054,12 +1105,6 @@ struct HomeView: View {
                 .controlSize(.small)
                 .tint(MuesliTheme.accent)
                 .labelsHidden()
-            }
-            Text(tr("Tell your Mac what to do, hands-free — voice commands drive clicks, typing, and navigation.", "Скажи Маку, что делать — руки не нужны. Голосовые команды управляют кликами, вводом текста и навигацией."))
-                .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(MuesliTheme.textSecondary)
-            SettingsLinkButton(label: tr("Set up", "Настроить")) {
-                openSettings(.computerUse)
             }
         }
     }
@@ -1542,28 +1587,30 @@ struct HomeView: View {
     /// 1" version. Assets live in `Contents/Resources/features-tour/`
     /// (staged there by `scripts/build_native_app.sh`, which `dev-test.sh`
     /// already runs through — nothing extra needed to see these locally).
-    // Per direct feedback ("слишком большое видео и некрасиво выглядит") —
-    // a bare fixed `.frame(height: 170)` didn't match these clips' real
-    // shape (700×233, a wide ~3:1 strip): at full card width that let
-    // NSImageView's aspect-fit letterbox it inside a much wider box, mostly
-    // empty space in a big bordered frame. `.aspectRatio(fill)` + `.frame`
-    // + `.clipped()` sizes/crops it to the real ratio instead — no dead
-    // space, no distortion — at a shorter, calmer height than before.
+    // Per direct feedback ("слишком большое видео и некрасиво выглядит",
+    // then "сделать примерно в половину того что есть, расположить
+    // справа") — a bare fixed height didn't match these clips' real shape
+    // (700×233, a wide ~3:1 strip), which let NSImageView's aspect-fit
+    // letterbox it inside a much wider box. `.aspectRatio(fill)` + `.frame`
+    // + `.clipped()` sizes/crops it exactly to the given box — no dead
+    // space, no distortion — and now takes an explicit target size instead
+    // of hardcoding one, since `heroCardBody` needs a small fixed-size
+    // thumbnail, not a full-width banner.
     private static let heroMediaAspectRatio: CGFloat = 700.0 / 233.0
 
-    private func featureHeroMedia(_ assetName: String) -> some View {
+    private func featureHeroMedia(_ assetName: String, width: CGFloat, height: CGFloat) -> some View {
         Group {
             if let url = Bundle.main.url(forResource: assetName, withExtension: "gif", subdirectory: "features-tour") {
                 AnimatedGifView(url: url)
                     .aspectRatio(Self.heroMediaAspectRatio, contentMode: .fill)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 130)
+                    .frame(width: width, height: height)
                     .clipped()
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge))
+        .frame(width: width, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
         .overlay(
-            RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge)
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
                 .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
         )
     }
