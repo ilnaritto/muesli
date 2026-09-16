@@ -1601,13 +1601,20 @@ struct HomeView: View {
     private func featureHeroMedia(_ assetName: String, width: CGFloat, height: CGFloat) -> some View {
         Group {
             if let url = Bundle.main.url(forResource: assetName, withExtension: "gif", subdirectory: "features-tour") {
+                // Per direct feedback ("видос не влазит в кадр, обрезается
+                // со всех сторон") — `.fill` cropped it to cover the box
+                // edge-to-edge; `.fit` scales the WHOLE clip down to fit
+                // inside instead, so nothing gets cut off (a sliver of
+                // letterbox on the shorter axis is fine — the background
+                // fill below blends it into the card instead of showing a
+                // hard color seam).
                 AnimatedGifView(url: url)
-                    .aspectRatio(Self.heroMediaAspectRatio, contentMode: .fill)
+                    .aspectRatio(Self.heroMediaAspectRatio, contentMode: .fit)
                     .frame(width: width, height: height)
-                    .clipped()
             }
         }
         .frame(width: width, height: height)
+        .background(MuesliTheme.backgroundBase)
         .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
         .overlay(
             RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
