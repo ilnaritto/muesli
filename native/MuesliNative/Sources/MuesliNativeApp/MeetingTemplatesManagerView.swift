@@ -410,7 +410,11 @@ struct MeetingTemplatesManagerView: View {
                 .padding(.top, MuesliTheme.spacing4)
             }
             .padding(.vertical, 2)
-            .padding(.horizontal, MuesliTheme.spacing16)
+            // Per direct feedback ("красный — отступ сделать как слева
+            // меньше") — matched to the 8pt used everywhere else on this
+            // page instead of the wider 16pt this editor content alone
+            // still had.
+            .padding(.horizontal, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -485,14 +489,14 @@ struct MeetingTemplatesManagerView: View {
                 .frame(width: 26, height: 26)
                 .background(RoundedRectangle(cornerRadius: 8).fill(MuesliTheme.accentSubtle))
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(tr("Designed", "Дизайнерский"))
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(MuesliTheme.textPrimary)
-                Text(tr("Summary is generated as a design: cards, charts, checklists.", "Сводка генерируется как дизайн: карточки, графики, чек-листы."))
-                    .font(.system(size: 11))
-                    .foregroundStyle(MuesliTheme.textSecondary)
-            }
+            // Per direct feedback ("из-за этого текста при переключении
+            // скачет вверх вниз штука, предлагаю не показывать") — the
+            // two-line description made this row a different height than
+            // its neighbors, so switching templates visibly jumped. Title
+            // only now, same height every time.
+            Text(tr("Designed", "Дизайнерский"))
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(MuesliTheme.textPrimary)
 
             Spacer()
 
