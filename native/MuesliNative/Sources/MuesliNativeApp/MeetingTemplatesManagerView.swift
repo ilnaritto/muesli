@@ -417,6 +417,14 @@ struct MeetingTemplatesManagerView: View {
             .padding(.horizontal, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // Per direct feedback ("справа всё равно больше", measured edge to
+        // edge after the padding values already matched on both sides) —
+        // this `ScrollView`'s own vertical scrollbar track reserves a few
+        // extra points on the right that the sidebar's content doesn't pay
+        // (its own scrollbar sits at ITS card's right edge, not this
+        // editor card's). Hiding the indicator removes that asymmetric
+        // reservation — scrolling itself (trackpad/wheel) still works.
+        .scrollIndicators(.hidden)
     }
 
     private func validationText(_ message: String) -> some View {
