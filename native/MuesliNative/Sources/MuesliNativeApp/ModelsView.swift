@@ -233,13 +233,63 @@ struct ModelsView: View {
 
     @ViewBuilder
     private var categoryContent: some View {
+        // Per direct feedback ("заголовки на вкладках, но чтобы не
+        // повторялось") — one header per pane, driven by the selected
+        // category. Doesn't duplicate the sidebar: the sidebar's own
+        // column header always reads "Модели" (generic), this reads the
+        // specific category ("Распознавание речи" etc.) — different text.
+        VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
+            paneHeader
+
+            switch selectedCategory {
+            case .myModels:
+                myModelsContent
+            case .speech:
+                speechTabContent
+            case .textCleanup:
+                textAndCleanupContent
+            }
+        }
+    }
+
+    private var paneHeader: some View {
+        let info = paneHeaderInfo
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Self.categoryColors[selectedCategory]!)
+                    Image(systemName: info.icon)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+                .frame(width: 21, height: 21)
+
+                Text(info.title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(MuesliTheme.textPrimary)
+            }
+            if let subtitle = info.subtitle {
+                Text(subtitle)
+                    .font(MuesliTheme.caption())
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .padding(.leading, 29)
+            }
+        }
+    }
+
+    private var paneHeaderInfo: (title: String, subtitle: String?, icon: String) {
         switch selectedCategory {
         case .myModels:
-            myModelsContent
+            return (tr("My models", "Мои модели"), nil, "star.fill")
         case .speech:
-            speechTabContent
+            return (tr("Speech recognition", "Распознавание речи"), nil, "waveform")
         case .textCleanup:
-            textAndCleanupContent
+            return (
+                tr("Text & cleanup", "Текстовые и очистка"),
+                tr("One connected model can handle both — turn each on for whatever it should do.", "Одна подключённая модель может делать и то, и другое — включи то, для чего она нужна."),
+                "text.bubble"
+            )
         }
     }
 
