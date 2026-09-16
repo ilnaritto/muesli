@@ -1542,18 +1542,30 @@ struct HomeView: View {
     /// 1" version. Assets live in `Contents/Resources/features-tour/`
     /// (staged there by `scripts/build_native_app.sh`, which `dev-test.sh`
     /// already runs through — nothing extra needed to see these locally).
-    @ViewBuilder
+    // Per direct feedback ("слишком большое видео и некрасиво выглядит") —
+    // a bare fixed `.frame(height: 170)` didn't match these clips' real
+    // shape (700×233, a wide ~3:1 strip): at full card width that let
+    // NSImageView's aspect-fit letterbox it inside a much wider box, mostly
+    // empty space in a big bordered frame. `.aspectRatio(fill)` + `.frame`
+    // + `.clipped()` sizes/crops it to the real ratio instead — no dead
+    // space, no distortion — at a shorter, calmer height than before.
+    private static let heroMediaAspectRatio: CGFloat = 700.0 / 233.0
+
     private func featureHeroMedia(_ assetName: String) -> some View {
-        if let url = Bundle.main.url(forResource: assetName, withExtension: "gif", subdirectory: "features-tour") {
-            AnimatedGifView(url: url)
-                .frame(height: 170)
-                .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge))
-                .overlay(
-                    RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge)
-                        .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
-                )
+        Group {
+            if let url = Bundle.main.url(forResource: assetName, withExtension: "gif", subdirectory: "features-tour") {
+                AnimatedGifView(url: url)
+                    .aspectRatio(Self.heroMediaAspectRatio, contentMode: .fill)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 130)
+                    .clipped()
+            }
         }
+        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge))
+        .overlay(
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerLarge)
+                .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+        )
     }
 
     private func requestDictationPermissions() {
