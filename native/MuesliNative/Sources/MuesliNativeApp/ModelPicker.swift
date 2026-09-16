@@ -53,13 +53,20 @@ struct ModelPicker: View {
             }
             .padding(.horizontal, 10)
             .frame(minWidth: 160, maxWidth: .infinity, minHeight: 26, maxHeight: 26)
-            .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall).fill(MuesliTheme.backgroundBase))
-            .overlay(
-                RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
-                    .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
-            )
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        // Per direct feedback ("как будто обводки заливки не хватает") —
+        // a `.background()`/`.overlay()` set on a `Menu`'s LABEL content
+        // doesn't reliably paint once `.menuStyle(.borderlessButton)` is
+        // applied on macOS — the pill was rendering as bare text next to
+        // every other picker on the same page, which all use a real
+        // `Picker`/`NSPopUpButton` and get their chrome for free. Applying
+        // it to the `Menu` itself, after `.menuStyle`, paints reliably.
+        .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall).fill(MuesliTheme.backgroundBase))
+        .overlay(
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+        )
     }
 }

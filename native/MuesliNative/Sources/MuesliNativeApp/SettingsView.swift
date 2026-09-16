@@ -243,7 +243,11 @@ struct SettingsView: View {
     @ViewBuilder
     private func screenContextRow(_ title: String, controlWidth rowControlWidth: CGFloat? = nil) -> some View {
         let width = rowControlWidth ?? controlWidth
-        HStack(alignment: .top, spacing: 20) {
+        // Per direct feedback ("выравни все ячейки по середине") — this was
+        // the one row still using `.top`, so its toggle sat level with the
+        // label instead of centered against the label+description block
+        // like every other two-line row (`settingsRow(_:description:)`).
+        HStack(alignment: .center, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)
                     .font(MuesliTheme.body())
