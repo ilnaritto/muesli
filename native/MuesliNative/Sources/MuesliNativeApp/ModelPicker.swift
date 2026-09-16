@@ -52,17 +52,21 @@ struct ModelPicker: View {
                     .foregroundStyle(MuesliTheme.textTertiary)
             }
             .padding(.horizontal, 10)
-            .frame(minWidth: 160, maxWidth: .infinity, minHeight: 26, maxHeight: 26)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        // Per direct feedback ("как будто обводки заливки не хватает") —
-        // a `.background()`/`.overlay()` set on a `Menu`'s LABEL content
-        // doesn't reliably paint once `.menuStyle(.borderlessButton)` is
-        // applied on macOS — the pill was rendering as bare text next to
-        // every other picker on the same page, which all use a real
-        // `Picker`/`NSPopUpButton` and get their chrome for free. Applying
-        // it to the `Menu` itself, after `.menuStyle`, paints reliably.
+        // Per direct feedback ("как будто обводки заливки не хватает", then
+        // "почему модели не в таких же ячейках как автоматически, надо
+        // немного воздуха") — a `.background()`/`.overlay()`/`.frame()` set
+        // on a `Menu`'s LABEL content doesn't reliably apply once
+        // `.menuStyle(.borderlessButton)` wraps it on macOS: the pill
+        // painted as bare text, and even once painted (background moved
+        // here) it hugged just the text instead of stretching — the label's
+        // own `maxWidth: .infinity` stopped reaching the Menu's actual
+        // outer size once wrapped. Moving BOTH the size frame and the fill
+        // here, after `.menuStyle`, makes it the same full-width gray pill
+        // as every native `Picker`/`NSPopUpButton` row like "Автоматически".
+        .frame(minWidth: 160, maxWidth: .infinity, minHeight: 26, maxHeight: 26)
         .background(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall).fill(MuesliTheme.backgroundBase))
         .overlay(
             RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
